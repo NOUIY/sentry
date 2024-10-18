@@ -1,67 +1,49 @@
-import {css} from '@emotion/react';
-import {Query} from 'history';
-import * as qs from 'query-string';
+import type {Query} from 'history';
 
-import AnnotatedText from 'sentry/components/events/meta/annotatedText';
-import {getMeta} from 'sentry/components/events/meta/metaProxy';
-import ExternalLink from 'sentry/components/links/externalLink';
+import EventTagsContent from 'sentry/components/events/eventTags/eventTagContent';
+import {AnnotatedText} from 'sentry/components/events/meta/annotatedText';
 import Pill from 'sentry/components/pill';
-import Version from 'sentry/components/version';
-import VersionHoverCard from 'sentry/components/versionHoverCard';
-import {IconOpen} from 'sentry/icons';
-import {Organization} from 'sentry/types';
-import {EventTag} from 'sentry/types/event';
-import {isUrl} from 'sentry/utils';
-
-import EventTagsPillValue from './eventTagsPillValue';
-
-const iconStyle = css`
-  position: relative;
-  top: 1px;
-`;
+import type {EventTag} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
 
 type Props = {
   organization: Organization;
   projectId: string;
+  projectSlug: string;
   query: Query;
   streamPath: string;
   tag: EventTag;
+  meta?: Record<any, any>;
 };
-
-const EventTagsPill = ({tag, query, organization, projectId, streamPath}: Props) => {
-  const locationSearch = `?${qs.stringify(query)}`;
+/**
+ * @deprecated Legacy design, use EventTagsTreeRow instead
+ */
+function EventTagsPill({
+  tag,
+  query,
+  organization,
+  projectSlug,
+  projectId,
+  streamPath,
+  meta,
+}: Props) {
   const {key, value} = tag;
-  const isRelease = key === 'release';
-  const name = !key ? <AnnotatedText value={key} meta={getMeta(tag, 'key')} /> : key;
+  const name = !key ? <AnnotatedText value={key} meta={meta?.key?.['']} /> : key;
   const type = !key ? 'error' : undefined;
 
   return (
     <Pill name={name} value={value} type={type}>
-      {isRelease ? (
-        <VersionHoverCard
-          organization={organization}
-          projectSlug={projectId}
-          releaseVersion={value}
-          showUnderline
-          underlineColor="linkUnderline"
-        >
-          <Version version={String(value)} truncate />
-        </VersionHoverCard>
-      ) : (
-        <EventTagsPillValue
-          tag={tag}
-          meta={getMeta(tag, 'value')}
-          streamPath={streamPath}
-          locationSearch={locationSearch}
-        />
-      )}
-      {isUrl(value) && (
-        <ExternalLink href={value} className="external-icon">
-          <IconOpen size="xs" css={iconStyle} />
-        </ExternalLink>
-      )}
+      <EventTagsContent
+        tag={tag}
+        query={query}
+        organization={organization}
+        projectSlug={projectSlug}
+        projectId={projectId}
+        streamPath={streamPath}
+        meta={meta}
+      />
     </Pill>
   );
-};
+}
 
 export default EventTagsPill;

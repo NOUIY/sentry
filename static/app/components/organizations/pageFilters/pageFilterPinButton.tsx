@@ -1,28 +1,28 @@
 import styled from '@emotion/styled';
 
 import {pinFilter} from 'sentry/actionCreators/pageFilters';
-import Button, {ButtonProps} from 'sentry/components/button';
+import type {ButtonProps} from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import {IconLock} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import PageFiltersStore from 'sentry/stores/pageFiltersStore';
-import {useLegacyStore} from 'sentry/stores/useLegacyStore';
-import {PinnedPageFilter} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
-import useOrganization from 'sentry/utils/useOrganization';
+import type {PinnedPageFilter} from 'sentry/types/core';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import usePageFilters from 'sentry/utils/usePageFilters';
 
 type Props = {
   filter: PinnedPageFilter;
-  size: Extract<ButtonProps['size'], 'xsmall' | 'zero'>;
+  organization: Organization;
+  size: Extract<ButtonProps['size'], 'xs' | 'zero'>;
   className?: string;
 };
 
-function PageFilterPinButton({filter, size, className}: Props) {
-  const organization = useOrganization();
-  const {pinnedFilters} = useLegacyStore(PageFiltersStore);
+function PageFilterPinButton({organization, filter, size, className}: Props) {
+  const {pinnedFilters} = usePageFilters();
   const pinned = pinnedFilters.has(filter);
 
   const onPin = () => {
-    trackAdvancedAnalyticsEvent('page_filters.pin_click', {
+    trackAnalytics('page_filters.pin_click', {
       organization,
       filter,
       pin: !pinned,
@@ -39,7 +39,7 @@ function PageFilterPinButton({filter, size, className}: Props) {
       size={size}
       pinned={pinned}
       borderless={size === 'zero'}
-      icon={<IconLock isSolid={pinned} size="xs" />}
+      icon={<IconLock locked={pinned} size="xs" />}
       title={t("Once locked, Sentry will remember this filter's value across pages.")}
       tooltipProps={{delay: 500}}
     >
@@ -48,7 +48,7 @@ function PageFilterPinButton({filter, size, className}: Props) {
   );
 }
 
-const PinButton = styled(Button)<{pinned: boolean; size: 'xsmall' | 'zero'}>`
+const PinButton = styled(Button)<{pinned: boolean; size: 'xs' | 'zero'}>`
   display: block;
   color: ${p => p.theme.textColor};
 

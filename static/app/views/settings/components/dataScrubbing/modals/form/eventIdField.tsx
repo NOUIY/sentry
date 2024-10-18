@@ -2,12 +2,13 @@ import {Component} from 'react';
 import styled from '@emotion/styled';
 import isEqual from 'lodash/isEqual';
 
-import Input from 'sentry/components/forms/controls/input';
-import Field from 'sentry/components/forms/field';
+import FieldGroup from 'sentry/components/forms/fieldGroup';
+import Input from 'sentry/components/input';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
-import {EventId, EventIdStatus} from '../../types';
+import type {EventId} from '../../types';
+import {EventIdStatus} from '../../types';
 import {saveToSourceGroupData} from '../utils';
 
 import EventIdFieldStatusIcon from './eventIdFieldStatusIcon';
@@ -43,13 +44,13 @@ class EventIdField extends Component<Props, State> {
 
     switch (status) {
       case EventIdStatus.INVALID:
-        return t('This event ID is invalid.');
+        return t('This event ID is invalid');
       case EventIdStatus.ERROR:
         return t(
-          'An error occurred while fetching the suggestions based on this event ID.'
+          'An error occurred while fetching the suggestions based on this event ID'
         );
       case EventIdStatus.NOT_FOUND:
-        return t('The chosen event ID was not found in projects you have access to.');
+        return t('The chosen event ID was not found in projects you have access to');
       default:
         return undefined;
     }
@@ -90,9 +91,9 @@ class EventIdField extends Component<Props, State> {
   };
 
   handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    const {keyCode} = event;
+    const {key} = event;
 
-    if (keyCode === 13 && this.isEventIdValid()) {
+    if (key === 'Enter' && this.isEventIdValid()) {
       this.props.onUpdateEventId(this.state.value);
     }
   };
@@ -109,7 +110,7 @@ class EventIdField extends Component<Props, State> {
     const {value, status} = this.state;
 
     return (
-      <Field
+      <FieldGroup
         data-test-id="event-id-field"
         label={t('Event ID (Optional)')}
         help={t(
@@ -139,7 +140,7 @@ class EventIdField extends Component<Props, State> {
             />
           </Status>
         </FieldWrapper>
-      </Field>
+      </FieldGroup>
     );
   }
 }
@@ -147,7 +148,7 @@ export default EventIdField;
 
 const StyledInput = styled(Input)`
   flex: 1;
-  font-weight: 400;
+  font-weight: ${p => p.theme.fontWeightNormal};
   input {
     padding-right: ${space(1.5)};
   }
@@ -155,7 +156,7 @@ const StyledInput = styled(Input)`
 `;
 
 const Status = styled('div')`
-  height: 40px;
+  height: 100%;
   position: absolute;
   right: ${space(1.5)};
   top: 0;

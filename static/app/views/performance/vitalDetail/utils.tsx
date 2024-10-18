@@ -1,17 +1,19 @@
-import {Location, Query} from 'history';
+import type {Theme} from '@emotion/react';
+import type {Location, Query} from 'history';
 
 import MarkLine from 'sentry/components/charts/components/markLine';
-import {LineChartProps} from 'sentry/components/charts/lineChart';
+import type {LineChartProps} from 'sentry/components/charts/lineChart';
 import {getSeriesSelection} from 'sentry/components/charts/utils';
 import {IconHappy, IconMeh, IconSad} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
-import {getAggregateAlias, WebVital} from 'sentry/utils/discover/fields';
+import {aggregateOutputType, getAggregateAlias} from 'sentry/utils/discover/fields';
+import {WebVital} from 'sentry/utils/fields';
 import {Browser} from 'sentry/utils/performance/vitals/constants';
 import {decodeScalar} from 'sentry/utils/queryString';
-import {Color, Theme} from 'sentry/utils/theme';
-import {AlertType} from 'sentry/views/alerts/wizard/options';
+import type {Color} from 'sentry/utils/theme';
+import type {AlertType} from 'sentry/views/alerts/wizard/options';
 
 export function generateVitalDetailRoute({orgSlug}: {orgSlug: string}): string {
   return `/organizations/${orgSlug}/performance/vitaldetail/`;
@@ -115,23 +117,30 @@ export function getVitalDetailTableMehStatusFunction(vitalName: WebVital): strin
 }
 
 export const vitalMap: Partial<Record<WebVital, string>> = {
-  [WebVital.FCP]: 'First Contentful Paint',
-  [WebVital.CLS]: 'Cumulative Layout Shift',
-  [WebVital.FID]: 'First Input Delay',
-  [WebVital.LCP]: 'Largest Contentful Paint',
+  [WebVital.FCP]: t('First Contentful Paint'),
+  [WebVital.CLS]: t('Cumulative Layout Shift'),
+  [WebVital.FID]: t('First Input Delay'),
+  [WebVital.LCP]: t('Largest Contentful Paint'),
 };
 
 export const vitalChartTitleMap = vitalMap;
 
 export const vitalDescription: Partial<Record<WebVital, string>> = {
-  [WebVital.FCP]:
-    'First Contentful Paint (FCP) measures the amount of time the first content takes to render in the viewport. Like FP, this could also show up in any form from the document object model (DOM), such as images, SVGs, or text blocks. At the moment, there is support for FCP in the following browsers:',
-  [WebVital.CLS]:
-    'Cumulative Layout Shift (CLS) is the sum of individual layout shift scores for every unexpected element shift during the rendering process. Imagine navigating to an article and trying to click a link before the page finishes loading. Before your cursor even gets there, the link may have shifted down due to an image rendering. Rather than using duration for this Web Vital, the CLS score represents the degree of disruptive and visually unstable shifts. At the moment, there is support for CLS in the following browsers:',
-  [WebVital.FID]:
-    'First Input Delay (FID) measures the response time when the user tries to interact with the viewport. Actions maybe include clicking a button, link or other custom Javascript controller. It is key in helping the user determine if a page is usable or not. At the moment, there is support for FID in the following browsers:',
-  [WebVital.LCP]:
-    'Largest Contentful Paint (LCP) measures the render time for the largest content to appear in the viewport. This may be in any form from the document object model (DOM), such as images, SVGs, or text blocks. It’s the largest pixel area in the viewport, thus most visually defining. LCP helps developers understand how long it takes to see the main content on the page. At the moment, there is support for LCP in the following browsers:',
+  [WebVital.FCP]: t(
+    'First Contentful Paint (FCP) measures the amount of time the first content takes to render in the viewport. Like FP, this could also show up in any form from the document object model (DOM), such as images, SVGs, or text blocks. At the moment, there is support for FCP in the following browsers:'
+  ),
+  [WebVital.CLS]: t(
+    'Cumulative Layout Shift (CLS) is the sum of individual layout shift scores for every unexpected element shift during the rendering process. Imagine navigating to an article and trying to click a link before the page finishes loading. Before your cursor even gets there, the link may have shifted down due to an image rendering. Rather than using duration for this Web Vital, the CLS score represents the degree of disruptive and visually unstable shifts. At the moment, there is support for CLS in the following browsers:'
+  ),
+  [WebVital.FID]: t(
+    'First Input Delay (FID) measures the response time when the user tries to interact with the viewport. Actions maybe include clicking a button, link or other custom Javascript controller. It is key in helping the user determine if a page is usable or not. At the moment, there is support for FID in the following browsers:'
+  ),
+  [WebVital.LCP]: t(
+    'Largest Contentful Paint (LCP) measures the render time for the largest content to appear in the viewport. This may be in any form from the document object model (DOM), such as images, SVGs, or text blocks. It’s the largest pixel area in the viewport, thus most visually defining. LCP helps developers understand how long it takes to see the main content on the page. At the moment, there is support for LCP in the following browsers:'
+  ),
+  [WebVital.TTFB]: t(
+    'Time to First Byte (TTFB) is a foundational metric for measuring connection setup time and web server responsiveness in both the lab and the field. It helps identify when a web server is too slow to respond to requests. In the case of navigation requests—that is, requests for an HTML document—it precedes every other meaningful loading performance metric. At the moment, there is support for TTFB in the following browsers:'
+  ),
 };
 
 export const vitalAbbreviations: Partial<Record<WebVital, string>> = {
@@ -142,7 +151,7 @@ export const vitalAbbreviations: Partial<Record<WebVital, string>> = {
 };
 
 export const vitalAlertTypes: Partial<Record<WebVital, AlertType>> = {
-  [WebVital.FCP]: 'custom',
+  [WebVital.FCP]: 'custom_transactions',
   [WebVital.CLS]: 'cls',
   [WebVital.FID]: 'fid',
   [WebVital.LCP]: 'lcp',
@@ -159,7 +168,7 @@ export function getMaxOfSeries(series: Series[]) {
 }
 
 export const vitalSupportedBrowsers: Partial<Record<WebVital, Browser[]>> = {
-  [WebVital.LCP]: [Browser.CHROME, Browser.EDGE, Browser.OPERA],
+  [WebVital.LCP]: [Browser.CHROME, Browser.EDGE, Browser.OPERA, Browser.FIREFOX],
   [WebVital.FID]: [
     Browser.CHROME,
     Browser.EDGE,
@@ -185,6 +194,7 @@ export const vitalSupportedBrowsers: Partial<Record<WebVital, Browser[]>> = {
     Browser.SAFARI,
     Browser.IE,
   ],
+  [WebVital.INP]: [Browser.CHROME, Browser.EDGE, Browser.OPERA],
 };
 
 export function getVitalChartDefinitions({
@@ -222,7 +232,10 @@ export function getVitalChartDefinitions({
     tooltip: {
       trigger: 'axis',
       valueFormatter: (value: number, seriesName?: string) =>
-        tooltipFormatter(value, vital === WebVital.CLS ? seriesName : yAxis),
+        tooltipFormatter(
+          value,
+          aggregateOutputType(vital === WebVital.CLS ? seriesName : yAxis)
+        ),
     },
     yAxis: {
       min: 0,
@@ -231,7 +244,8 @@ export function getVitalChartDefinitions({
         color: theme.chartLabel,
         showMaxLabel: false,
         // coerces the axis to be time based
-        formatter: (value: number) => axisLabelFormatter(value, yAxis),
+        formatter: (value: number) =>
+          axisLabelFormatter(value, aggregateOutputType(yAxis)),
       },
     },
   };

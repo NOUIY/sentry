@@ -1,23 +1,117 @@
-import {Span} from '@sentry/types';
+import * as Sentry from '@sentry/react';
+import type {Span} from '@sentry/types';
 
 import {defined} from 'sentry/utils';
-import {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import type {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
 import {Frame} from 'sentry/utils/profiling/frame';
 
-import {CallTreeNode} from '../callTreeNode';
+import type {CallTreeNode} from '../callTreeNode';
 
 type FrameIndex = Record<string | number, Frame>;
 
+export function createContinuousProfileFrameIndex(
+  frames: Profiling.SentryContinousProfileChunk['profile']['frames'],
+  platform: 'mobile' | 'node' | 'javascript' | string
+): FrameIndex {
+  const index: FrameIndex = {};
+  const insertionCache: Record<string, Frame> = {};
+  let idx = -1;
+
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
+    const frameKey = `${frame.filename ?? ''}:${frame.function ?? 'unknown'}:${
+      String(frame.lineno) ?? ''
+    }:${frame.instruction_addr ?? ''}`;
+
+    const existing = insertionCache[frameKey];
+    if (existing) {
+      index[++idx] = existing;
+      continue;
+    }
+
+    const f = new Frame(
+      {
+        key: i,
+        is_application: frame.in_app,
+        file: frame.filename,
+        path: frame.abs_path,
+        module: frame.module,
+        package: frame.package,
+        name: frame.function ?? 'unknown',
+        line: frame.lineno,
+        column: frame.colno ?? frame?.col ?? frame?.column,
+        instructionAddr: frame.instruction_addr,
+        symbol: frame.symbol,
+        symbolAddr: frame.sym_addr,
+        symbolicatorStatus: frame.status,
+      },
+      platform
+    );
+    index[++idx] = f;
+    insertionCache[frameKey] = f;
+  }
+
+  return index;
+}
+
+export function createSentrySampleProfileFrameIndex(
+  frames: Profiling.SentrySampledProfile['profile']['frames'],
+  platform: 'mobile' | 'node' | 'javascript' | string
+): FrameIndex {
+  const index: FrameIndex = {};
+  const insertionCache: Record<string, Frame> = {};
+  let idx = -1;
+
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
+    const frameKey = `${frame.filename ?? ''}:${frame.function ?? 'unknown'}:${
+      String(frame.lineno) ?? ''
+    }:${frame.instruction_addr ?? ''}`;
+
+    const existing = insertionCache[frameKey];
+    if (existing) {
+      index[++idx] = existing;
+      continue;
+    }
+
+    const f = new Frame(
+      {
+        key: i,
+        is_application: frame.in_app,
+        file: frame.filename,
+        path: frame.abs_path,
+        module: frame.module,
+        package: frame.package,
+        name: frame.function ?? 'unknown',
+        line: frame.lineno,
+        column: frame.colno ?? frame?.col ?? frame?.column,
+        instructionAddr: frame.instruction_addr,
+        symbol: frame.symbol,
+        symbolAddr: frame.sym_addr,
+        symbolicatorStatus: frame.status,
+      },
+      platform
+    );
+    index[++idx] = f;
+    insertionCache[frameKey] = f;
+  }
+
+  return index;
+}
+
 export function createFrameIndex(
-  frames: Profiling.Schema['shared']['frames']
+  type: 'mobile' | 'node' | 'javascript',
+  frames: Readonly<Profiling.Schema['shared']['frames']>
 ): FrameIndex;
 export function createFrameIndex(
-  frames: JSSelfProfiling.Frame[],
-  trace: JSSelfProfiling.Trace
+  type: 'mobile' | 'node' | 'javascript',
+  frames: Readonly<JSSelfProfiling.Frame[]>,
+  trace: Readonly<JSSelfProfiling.Trace>
 ): FrameIndex;
 export function createFrameIndex(
-  frames: Profiling.Schema['shared']['frames'] | JSSelfProfiling.Frame[],
-  trace?: JSSelfProfiling.Trace
+  type: 'mobile' | 'node' | 'javascript',
+  frames: Readonly<Profiling.Schema['shared']['frames'] | JSSelfProfiling.Frame[]>,
+  trace?: Readonly<JSSelfProfiling.Trace>
 ): FrameIndex {
   if (trace) {
     return (frames as JSSelfProfiling.Frame[]).reduce((acc, frame, index) => {
@@ -30,17 +124,21 @@ export function createFrameIndex(
               : undefined,
           ...frame,
         },
-        'web'
+        'javascript'
       );
       return acc;
     }, {});
   }
 
   return (frames as Profiling.Schema['shared']['frames']).reduce((acc, frame, index) => {
-    acc[index] = new Frame({
-      key: index,
-      ...frame,
-    });
+    acc[index] = new Frame(
+      {
+        key: index,
+        column: frame.colno ?? frame?.col ?? frame?.column,
+        ...frame,
+      },
+      type
+    );
     return acc;
   }, {});
 }
@@ -73,12 +171,14 @@ export function memoizeByReference<Arguments, Value>(
   };
 }
 
-export function memoizeVariadicByReference<Arguments, Value>(
-  fn: (...args: ReadonlyArray<Arguments>) => Value
-): (...t: ReadonlyArray<Arguments>) => Value {
-  let cache: Cache<ReadonlyArray<Arguments>, Value> | null = null;
+type Arguments<F extends Function> = F extends (...args: infer A) => any ? A : never;
 
-  return function memoizeByReferenceCallback(...args: ReadonlyArray<Arguments>) {
+export function memoizeVariadicByReference<T extends (...args) => V, V = ReturnType<T>>(
+  fn: T
+): (...t: Arguments<T>) => V {
+  let cache: Cache<Arguments<T>, V> | null = null;
+
+  return function memoizeByReferenceCallback(...args: Arguments<T>): V {
     // If this is the first run then eval the fn and cache the result
     if (!cache) {
       cache = {args, value: fn(...args)};
@@ -106,15 +206,11 @@ export function wrapWithSpan<T>(parentSpan: Span | undefined, fn: () => T, optio
     return fn();
   }
 
-  const sentrySpan = parentSpan.startChild(options);
-  try {
-    return fn();
-  } catch (error) {
-    sentrySpan.setStatus('internal_error');
-    throw error;
-  } finally {
-    sentrySpan.finish();
-  }
+  return Sentry.withActiveSpan(parentSpan, () => {
+    return Sentry.startSpan(options, () => {
+      return fn();
+    });
+  });
 }
 
 export const isSystemCall = (node: CallTreeNode): boolean => {
@@ -126,7 +222,7 @@ export const isApplicationCall = (node: CallTreeNode): boolean => {
 };
 
 function indexNodeToParents(
-  roots: FlamegraphFrame[],
+  roots: Readonly<FlamegraphFrame[]>,
   map: Record<string, FlamegraphFrame[]>,
   leafs: FlamegraphFrame[]
 ) {
@@ -136,7 +232,7 @@ function indexNodeToParents(
       map[node.key] = [];
     }
 
-    map[node.key].push(parent);
+    map[node.key]!.push(parent); // we initialize this above
 
     if (!node.children.length) {
       leafs.push(node);
@@ -144,7 +240,7 @@ function indexNodeToParents(
     }
 
     for (let i = 0; i < node.children.length; i++) {
-      indexNode(node.children[i], node);
+      indexNode(node.children[i]!, node); // iterating over non empty array
     }
   }
 
@@ -168,7 +264,7 @@ function indexNodeToParents(
 }
 
 function reverseTrail(
-  nodes: FlamegraphFrame[],
+  nodes: Readonly<FlamegraphFrame[]>,
   parentMap: Record<string, FlamegraphFrame[]>
 ): FlamegraphFrame[] {
   const splits: FlamegraphFrame[] = [];
@@ -180,11 +276,12 @@ function reverseTrail(
       children: [] as FlamegraphFrame[],
     };
 
-    if (!parentMap[n.key]) {
+    const parents = parentMap[n.key];
+    if (!parents) {
       continue;
     }
 
-    for (const parent of parentMap[n.key]) {
+    for (const parent of parents) {
       nc.children.push(...reverseTrail([parent], parentMap));
     }
     splits.push(nc);
@@ -193,7 +290,7 @@ function reverseTrail(
   return splits;
 }
 
-export const invertCallTree = (roots: FlamegraphFrame[]): FlamegraphFrame[] => {
+export const invertCallTree = (roots: Readonly<FlamegraphFrame[]>): FlamegraphFrame[] => {
   const nodeToParentIndex: Record<string, FlamegraphFrame[]> = {};
   const leafNodes: FlamegraphFrame[] = [];
 
@@ -201,3 +298,12 @@ export const invertCallTree = (roots: FlamegraphFrame[]): FlamegraphFrame[] => {
   const reversed = reverseTrail(leafNodes, nodeToParentIndex);
   return reversed;
 };
+
+export function resolveFlamegraphSamplesProfileIds(
+  samplesProfiles: Readonly<number[][]>,
+  profileIds: Profiling.ProfileReference[]
+): Profiling.ProfileReference[][] {
+  return samplesProfiles.map(profileIdIndices => {
+    return profileIdIndices.map(i => profileIds[i]);
+  });
+}

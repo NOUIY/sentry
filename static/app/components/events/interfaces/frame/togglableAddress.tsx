@@ -1,11 +1,11 @@
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import {STACKTRACE_PREVIEW_TOOLTIP_DELAY} from 'sentry/components/stacktracePreview';
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
+import {SLOW_TOOLTIP_DELAY} from 'sentry/constants';
 import {IconFilter} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Theme} from 'sentry/utils/theme';
+import {space} from 'sentry/styles/space';
 
 import {formatAddress, parseAddress} from '../utils';
 
@@ -69,7 +69,7 @@ function TogglableAddress({
 
   const formattedAddress = !relativeAddress || isAbsolute ? address : relativeAddress;
   const tooltipTitle = getAddressTooltip();
-  const tooltipDelay = isHoverPreviewed ? STACKTRACE_PREVIEW_TOOLTIP_DELAY : undefined;
+  const tooltipDelay = isHoverPreviewed ? SLOW_TOOLTIP_DELAY : undefined;
 
   return (
     <Wrapper className={className}>
@@ -79,7 +79,7 @@ function TogglableAddress({
           containerDisplayMode="inline-flex"
           delay={tooltipDelay}
         >
-          <AddressToggleIcon onClick={onToggle} size="xs" color="purple300" />
+          <AddressToggleIcon onClick={onToggle} size="xs" color="activeText" />
         </AddressIconTooltip>
       )}
       <Tooltip
@@ -108,7 +108,7 @@ const AddressToggleIcon = styled(IconFilter)`
   cursor: pointer;
   visibility: hidden;
   display: none;
-  @media (min-width: ${p => p.theme.breakpoints[0]}) {
+  @media (min-width: ${p => p.theme.breakpoints.small}) {
     display: block;
   }
 `;
@@ -131,7 +131,7 @@ const Address = styled('span')<Partial<Props> & {canBeConverted: boolean}>`
   border-bottom: ${getAddresstextBorderBottom};
   white-space: nowrap;
 
-  @media (min-width: ${p => p.theme.breakpoints[0]}) {
+  @media (min-width: ${p => p.theme.breakpoints.small}) {
     padding-left: ${p => (p.canBeConverted ? null : '18px')};
   }
 `;
@@ -149,7 +149,7 @@ const Wrapper = styled('span')`
   padding: 0 ${space(0.5)} 0 0;
   order: 1;
 
-  @media (min-width: ${props => props.theme.breakpoints[0]}) {
+  @media (min-width: ${props => props.theme.breakpoints.small}) {
     padding: 0 ${space(0.5)};
     order: 0;
   }

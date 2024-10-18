@@ -1,20 +1,19 @@
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import NotAvailable from 'sentry/components/notAvailable';
 import Placeholder from 'sentry/components/placeholder';
 import Radio from 'sentry/components/radio';
 import {IconChevron} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
-import {ReleaseComparisonChartType} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {ReleaseComparisonChartType} from 'sentry/types/release';
 import {defined} from 'sentry/utils';
 
 import {releaseComparisonChartLabels} from '../../utils';
 
-import {ReleaseComparisonRow} from '.';
+import type {ReleaseComparisonRow} from '.';
 
 type Props = Omit<ReleaseComparisonRow, 'diffDirection' | 'diffColor'> & {
   activeChart: ReleaseComparisonChartType;
@@ -107,7 +106,8 @@ function ReleaseComparisonChartRow({
 const Cell = styled('div')`
   text-align: right;
   color: ${p => p.theme.subText};
-  ${overflowEllipsis}
+  ${p => p.theme.overflowEllipsis}
+  font-size: ${p => p.theme.fontSizeMedium};
 `;
 
 const NumericCell = styled(Cell)`
@@ -158,7 +158,7 @@ const ChartTableRow = styled('label')<{
   role: ReleaseComparisonRow['role'];
 }>`
   display: contents;
-  font-weight: 400;
+  font-weight: ${p => p.theme.fontWeightNormal};
   margin-bottom: 0;
 
   > * {
@@ -176,9 +176,7 @@ const ChartTableRow = styled('label')<{
 
   &:hover {
     cursor: pointer;
-    ${/* sc-selector */ Cell}, ${/* sc-selector */ NumericCell}, ${
-      /* sc-selector */ DescriptionCell
-    },${/* sc-selector */ ExpanderCell}, ${/* sc-selector */ TitleWrapper} {
+    ${Cell}, ${NumericCell}, ${DescriptionCell}, ${ExpanderCell}, ${TitleWrapper} {
       ${p => !p.isLoading && `background-color: ${p.theme.bodyBackground}`}
     }
   }

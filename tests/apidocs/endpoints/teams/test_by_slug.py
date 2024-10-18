@@ -1,7 +1,7 @@
 from django.test.client import RequestFactory
 from django.urls import reverse
 
-from tests.apidocs.util import APIDocsTestCase
+from fixtures.apidocs_test_case import APIDocsTestCase
 
 
 class TeamsBySlugDocs(APIDocsTestCase):
@@ -10,7 +10,10 @@ class TeamsBySlugDocs(APIDocsTestCase):
 
         self.url = reverse(
             "sentry-api-0-team-details",
-            kwargs={"organization_slug": self.organization.slug, "team_slug": team.slug},
+            kwargs={
+                "organization_id_or_slug": self.organization.slug,
+                "team_id_or_slug": team.slug,
+            },
         )
 
         self.login_as(user=self.user)

@@ -1,14 +1,28 @@
 import styled from '@emotion/styled';
 
-import ContextData from 'sentry/components/contextData';
-import space from 'sentry/styles/space';
+import {AnnotatedText} from 'sentry/components/events/meta/annotatedText';
+import StructuredEventData from 'sentry/components/structuredEventData';
+import {space} from 'sentry/styles/space';
+import {defined} from 'sentry/utils';
 
 type Props = {
   children: React.ReactNode;
-  kvData?: Record<string, any>;
+  kvData?: Record<string, any> | null;
+  meta?: Record<any, any>;
 };
 
-function Summary({kvData, children}: Props) {
+function Summary({kvData, children, meta}: Props) {
+  if (meta?.data?.[''] && !defined(kvData)) {
+    return (
+      <Wrapper>
+        {children && <StyledCode>{children}</StyledCode>}
+        <ContextDataWrapper>
+          <AnnotatedText value={kvData} meta={meta?.data?.['']} />
+        </ContextDataWrapper>
+      </Wrapper>
+    );
+  }
+
   if (!kvData || !Object.keys(kvData).length) {
     if (!children) {
       return <div />;
@@ -25,7 +39,7 @@ function Summary({kvData, children}: Props) {
     <Wrapper>
       {children && <StyledCode>{children}</StyledCode>}
       <ContextDataWrapper>
-        <ContextData data={kvData} withAnnotatedText />
+        <StructuredEventData data={kvData} withAnnotatedText />
       </ContextDataWrapper>
     </Wrapper>
   );
@@ -37,9 +51,14 @@ const Wrapper = styled('div')`
   word-break: break-all;
   font-size: ${p => p.theme.fontSizeSmall};
   font-family: ${p => p.theme.text.familyMono};
-  display: grid;
-  gap: ${space(0.5)};
   overflow: hidden;
+
+  pre,
+  code {
+    margin: 0;
+    padding: 0;
+    font-size: ${p => p.theme.fontSizeSmall};
+  }
 `;
 
 const ContextDataWrapper = styled('div')`
@@ -59,10 +78,13 @@ const ContextDataWrapper = styled('div')`
 `;
 
 const StyledCode = styled('code')`
+  display: block;
   font-size: inherit;
   white-space: pre-wrap;
   background: none;
   padding: 0;
+  margin-bottom: ${space(0.5)};
+
   > * {
     vertical-align: middle;
   }

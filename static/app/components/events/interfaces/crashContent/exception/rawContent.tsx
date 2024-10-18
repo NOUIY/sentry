@@ -1,14 +1,15 @@
 import {Component, Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import {Client} from 'sentry/api';
-import Button from 'sentry/components/button';
+import type {Client} from 'sentry/api';
+import {LinkButton} from 'sentry/components/button';
 import ClippedBox from 'sentry/components/clippedBox';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {t} from 'sentry/locale';
-import {ExceptionType, Organization, PlatformType, Project} from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import type {Event, ExceptionType} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
+import type {PlatformKey, Project} from 'sentry/types/project';
 import withApi from 'sentry/utils/withApi';
 import withOrganization from 'sentry/utils/withOrganization';
 
@@ -17,11 +18,11 @@ import rawStacktraceContent from '../stackTrace/rawContent';
 type Props = {
   api: Client;
   eventId: Event['id'];
-  platform: PlatformType;
-  projectId: Project['id'];
+  projectSlug: Project['slug'];
   type: 'original' | 'minified';
   // XXX: Organization is NOT available for Shared Issues!
   organization?: Organization;
+  platform?: PlatformKey;
 } & Pick<ExceptionType, 'values'>;
 
 type State = {
@@ -51,14 +52,16 @@ class RawContent extends Component<Props, State> {
 
   isNative() {
     const {platform} = this.props;
-    return platform === 'cocoa' || platform === 'native';
+    return (
+      platform === 'cocoa' || platform === 'native' || platform === 'nintendo-switch'
+    );
   }
 
   getAppleCrashReportEndpoint(organization: Organization) {
-    const {type, projectId, eventId} = this.props;
+    const {type, projectSlug, eventId} = this.props;
 
     const minified = type === 'minified';
-    return `/projects/${organization.slug}/${projectId}/events/${eventId}/apple-crash-report?minified=${minified}`;
+    return `/projects/${organization.slug}/${projectSlug}/events/${eventId}/apple-crash-report?minified=${minified}`;
   }
 
   getContent(isNative: boolean, exc: any) {
@@ -104,12 +107,12 @@ class RawContent extends Component<Props, State> {
 
         downloadButton = (
           <DownloadBtnWrapper>
-            <Button
-              size="xsmall"
+            <LinkButton
+              size="xs"
               href={`${api.baseUrl}${appleCrashReportEndpoint}&download=1`}
             >
               {t('Download')}
-            </Button>
+            </LinkButton>
           </DownloadBtnWrapper>
         );
       }
@@ -139,7 +142,8 @@ class RawContent extends Component<Props, State> {
 
     try {
       const data = await api.requestPromise(
-        this.getAppleCrashReportEndpoint(organization)
+        this.getAppleCrashReportEndpoint(organization),
+        {headers: {Accept: '*/*; charset=utf-8'}}
       );
       this.setState({
         error: false,
@@ -152,16 +156,12 @@ class RawContent extends Component<Props, State> {
   }
 
   render() {
-    const {values, organization} = this.props;
+    const {values} = this.props;
     const isNative = this.isNative();
 
     if (!values) {
       return null;
     }
-
-    const hasNativeStackTraceV2 = !!organization?.features?.includes(
-      'native-stack-trace-v2'
-    );
 
     return (
       <Fragment>
@@ -172,7 +172,6 @@ class RawContent extends Component<Props, State> {
           }
           return (
             <div key={excIdx} data-test-id="raw-stack-trace">
-              {!hasNativeStackTraceV2 ? downloadButton : null}
               <pre className="traceback plain">{content}</pre>
             </div>
           );

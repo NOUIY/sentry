@@ -1,7 +1,8 @@
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import withOrganization from 'sentry/utils/withOrganization';
 import withProjects from 'sentry/utils/withProjects';
 
@@ -9,11 +10,7 @@ import PageLayout from '../pageLayout';
 import Tab from '../tabs';
 
 import SpansContent from './content';
-import {
-  generateSpansEventView,
-  SPAN_RELATIVE_PERIODS,
-  SPAN_RETENTION_DAYS,
-} from './utils';
+import {generateSpansEventView} from './utils';
 
 type Props = {
   location: Location;
@@ -29,12 +26,10 @@ function TransactionSpans(props: Props) {
       location={location}
       organization={organization}
       projects={projects}
-      tab={Tab.Spans}
+      tab={Tab.SPANS}
       getDocumentTitle={getDocumentTitle}
       generateEventView={generateSpansEventView}
       childComponent={SpansContent}
-      relativeDateOptions={SPAN_RELATIVE_PERIODS}
-      maxPickableDays={SPAN_RETENTION_DAYS}
     />
   );
 }

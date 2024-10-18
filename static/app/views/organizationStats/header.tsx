@@ -1,11 +1,9 @@
-import styled from '@emotion/styled';
-
-import Button from 'sentry/components/button';
+import {FeatureFeedback} from 'sentry/components/featureFeedback';
 import * as Layout from 'sentry/components/layouts/thirds';
 import Link from 'sentry/components/links/link';
+import {PageHeadingQuestionTooltip} from 'sentry/components/pageHeadingQuestionTooltip';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 
 type Props = {
   activeTab: 'stats' | 'issues' | 'health';
@@ -16,17 +14,19 @@ function StatsHeader({organization, activeTab}: Props) {
   return (
     <Layout.Header>
       <Layout.HeaderContent>
-        <StyledLayoutTitle>{t('Stats')}</StyledLayoutTitle>
+        <Layout.Title>
+          {t('Stats')}
+          <PageHeadingQuestionTooltip
+            docsUrl="https://docs.sentry.io/product/stats/"
+            title={t(
+              'A view of the usage data that Sentry has received across your entire organization.'
+            )}
+          />
+        </Layout.Title>
       </Layout.HeaderContent>
       <Layout.HeaderActions>
         {activeTab !== 'stats' && (
-          <Button
-            title={t('Send us feedback via email')}
-            size="small"
-            href="mailto:alerting-feedback@sentry.io?subject=Team Stats Feedback"
-          >
-            {t('Give Feedback')}
-          </Button>
+          <FeatureFeedback buttonProps={{size: 'sm'}} featureName="team-stats" />
         )}
       </Layout.HeaderActions>
       <Layout.HeaderNavTabs underlined>
@@ -49,7 +49,3 @@ function StatsHeader({organization, activeTab}: Props) {
 }
 
 export default StatsHeader;
-
-const StyledLayoutTitle = styled(Layout.Title)`
-  margin-top: ${space(0.5)};
-`;

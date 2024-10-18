@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from django.db import models
 
-from sentry.db.models import FlexibleForeignKey, Model, sane_repr
-from sentry.db.models.fields import EncryptedPickledObjectField
-from sentry.db.models.manager import OptionManager, Value
-from sentry.tasks.relay import schedule_update_config_cache
+from sentry.backup.scopes import RelocationScope
+from sentry.db.models import FlexibleForeignKey, Model, region_silo_model, sane_repr
+from sentry.db.models.fields.picklefield import PickledObjectField
+from sentry.db.models.manager.option import OptionManager
 from sentry.utils.cache import cache
 
 if TYPE_CHECKING:
-    from sentry.models import Organization
+    from sentry.models.organization import Organization
 
 
-class OrganizationOptionManager(OptionManager["Organization"]):
+class OrganizationOptionManager(OptionManager["OrganizationOption"]):
     def get_value_bulk(
         self, instances: Sequence[Organization], key: str
     ) -> Mapping[Organization, Any]:
@@ -26,8 +27,12 @@ class OrganizationOptionManager(OptionManager["Organization"]):
         return result
 
     def get_value(
-        self, organization: Organization, key: str, default: Value | None = None
-    ) -> Value:
+        self,
+        organization: Organization,
+        key: str,
+        default: Any | None = None,
+        validate: Callable[[object], bool] | None = None,
+    ) -> Any:
         result = self.get_all_values(organization)
         return result.get(key, default)
 
@@ -39,11 +44,14 @@ class OrganizationOptionManager(OptionManager["Organization"]):
         inst.delete()
         self.reload_cache(organization.id, "organizationoption.unset_value")
 
-    def set_value(self, organization: Organization, key: str, value: Value) -> None:
-        self.create_or_update(organization=organization, key=key, values={"value": value})
+    def set_value(self, organization: Organization, key: str, value: Any) -> bool:
+        inst, created = self.create_or_update(
+            organization=organization, key=key, values={"value": value}
+        )
         self.reload_cache(organization.id, "organizationoption.set_value")
+        return bool(created) or inst > 0
 
-    def get_all_values(self, organization: Organization) -> Mapping[str, Value]:
+    def get_all_values(self, organization: Organization | int) -> Mapping[str, Any]:
         if isinstance(organization, models.Model):
             organization_id = organization.id
         else:
@@ -57,14 +65,14 @@ class OrganizationOptionManager(OptionManager["Organization"]):
             else:
                 self._option_cache[cache_key] = result
 
-        # Explicitly typing to satisfy mypy.
-        values: Mapping[str, Value] = self._option_cache.get(cache_key, {})
-        return values
+        return self._option_cache.get(cache_key, {})
 
-    def reload_cache(self, organization_id: int, update_reason: str) -> Mapping[str, Value]:
+    def reload_cache(self, organization_id: int, update_reason: str) -> Mapping[str, Any]:
+        from sentry.tasks.relay import schedule_invalidate_project_config
+
         if update_reason != "organizationoption.get_all_values":
-            schedule_update_config_cache(
-                organization_id=organization_id, generate=False, update_reason=update_reason
+            schedule_invalidate_project_config(
+                organization_id=organization_id, trigger=update_reason
             )
 
         cache_key = self._make_key(organization_id)
@@ -73,14 +81,15 @@ class OrganizationOptionManager(OptionManager["Organization"]):
         self._option_cache[cache_key] = result
         return result
 
-    def post_save(self, instance: OrganizationOption, **kwargs: Any) -> None:
+    def post_save(self, *, instance: OrganizationOption, created: bool, **kwargs: object) -> None:
         self.reload_cache(instance.organization_id, "organizationoption.post_save")
 
     def post_delete(self, instance: OrganizationOption, **kwargs: Any) -> None:
         self.reload_cache(instance.organization_id, "organizationoption.post_delete")
 
 
-class OrganizationOption(Model):  # type: ignore
+@region_silo_model
+class OrganizationOption(Model):
     """
     Organization options apply only to an instance of a organization.
 
@@ -91,13 +100,13 @@ class OrganizationOption(Model):  # type: ignore
     value: { updated: datetime }
     """
 
-    __include_in_export__ = True
+    __relocation_scope__ = RelocationScope.Organization
 
     organization = FlexibleForeignKey("sentry.Organization")
     key = models.CharField(max_length=64)
-    value = EncryptedPickledObjectField()
+    value = PickledObjectField()
 
-    objects = OrganizationOptionManager()
+    objects: ClassVar[OrganizationOptionManager] = OrganizationOptionManager()
 
     class Meta:
         app_label = "sentry"

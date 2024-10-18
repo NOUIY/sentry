@@ -3,8 +3,9 @@ from __future__ import annotations
 import importlib
 import os
 import typing
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any
 
 from drf_spectacular.plumbing import UnableToProceedError
 
@@ -46,7 +47,7 @@ def inline_sentry_response_serializer(name: str, t: type) -> type:
     return serializer_class
 
 
-class SentryApiBuildError(UnableToProceedError):  # type: ignore
+class SentryApiBuildError(UnableToProceedError):
     def __init__(self, msg: str = "", *args: Any, **kwargs: Any) -> None:
         super().__init__(
             msg
@@ -63,7 +64,7 @@ class SentryApiBuildError(UnableToProceedError):  # type: ignore
 
 def reload_module_with_type_checking_enabled(module_name: str) -> None:
     @contextmanager
-    def _patch_type_checking_const() -> Generator[None, None, None]:
+    def _patch_type_checking_const() -> Generator[None]:
         try:
             setattr(typing, "TYPE_CHECKING", True)
             yield

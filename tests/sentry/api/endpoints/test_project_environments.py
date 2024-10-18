@@ -1,7 +1,7 @@
 from django.urls import reverse
 
-from sentry.models import Environment, EnvironmentProject
-from sentry.testutils import APITestCase
+from sentry.models.environment import Environment, EnvironmentProject
+from sentry.testutils.cases import APITestCase
 
 
 class ProjectEnvironmentsTest(APITestCase):
@@ -9,20 +9,21 @@ class ProjectEnvironmentsTest(APITestCase):
         project = self.create_project()
 
         env1 = Environment.objects.create(
-            project_id=project.id, organization_id=project.organization_id, name="production"
+            organization_id=project.organization_id, name="production"
         )
         env1.add_project(project)
 
-        env2 = Environment.objects.create(
-            project_id=project.id, organization_id=project.organization_id, name="staging"
-        )
+        env2 = Environment.objects.create(organization_id=project.organization_id, name="staging")
         env2.add_project(project)
 
         self.login_as(user=self.user)
 
         url = reverse(
             "sentry-api-0-project-environments",
-            kwargs={"organization_slug": project.organization.slug, "project_slug": project.slug},
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+            },
         )
         response = self.client.get(url, format="json")
         assert response.status_code == 200, response.content
@@ -34,14 +35,12 @@ class ProjectEnvironmentsTest(APITestCase):
         project = self.create_project()
 
         env1 = Environment.objects.create(
-            project_id=project.id, organization_id=project.organization_id, name="production"
+            organization_id=project.organization_id, name="production"
         )
 
         EnvironmentProject.objects.create(project=project, environment=env1, is_hidden=False)
 
-        env2 = Environment.objects.create(
-            project_id=project.id, organization_id=project.organization_id, name="staging"
-        )
+        env2 = Environment.objects.create(organization_id=project.organization_id, name="staging")
 
         EnvironmentProject.objects.create(project=project, environment=env2, is_hidden=True)
 
@@ -49,7 +48,10 @@ class ProjectEnvironmentsTest(APITestCase):
 
         url = reverse(
             "sentry-api-0-project-environments",
-            kwargs={"organization_slug": project.organization.slug, "project_slug": project.slug},
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+            },
         )
         response = self.client.get(url, format="json")
         assert response.status_code == 200, response.content

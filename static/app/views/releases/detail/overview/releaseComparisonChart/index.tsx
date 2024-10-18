@@ -1,44 +1,43 @@
 import {Fragment, useCallback, useEffect, useMemo, useState} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {Client} from 'sentry/api';
-import Button from 'sentry/components/button';
+import type {Client} from 'sentry/api';
+import {Button} from 'sentry/components/button';
 import ErrorPanel from 'sentry/components/charts/errorPanel';
 import {ChartContainer} from 'sentry/components/charts/styles';
 import Count from 'sentry/components/count';
-import Duration from 'sentry/components/duration';
+import ErrorBoundary from 'sentry/components/errorBoundary';
 import GlobalSelectionLink from 'sentry/components/globalSelectionLink';
 import NotAvailable from 'sentry/components/notAvailable';
-import {Panel, PanelTable} from 'sentry/components/panels';
-import Tooltip from 'sentry/components/tooltip';
-import {PlatformKey} from 'sentry/data/platformCategories';
+import Panel from 'sentry/components/panels/panel';
+import {PanelTable} from 'sentry/components/panels/panelTable';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconArrow, IconChevron, IconList, IconWarning} from 'sentry/icons';
 import {t, tct, tn} from 'sentry/locale';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import {
-  Organization,
-  ReleaseComparisonChartType,
-  ReleaseProject,
-  ReleaseWithHealth,
-  SessionApiResponse,
+  type Organization,
+  type SessionApiResponse,
   SessionFieldWithOperation,
   SessionStatus,
-} from 'sentry/types';
-import {defined} from 'sentry/utils';
-import {formatPercentage} from 'sentry/utils/formatters';
-import getDynamicText from 'sentry/utils/getDynamicText';
-import {decodeList, decodeScalar} from 'sentry/utils/queryString';
+} from 'sentry/types/organization';
+import type {PlatformKey} from 'sentry/types/project';
 import {
-  getCount,
-  getCrashFreeRate,
-  getSeriesAverage,
-  getSessionStatusRate,
-} from 'sentry/utils/sessions';
-import {Color} from 'sentry/utils/theme';
+  ReleaseComparisonChartType,
+  type ReleaseProject,
+  type ReleaseWithHealth,
+} from 'sentry/types/release';
+import {defined} from 'sentry/utils';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import {DiscoverDatasets} from 'sentry/utils/discover/types';
+import getDynamicText from 'sentry/utils/getDynamicText';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
+import {decodeList, decodeScalar} from 'sentry/utils/queryString';
+import {getCount, getCrashFreeRate, getSessionStatusRate} from 'sentry/utils/sessions';
+import type {Color} from 'sentry/utils/theme';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import {
   displaySessionStatusPercent,
@@ -46,7 +45,6 @@ import {
   getReleaseHandledIssuesUrl,
   getReleaseParams,
   getReleaseUnhandledIssuesUrl,
-  roundDuration,
 } from 'sentry/views/releases/utils';
 
 import ReleaseComparisonChartRow from './releaseComparisonChartRow';
@@ -170,7 +168,7 @@ function ReleaseComparisonChart({
   }, [location.query.chart]);
 
   const fetchEventsTotals = useCallback(async () => {
-    const url = `/organizations/${organization.slug}/eventsv2/`;
+    const url = `/organizations/${organization.slug}/events/`;
     const commonQuery = {
       environment: decodeList(location.query.environment),
       project: decodeList(location.query.project),
@@ -195,6 +193,7 @@ function ReleaseComparisonChart({
               'event.type:transaction',
               `release:${release.version}`,
             ]).formatString(),
+            dataset: DiscoverDatasets.METRICS_ENHANCED,
             ...commonQuery,
           },
         }),
@@ -202,6 +201,7 @@ function ReleaseComparisonChart({
           query: {
             field: ['failure_rate()', 'count()'],
             query: new MutableSearch(['event.type:transaction']).formatString(),
+            dataset: DiscoverDatasets.METRICS_ENHANCED,
             ...commonQuery,
           },
         }),
@@ -225,12 +225,12 @@ function ReleaseComparisonChart({
       ]);
 
       setEventsTotals({
-        allErrorCount: allErrorTotals.data[0].count,
-        releaseErrorCount: releaseErrorTotals.data[0].count,
-        allTransactionCount: allTransactionTotals.data[0].count,
-        releaseTransactionCount: releaseTransactionTotals.data[0].count,
-        releaseFailureRate: releaseTransactionTotals.data[0].failure_rate,
-        allFailureRate: allTransactionTotals.data[0].failure_rate,
+        allErrorCount: allErrorTotals.data[0]['count()'],
+        releaseErrorCount: releaseErrorTotals.data[0]['count()'],
+        allTransactionCount: allTransactionTotals.data[0]['count()'],
+        releaseTransactionCount: releaseTransactionTotals.data[0]['count()'],
+        releaseFailureRate: releaseTransactionTotals.data[0]['failure_rate()'],
+        allFailureRate: allTransactionTotals.data[0]['failure_rate()'],
       });
       setEventsLoading(false);
     } catch (err) {
@@ -454,15 +454,6 @@ function ReleaseComparisonChart({
     SessionFieldWithOperation.USERS
   );
   const allUsersCount = getCount(allSessions?.groups, SessionFieldWithOperation.USERS);
-
-  const sessionDurationTotal = roundDuration(
-    (getSeriesAverage(releaseSessions?.groups, SessionFieldWithOperation.DURATION) ?? 0) /
-      1000
-  );
-  const allSessionDurationTotal = roundDuration(
-    (getSeriesAverage(allSessions?.groups, SessionFieldWithOperation.DURATION) ?? 0) /
-      1000
-  );
 
   const diffFailure =
     eventsTotals?.releaseFailureRate && eventsTotals?.allFailureRate
@@ -766,20 +757,6 @@ function ReleaseComparisonChart({
   }
 
   if (hasHealthData) {
-    charts.push({
-      type: ReleaseComparisonChartType.SESSION_DURATION,
-      role: 'default',
-      drilldown: null,
-      thisRelease: defined(sessionDurationTotal) ? (
-        <Duration seconds={sessionDurationTotal} abbreviation />
-      ) : null,
-      allReleases: defined(allSessionDurationTotal) ? (
-        <Duration seconds={allSessionDurationTotal} abbreviation />
-      ) : null,
-      diff: null,
-      diffDirection: null,
-      diffColor: null,
-    });
     additionalCharts.push({
       type: ReleaseComparisonChartType.SESSION_COUNT,
       role: 'default',
@@ -843,6 +820,10 @@ function ReleaseComparisonChart({
   }
 
   function handleChartChange(chartType: ReleaseComparisonChartType) {
+    trackAnalytics('releases.change_chart_type', {
+      organization,
+      chartType,
+    });
     browserHistory.push({
       ...location,
       query: {
@@ -902,8 +883,8 @@ function ReleaseComparisonChart({
     hasHealthData
       ? ReleaseComparisonChartType.CRASH_FREE_SESSIONS
       : hasPerformance
-      ? ReleaseComparisonChartType.FAILURE_RATE
-      : ReleaseComparisonChartType.ERROR_COUNT
+        ? ReleaseComparisonChartType.FAILURE_RATE
+        : ReleaseComparisonChartType.ERROR_COUNT
   ) as ReleaseComparisonChartType;
 
   let chart = [...charts, ...additionalCharts].find(ch => ch.type === activeChart);
@@ -956,50 +937,52 @@ function ReleaseComparisonChart({
   return (
     <Fragment>
       <ChartPanel>
-        <ChartContainer>
-          {[
-            ReleaseComparisonChartType.ERROR_COUNT,
-            ReleaseComparisonChartType.TRANSACTION_COUNT,
-            ReleaseComparisonChartType.FAILURE_RATE,
-          ].includes(activeChart)
-            ? getDynamicText({
-                value: (
-                  <ReleaseEventsChart
-                    release={release}
-                    project={project}
-                    chartType={activeChart}
-                    period={period ?? undefined}
-                    start={start}
-                    end={end}
-                    utc={utc === 'true'}
-                    value={chart.thisRelease}
-                    diff={titleChartDiff}
-                  />
-                ),
-                fixed: 'Events Chart',
-              })
-            : getDynamicText({
-                value: (
-                  <ReleaseSessionsChart
-                    releaseSessions={releaseSessions}
-                    allSessions={allSessions}
-                    release={release}
-                    project={project}
-                    chartType={activeChart}
-                    platform={platform}
-                    period={period ?? undefined}
-                    start={start}
-                    end={end}
-                    utc={utc === 'true'}
-                    value={chart.thisRelease}
-                    diff={titleChartDiff}
-                    loading={loading}
-                    reloading={reloading}
-                  />
-                ),
-                fixed: 'Sessions Chart',
-              })}
-        </ChartContainer>
+        <ErrorBoundary mini>
+          <ChartContainer>
+            {[
+              ReleaseComparisonChartType.ERROR_COUNT,
+              ReleaseComparisonChartType.TRANSACTION_COUNT,
+              ReleaseComparisonChartType.FAILURE_RATE,
+            ].includes(activeChart)
+              ? getDynamicText({
+                  value: (
+                    <ReleaseEventsChart
+                      release={release}
+                      project={project}
+                      chartType={activeChart}
+                      period={period ?? undefined}
+                      start={start}
+                      end={end}
+                      utc={utc === 'true'}
+                      value={chart.thisRelease}
+                      diff={titleChartDiff}
+                    />
+                  ),
+                  fixed: 'Events Chart',
+                })
+              : getDynamicText({
+                  value: (
+                    <ReleaseSessionsChart
+                      releaseSessions={releaseSessions}
+                      allSessions={allSessions}
+                      release={release}
+                      project={project}
+                      chartType={activeChart}
+                      platform={platform}
+                      period={period ?? undefined}
+                      start={start}
+                      end={end}
+                      utc={utc === 'true'}
+                      value={chart.thisRelease}
+                      diff={titleChartDiff}
+                      loading={loading}
+                      reloading={reloading}
+                    />
+                  ),
+                  fixed: 'Sessions Chart',
+                })}
+          </ChartContainer>
+        </ErrorBoundary>
       </ChartPanel>
       <ChartTable
         headers={getTableHeaders(withExpanders)}
@@ -1040,7 +1023,7 @@ const ChartPanel = styled(Panel)`
 
 const Cell = styled('div')`
   text-align: right;
-  ${overflowEllipsis}
+  ${p => p.theme.overflowEllipsis}
 `;
 
 const DescriptionCell = styled(Cell)`
@@ -1048,8 +1031,8 @@ const DescriptionCell = styled(Cell)`
   overflow: visible;
 `;
 
-const Change = styled('div')<{color?: Color}>`
-  font-size: ${p => p.theme.fontSizeLarge};
+export const Change = styled('div')<{color?: Color}>`
+  font-size: ${p => p.theme.fontSizeMedium};
   ${p => p.color && `color: ${p.theme[p.color]}`}
 `;
 
@@ -1063,7 +1046,7 @@ const ChartTable = styled(PanelTable)<{withExpanders: boolean}>`
     border-bottom: 1px solid ${p => p.theme.border};
   }
 
-  @media (max-width: ${p => p.theme.breakpoints[2]}) {
+  @media (max-width: ${p => p.theme.breakpoints.large}) {
     grid-template-columns: repeat(4, minmax(min-content, 1fr)) ${p =>
         p.withExpanders ? '75px' : ''};
   }
@@ -1085,6 +1068,7 @@ const ShowMoreWrapper = styled('div')`
 
 const ShowMoreTitle = styled('div')`
   color: ${p => p.theme.gray300};
+  font-size: ${p => p.theme.fontSizeMedium};
   display: inline-grid;
   grid-template-columns: auto auto;
   gap: 10px;

@@ -3,7 +3,7 @@ from unittest.mock import patch
 from django.urls import reverse
 
 from sentry.plugins.base import plugins
-from sentry.testutils import APITestCase
+from sentry.testutils.cases import APITestCase
 
 
 class ProjectPluginsTest(APITestCase):
@@ -17,8 +17,8 @@ class ProjectPluginsTest(APITestCase):
             url = reverse(
                 "sentry-api-0-project-plugins",
                 kwargs={
-                    "organization_slug": project.organization.slug,
-                    "project_slug": project.slug,
+                    "organization_id_or_slug": project.organization.slug,
+                    "project_id_or_slug": project.slug,
                 },
             )
             response = self.client.get(url)

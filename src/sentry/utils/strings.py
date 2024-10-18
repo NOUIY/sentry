@@ -1,29 +1,18 @@
+from __future__ import annotations
+
 import ast
 import base64
 import codecs
 import re
 import string
 import zlib
+from collections.abc import Callable
+from typing import overload
 
-from django.utils.encoding import force_text, smart_text
+from django.utils.encoding import smart_str
 
-_word_sep_re = re.compile(r"[\s.;,_-]+", re.UNICODE)
-_camelcase_re = re.compile(r"(?:[A-Z]{2,}(?=[A-Z]))|(?:[A-Z][a-z0-9]+)|(?:[a-z0-9]+)")
-_letters_re = re.compile(r"[A-Z]+")
-_digit_re = re.compile(r"\d+")
 _sprintf_placeholder_re = re.compile(
     r"%(?:\d+\$)?[+-]?(?:[ 0]|\'.{1})?-?\d*(?:\.\d+)?[bcdeEufFgGosxX]"
-)
-
-_lone_surrogate = re.compile(
-    """(?x)
-    (
-        [\ud800-\udbff](?![\udc00-\udfff])
-    ) | (
-        (?<![\ud800-\udbff])
-        [\udc00-\udfff]
-    )
-"""
 )
 
 INVALID_ESCAPE = re.compile(
@@ -40,18 +29,28 @@ INVALID_ESCAPE = re.compile(
 )
 
 
-def unescape_string(value: str):
+def unescape_string(value: str) -> str:
     """Unescapes a backslash escaped string."""
     value = INVALID_ESCAPE.sub(r"\1\\", value)
     return ast.literal_eval(f'"""{value}"""')
 
 
-def strip_lone_surrogates(string):
+def strip_lone_surrogates(string: str) -> str:
     """Removes lone surrogates."""
     return string.encode("utf-8", "surrogatepass").decode("utf-8", "ignore")
 
 
-def truncatechars(value, arg, ellipsis="..."):
+@overload
+def truncatechars(value: None, arg: int, ellipsis: str = ...) -> None:
+    ...
+
+
+@overload
+def truncatechars(value: str, arg: int, ellipsis: str = ...) -> str:
+    ...
+
+
+def truncatechars(value: str | None, arg: int, ellipsis: str = "...") -> str | None:
     # TODO (alex) could use unicode ellipsis: u'\u2026'
     """
     Truncates a string after a certain number of chars.
@@ -69,7 +68,7 @@ def truncatechars(value, arg, ellipsis="..."):
     return value
 
 
-def compress(value):
+def compress(value: bytes) -> str:
     """
     Compresses a value for safe passage as a string.
 
@@ -79,25 +78,21 @@ def compress(value):
     return base64.b64encode(zlib.compress(value)).decode("utf-8")
 
 
-def decompress(value):
+def decompress(value: str) -> bytes:
     return zlib.decompress(base64.b64decode(value))
 
 
-def gunzip(value):
-    return zlib.decompress(value, 16 + zlib.MAX_WBITS)
-
-
-def strip(value):
+def strip(value: str | None) -> str:
     if not value:
         return ""
-    return smart_text(value).strip()
+    return smart_str(value).strip()
 
 
-def soft_hyphenate(value, length, hyphen="\u00ad"):
+def soft_hyphenate(value: str, length: int, hyphen: str = "\u00ad") -> str:
     return hyphen.join([value[i : (i + length)] for i in range(0, len(value), length)])
 
 
-def soft_break(value, length, process=lambda chunk: chunk):
+def soft_break(value: str, length: int, process: Callable[[str], str] = lambda chunk: chunk) -> str:
     """
     Encourages soft breaking of text values above a maximum length by adding
     zero-width spaces after common delimiters, as well as soft-hyphenating long
@@ -105,7 +100,7 @@ def soft_break(value, length, process=lambda chunk: chunk):
     """
     delimiters = re.compile(r"([{}]+)".format("".join(map(re.escape, ",.$:/+@!?()<>[]{}"))))
 
-    def soft_break_delimiter(match):
+    def soft_break_delimiter(match: re.Match[str]) -> str:
         results = []
 
         value = match.group(0)
@@ -119,46 +114,6 @@ def soft_break(value, length, process=lambda chunk: chunk):
         return "".join(results).rstrip("\u200b")
 
     return re.sub(rf"\S{{{length},}}", soft_break_delimiter, value)
-
-
-def to_unicode(value):
-    try:
-        value = str(force_text(value))
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        value = "(Error decoding value)"
-    except Exception:  # in some cases we get a different exception
-        try:
-            value = str(repr(type(value)))
-        except Exception:
-            value = "(Error decoding value)"
-    return value
-
-
-def split_camelcase(word):
-    pieces = _camelcase_re.findall(word)
-
-    # Unicode characters or some stuff, ignore it.
-    if sum(len(x) for x in pieces) != len(word):
-        yield word
-    else:
-        yield from pieces
-
-
-def split_any_wordlike(value, handle_camelcase=False):
-    for word in _word_sep_re.split(value):
-        if handle_camelcase:
-            yield from split_camelcase(word)
-        else:
-            yield word
-
-
-def tokens_from_name(value, remove_digits=False):
-    for word in split_any_wordlike(value, handle_camelcase=True):
-        if remove_digits:
-            word = _digit_re.sub("", word)
-        word = word.lower()
-        if word:
-            yield word
 
 
 valid_dot_atom_characters = frozenset(string.ascii_letters + string.digits + ".!#$%&'*+-/=?^_`{|}~")
@@ -179,15 +134,14 @@ def count_sprintf_parameters(string: str) -> int:
     return len(_sprintf_placeholder_re.findall(string))
 
 
-def codec_lookup(encoding, default="utf-8"):
+def codec_lookup(encoding: str, default: str = "utf-8") -> codecs.CodecInfo:
     """Safely lookup a codec and ignore non-text codecs,
     falling back to a default on errors.
     Note: the default value is not sanity checked and would
     bypass these checks."""
 
-    def _get_default():
-        if default is not None:
-            return codecs.lookup(default)
+    def _get_default() -> codecs.CodecInfo:
+        return codecs.lookup(default)
 
     if not encoding:
         return _get_default()
@@ -216,7 +170,7 @@ def codec_lookup(encoding, default="utf-8"):
     return info
 
 
-def oxfordize_list(strings):
+def oxfordize_list(strings: list[str]) -> str:
     """Given a list of strings, formats them correctly given the length of the
     list. For example:
 
@@ -237,5 +191,5 @@ def oxfordize_list(strings):
     return f"{', '.join(strings[:-1])}, and {strings[-1]}"
 
 
-def to_single_line_str(original_str):
+def to_single_line_str(original_str: str) -> str:
     return " ".join(original_str.strip().split())

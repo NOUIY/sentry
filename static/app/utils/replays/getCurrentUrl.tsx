@@ -1,33 +1,49 @@
-import last from 'lodash/last';
+import type {
+  BreadcrumbFrame,
+  NavigationFrame,
+  SpanFrame,
+} from 'sentry/utils/replays/types';
+import {isSpanFrame} from 'sentry/utils/replays/types';
+import {safeURL} from 'sentry/utils/url/safeURL';
+import stripURLOrigin from 'sentry/utils/url/stripURLOrigin';
+import type {ReplayRecord} from 'sentry/views/replays/types';
 
-import {transformCrumbs} from 'sentry/components/events/interfaces/breadcrumbs/utils';
-import {BreadcrumbType, BreadcrumbTypeNavigation} from 'sentry/types/breadcrumbs';
-import {EventTag} from 'sentry/types/event';
-import type ReplayReader from 'sentry/utils/replays/replayReader';
+function getCurrentUrl(
+  replayRecord: undefined | ReplayRecord,
+  frames: undefined | (BreadcrumbFrame | SpanFrame)[],
+  currentOffsetMS: number
+) {
+  const framesBeforeCurrentOffset = frames?.filter(
+    frame => frame.offsetMs < currentOffsetMS
+  );
 
-function findUrlTag(tags: EventTag[]) {
-  return tags.find(tag => tag.key === 'url');
-}
+  const mostRecentFrame = framesBeforeCurrentOffset?.at(-1) ?? frames?.at(0);
+  if (!mostRecentFrame) {
+    return '';
+  }
 
-function getCurrentUrl(replay: ReplayReader, currentOffsetMS: number) {
-  const event = replay.getEvent();
-  const crumbs = replay.getRawCrumbs();
+  const initialUrl = replayRecord?.urls[0] ?? '';
+  const origin = initialUrl ? safeURL(initialUrl)?.origin || initialUrl : '';
 
-  const startTimestampMs = event.startTimestamp * 1000;
-  const currentTimeMs = startTimestampMs + Math.floor(currentOffsetMS);
+  if ('category' in mostRecentFrame && mostRecentFrame.category === 'replay.init') {
+    return origin + stripURLOrigin(mostRecentFrame.message ?? '');
+  }
 
-  const navigationCrumbs = transformCrumbs(crumbs).filter(
-    crumb => crumb.type === BreadcrumbType.NAVIGATION
-  ) as BreadcrumbTypeNavigation[];
+  if (
+    isSpanFrame(mostRecentFrame) &&
+    [
+      'navigation.navigate',
+      'navigation.reload',
+      'navigation.back_forward',
+      'navigation.push',
+    ].includes(mostRecentFrame.op)
+  ) {
+    // navigation.push will have the pathname while the other `navigate.*`
+    // operations will have a full url.
+    return origin + stripURLOrigin((mostRecentFrame as NavigationFrame).description);
+  }
 
-  const initialUrl = findUrlTag(event.tags)?.value || '';
-  const origin = initialUrl ? new URL(initialUrl).origin : '';
-
-  const mostRecentNavigation = last(
-    navigationCrumbs.filter(({timestamp}) => +new Date(timestamp || 0) < currentTimeMs)
-  )?.data?.to;
-
-  return mostRecentNavigation ? origin + mostRecentNavigation : initialUrl;
+  throw new Error('Unknown frame type in getCurrentUrl');
 }
 
 export default getCurrentUrl;

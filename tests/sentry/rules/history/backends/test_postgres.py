@@ -1,13 +1,14 @@
 from datetime import timedelta
 
-import pytz
-from freezegun import freeze_time
-
-from sentry.models import Rule, RuleFireHistory
+from sentry.models.rule import Rule
+from sentry.models.rulefirehistory import RuleFireHistory
 from sentry.rules.history.backends.postgres import PostgresRuleHistoryBackend
 from sentry.rules.history.base import RuleGroupHistory
-from sentry.testutils import TestCase
-from sentry.testutils.helpers.datetime import before_now
+from sentry.testutils.cases import TestCase
+from sentry.testutils.helpers.datetime import before_now, freeze_time
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class BasePostgresRuleHistoryBackendTest(TestCase):
@@ -27,6 +28,11 @@ class RecordTest(BasePostgresRuleHistoryBackendTest):
         assert RuleFireHistory.objects.filter(rule=rule, group=self.group).count() == 2
         assert RuleFireHistory.objects.filter(rule=rule, group=group_2).count() == 1
         assert RuleFireHistory.objects.filter(rule=rule).count() == 3
+
+    def test_returns_new_instance(self) -> None:
+        rule = Rule.objects.create(project=self.event.project)
+        new_instance = self.backend.record(rule, self.group)
+        assert new_instance is not None
 
 
 @freeze_time()
@@ -72,7 +78,7 @@ class FetchRuleGroupsPaginatedTest(BasePostgresRuleHistoryBackendTest):
         )
         RuleFireHistory.objects.bulk_create(history)
 
-        base_triggered_date = before_now(days=1).replace(tzinfo=pytz.UTC)
+        base_triggered_date = before_now(days=1)
 
         self.run_test(
             rule,
@@ -132,6 +138,58 @@ class FetchRuleGroupsPaginatedTest(BasePostgresRuleHistoryBackendTest):
             [
                 RuleGroupHistory(
                     self.group, count=1, last_triggered=base_triggered_date - timedelta(days=2)
+                ),
+            ],
+        )
+
+    def test_event_id(self):
+        rule = Rule.objects.create(project=self.event.project)
+        for i in range(3):
+            RuleFireHistory.objects.create(
+                project=rule.project,
+                rule=rule,
+                group=self.group,
+                date_added=before_now(days=i + 1),
+                event_id=i,
+            )
+
+        base_triggered_date = before_now(days=1)
+        self.run_test(
+            rule,
+            before_now(days=3),
+            before_now(days=0),
+            [
+                RuleGroupHistory(
+                    group=self.group, count=3, last_triggered=base_triggered_date, event_id="0"
+                )
+            ],
+        )
+
+        group_2 = self.create_group()
+        for i in range(3):
+            RuleFireHistory.objects.create(
+                project=rule.project,
+                rule=rule,
+                group=group_2,
+                date_added=before_now(days=i + 4),
+                event_id=i + 3,
+            )
+        self.run_test(
+            rule,
+            before_now(days=5),
+            before_now(days=2),
+            [
+                RuleGroupHistory(
+                    group=group_2,
+                    count=2,
+                    last_triggered=base_triggered_date - timedelta(days=3),
+                    event_id="3",
+                ),
+                RuleGroupHistory(
+                    group=self.group,
+                    count=1,
+                    last_triggered=base_triggered_date - timedelta(days=2),
+                    event_id="2",
                 ),
             ],
         )

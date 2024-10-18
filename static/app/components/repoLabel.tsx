@@ -1,17 +1,15 @@
 import styled from '@emotion/styled';
 
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-
 const RepoLabel = styled('span')`
   /* label mixin from bootstrap */
-  font-weight: 700;
+  font-weight: ${p => p.theme.fontWeightBold};
   color: ${p => p.theme.white};
   text-align: center;
   white-space: nowrap;
   border-radius: 0.25em;
   /* end of label mixin from bootstrap */
 
-  ${overflowEllipsis};
+  ${p => p.theme.overflowEllipsis};
 
   display: inline-block;
   vertical-align: text-bottom;

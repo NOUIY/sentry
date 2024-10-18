@@ -1,362 +1,401 @@
-import {Fragment} from 'react';
+import {useEffect, useMemo, useState} from 'react';
+import {css, keyframes} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import {openModal} from 'sentry/actionCreators/modal';
-import {promptsCheck, promptsUpdate} from 'sentry/actionCreators/prompts';
-import {ResponseMeta} from 'sentry/api';
-import Access from 'sentry/components/acl/access';
-import AsyncComponent from 'sentry/components/asyncComponent';
-import {Body, Header, Hovercard} from 'sentry/components/hovercard';
-import {IconInfo} from 'sentry/icons';
-import {IconClose} from 'sentry/icons/iconClose';
-import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {
-  Frame,
-  Integration,
-  Organization,
-  Project,
-  RepositoryProjectPathConfigWithIntegration,
-} from 'sentry/types';
-import {Event} from 'sentry/types/event';
-import handleXhrErrorResponse from 'sentry/utils/handleXhrErrorResponse';
-import {
-  getIntegrationIcon,
-  trackIntegrationAnalytics,
-} from 'sentry/utils/integrationUtil';
-import {promptIsDismissed} from 'sentry/utils/promptIsDismissed';
-import withOrganization from 'sentry/utils/withOrganization';
-import withProjects from 'sentry/utils/withProjects';
+import {Button} from 'sentry/components/button';
+import {useStacktraceCoverage} from 'sentry/components/events/interfaces/frame/useStacktraceCoverage';
+import {hasFileExtension} from 'sentry/components/events/interfaces/frame/utils';
+import ExternalLink from 'sentry/components/links/externalLink';
+import Placeholder from 'sentry/components/placeholder';
+import {Tooltip} from 'sentry/components/tooltip';
+import {IconWarning} from 'sentry/icons';
+import {t} from 'sentry/locale';
+import {space} from 'sentry/styles/space';
+import type {Event, Frame} from 'sentry/types/event';
+import type {StacktraceLinkResult} from 'sentry/types/integrations';
+import {CodecovStatusCode} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {PlatformKey} from 'sentry/types/project';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {getAnalyticsDataForEvent} from 'sentry/utils/events';
+import {getIntegrationIcon, getIntegrationSourceUrl} from 'sentry/utils/integrationUtil';
+import useRouteAnalyticsParams from 'sentry/utils/routeAnalytics/useRouteAnalyticsParams';
+import useOrganization from 'sentry/utils/useOrganization';
+import useProjects from 'sentry/utils/useProjects';
 
-import {OpenInContainer, OpenInLink, OpenInName} from './openInContextLine';
 import StacktraceLinkModal from './stacktraceLinkModal';
+import useStacktraceLink from './useStacktraceLink';
 
-type Props = AsyncComponent['props'] & {
+const supportedStacktracePlatforms: PlatformKey[] = [
+  'go',
+  'javascript',
+  'node',
+  'php',
+  'python',
+  'ruby',
+  'elixir',
+];
+
+function shouldShowCodecovFeatures(
+  organization: Organization,
+  match: StacktraceLinkResult,
+  codecovStatus: CodecovStatusCode
+) {
+  const validStatus = codecovStatus && codecovStatus !== CodecovStatusCode.NO_INTEGRATION;
+
+  return (
+    organization.codecovAccess && validStatus && match.config?.provider.key === 'github'
+  );
+}
+
+interface CodecovLinkProps {
   event: Event;
-  frame: Frame;
-  lineNo: number;
   organization: Organization;
-  projects: Project[];
-};
+  coverageUrl?: string;
+  status?: CodecovStatusCode;
+}
 
-export type StacktraceErrorMessage =
-  | 'file_not_found'
-  | 'stack_root_mismatch'
-  | 'integration_link_forbidden';
-
-// format of the ProjectStacktraceLinkEndpoint response
-type StacktraceResultItem = {
-  integrations: Integration[];
-  attemptedUrl?: string;
-  config?: RepositoryProjectPathConfigWithIntegration;
-  error?: StacktraceErrorMessage;
-  sourceUrl?: string;
-};
-
-type State = AsyncComponent['state'] & {
-  isDismissed: boolean;
-  match: StacktraceResultItem;
-  promptLoaded: boolean;
-};
-
-class StacktraceLink extends AsyncComponent<Props, State> {
-  get project() {
-    // we can't use the withProject HoC on an the issue page
-    // so we ge around that by using the withProjects HoC
-    // and look up the project from the list
-    const {projects, event} = this.props;
-    return projects.find(project => project.id === event.projectID);
-  }
-  get match() {
-    return this.state.match;
-  }
-  get config() {
-    return this.match.config;
+function CodecovLink({
+  coverageUrl,
+  status = CodecovStatusCode.COVERAGE_EXISTS,
+  organization,
+  event,
+}: CodecovLinkProps) {
+  if (status === CodecovStatusCode.NO_COVERAGE_DATA) {
+    return (
+      <CodecovWarning>
+        {t('Code Coverage not found')}
+        <IconWarning size="xs" color="errorText" />
+      </CodecovWarning>
+    );
   }
 
-  get integrations() {
-    return this.match.integrations;
+  if (status !== CodecovStatusCode.COVERAGE_EXISTS || !coverageUrl) {
+    return null;
   }
 
-  get errorText() {
-    const error = this.match.error;
-
-    switch (error) {
-      case 'stack_root_mismatch':
-        return t('Error matching your configuration.');
-      case 'file_not_found':
-        return t('Source file not found.');
-      case 'integration_link_forbidden':
-        return t('The repository integration was disconnected.');
-      default:
-        return t('There was an error encountered with the code mapping for this project');
-    }
-  }
-
-  componentDidMount() {
-    this.promptsCheck();
-  }
-
-  async promptsCheck() {
-    const {organization} = this.props;
-
-    const prompt = await promptsCheck(this.api, {
-      organizationId: organization.id,
-      projectId: this.project?.id,
-      feature: 'stacktrace_link',
-    });
-
-    this.setState({
-      isDismissed: promptIsDismissed(prompt),
-      promptLoaded: true,
-    });
-  }
-
-  dismissPrompt() {
-    const {organization} = this.props;
-    promptsUpdate(this.api, {
-      organizationId: organization.id,
-      projectId: this.project?.id,
-      feature: 'stacktrace_link',
-      status: 'dismissed',
-    });
-
-    trackIntegrationAnalytics('integrations.stacktrace_link_cta_dismissed', {
+  const onOpenCodecovLink = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    trackAnalytics('integrations.stacktrace_codecov_link_clicked', {
       view: 'stacktrace_issue_details',
       organization,
+      group_id: event.groupID ? parseInt(event.groupID, 10) : -1,
+      ...getAnalyticsDataForEvent(event),
     });
+  };
 
-    this.setState({isDismissed: true});
-  }
+  return (
+    <OpenInLink
+      href={coverageUrl}
+      openInNewTab
+      onClick={onOpenCodecovLink}
+      aria-label={t('Open in Codecov')}
+    >
+      <Tooltip title={t('Open in Codecov')} skipWrapper>
+        <StyledIconWrapper>{getIntegrationIcon('codecov', 'sm')}</StyledIconWrapper>
+      </Tooltip>
+    </OpenInLink>
+  );
+}
 
-  getEndpoints(): ReturnType<AsyncComponent['getEndpoints']> {
-    const {organization, frame, event} = this.props;
-    const project = this.project;
-    if (!project) {
-      throw new Error('Unable to find project');
+interface StacktraceLinkProps {
+  event: Event;
+  frame: Frame;
+  /**
+   * The line of code being linked
+   */
+  line: string;
+}
+
+export function StacktraceLink({frame, event, line}: StacktraceLinkProps) {
+  const organization = useOrganization();
+  const {projects} = useProjects();
+  const validFilePath = hasFileExtension(frame.absPath || frame.filename || '');
+  // TODO: Currently we only support GitHub links. Implement support for other source code providers.
+  // Related comment: https://github.com/getsentry/sentry/pull/62596#discussion_r1443025242
+  const hasGithubSourceLink = (frame.sourceLink || '').startsWith(
+    'https://www.github.com/'
+  );
+  const [shouldStartQuery, setShouldStartQuery] = useState(false);
+  const project = useMemo(
+    () => projects.find(p => p.id === event.projectID),
+    [projects, event]
+  );
+
+  useEffect(() => {
+    // The stacktrace link is rendered on hover
+    // Delay the query until the mouse hovers the frame for more than 50ms
+    const timer = setTimeout(() => {
+      setShouldStartQuery(true);
+    }, 50); // Delay of 50ms
+    return () => timer && clearTimeout(timer);
+  }, []);
+
+  const isQueryEnabled = hasGithubSourceLink
+    ? false
+    : shouldStartQuery && validFilePath && frame.inApp;
+
+  const {
+    data: match,
+    isPending,
+    refetch,
+  } = useStacktraceLink(
+    {
+      event,
+      frame,
+      orgSlug: organization.slug,
+      projectSlug: project?.slug,
+    },
+    {
+      enabled: isQueryEnabled, // The query will not run until `isQueryEnabled` is true
     }
-    const commitId = event.release?.lastCommit?.id;
-    const platform = event.platform;
-    return [
-      [
-        'match',
-        `/projects/${organization.slug}/${project.slug}/stacktrace-link/`,
-        {query: {file: frame.filename, platform, commitId}},
-      ],
-    ];
-  }
+  );
+  const coverageEnabled =
+    isQueryEnabled &&
+    organization.codecovAccess &&
+    organization.features.includes('codecov-integration');
+  const {data: coverage, isPending: isLoadingCoverage} = useStacktraceCoverage(
+    {
+      event,
+      frame,
+      orgSlug: organization.slug,
+      projectSlug: project?.slug,
+    },
+    {
+      enabled: coverageEnabled,
+    }
+  );
 
-  onRequestError(resp: ResponseMeta) {
-    handleXhrErrorResponse('Unable to fetch stack trace link')(resp);
-  }
+  useRouteAnalyticsParams(
+    match
+      ? {
+          stacktrace_link_viewed: true,
+          stacktrace_link_status: match.sourceUrl
+            ? 'match'
+            : match.error || match.integrations.length
+              ? 'no_match'
+              : 'empty',
+        }
+      : {}
+  );
 
-  getDefaultState(): State {
-    return {
-      ...super.getDefaultState(),
-      showModal: false,
-      sourceCodeInput: '',
-      match: {integrations: []},
-      isDismissed: false,
-      promptLoaded: false,
-    };
-  }
-
-  onOpenLink() {
-    const provider = this.config?.provider;
+  const onOpenLink = (e: React.MouseEvent, sourceLink: Frame['sourceLink'] = null) => {
+    e.stopPropagation();
+    const provider = match?.config?.provider;
     if (provider) {
-      trackIntegrationAnalytics(
+      trackAnalytics(
         'integrations.stacktrace_link_clicked',
         {
           view: 'stacktrace_issue_details',
           provider: provider.key,
-          organization: this.props.organization,
+          organization,
+          group_id: event.groupID ? parseInt(event.groupID, 10) : -1,
+          ...getAnalyticsDataForEvent(event),
         },
         {startSession: true}
       );
     }
-  }
-
-  onReconfigureMapping() {
-    const provider = this.config?.provider;
-    const error = this.match.error;
-    if (provider) {
-      trackIntegrationAnalytics(
-        'integrations.reconfigure_stacktrace_setup',
+    if (sourceLink) {
+      const url = new URL(sourceLink);
+      const hostname = url.hostname;
+      const parts = hostname.split('.');
+      const domain = parts.length > 1 ? parts[1] : '';
+      trackAnalytics(
+        'integrations.non_inapp_stacktrace_link_clicked',
         {
           view: 'stacktrace_issue_details',
-          provider: provider.key,
-          error_reason: error,
-          organization: this.props.organization,
+          provider: domain,
+          organization,
+          group_id: event.groupID ? parseInt(event.groupID, 10) : -1,
+          ...getAnalyticsDataForEvent(event),
         },
         {startSession: true}
       );
     }
-  }
-
-  handleSubmit = () => {
-    this.reloadData();
   };
 
-  // don't show the error boundary if the component fails.
-  // capture the endpoint error on onRequestError
-  renderError(): React.ReactNode {
+  const handleSubmit = () => {
+    refetch();
+  };
+
+  if (!validFilePath) {
     return null;
   }
 
-  renderLoading() {
-    // TODO: Add loading
-    return null;
-  }
-
-  renderNoMatch() {
-    const {organization} = this.props;
-    const filename = this.props.frame.filename;
-    const platform = this.props.event.platform;
-    if (this.project && this.integrations.length > 0 && filename) {
-      return (
-        <Access organization={organization} access={['org:integrations']}>
-          {({hasAccess}) =>
-            hasAccess && (
-              <CodeMappingButtonContainer columnQuantity={2}>
-                {tct('[link:Link your stack trace to your source code.]', {
-                  link: (
-                    <a
-                      onClick={() => {
-                        trackIntegrationAnalytics(
-                          'integrations.stacktrace_start_setup',
-                          {
-                            view: 'stacktrace_issue_details',
-                            platform,
-                            organization,
-                          },
-                          {startSession: true}
-                        );
-                        openModal(
-                          deps =>
-                            this.project && (
-                              <StacktraceLinkModal
-                                onSubmit={this.handleSubmit}
-                                filename={filename}
-                                project={this.project}
-                                organization={organization}
-                                integrations={this.integrations}
-                                {...deps}
-                              />
-                            )
-                        );
-                      }}
-                    />
-                  ),
-                })}
-                <StyledIconClose size="xs" onClick={() => this.dismissPrompt()} />
-              </CodeMappingButtonContainer>
-            )
-          }
-        </Access>
-      );
-    }
-    return null;
-  }
-
-  renderHovercard() {
-    const error = this.match.error;
-    const url = this.match.attemptedUrl;
-    const {frame} = this.props;
-    const {config} = this.match;
+  // Render the provided `sourceLink` for all the non-inapp frames for `csharp` platform Issues
+  // We skip fetching from the API for these frames.
+  if (!match && hasGithubSourceLink && !frame.inApp && frame.sourceLink) {
     return (
-      <Fragment>
-        <StyledHovercard
-          header={
-            error === 'stack_root_mismatch' ? (
-              <span>{t('Mismatch between filename and stack root')}</span>
-            ) : (
-              <span>{t('Unable to find source code url')}</span>
-            )
-          }
-          body={
-            error === 'stack_root_mismatch' ? (
-              <HeaderContainer>
-                <HovercardLine>
-                  filename: <code>{`${frame.filename}`}</code>
-                </HovercardLine>
-                <HovercardLine>
-                  stack root: <code>{`${config?.stackRoot}`}</code>
-                </HovercardLine>
-              </HeaderContainer>
-            ) : (
-              <HeaderContainer>
-                <HovercardLine>{url}</HovercardLine>
-              </HeaderContainer>
-            )
-          }
+      <StacktraceLinkWrapper>
+        <Tooltip title={t('Open this line in GitHub')} skipWrapper>
+          <OpenInLink
+            onClick={e => onOpenLink(e, frame.sourceLink)}
+            href={frame.sourceLink}
+            openInNewTab
+            aria-label={t('GitHub')}
+          >
+            <StyledIconWrapper>{getIntegrationIcon('github', 'sm')}</StyledIconWrapper>
+          </OpenInLink>
+        </Tooltip>
+      </StacktraceLinkWrapper>
+    );
+  }
+
+  if ((isPending && isQueryEnabled) || !match) {
+    const placeholderWidth = coverageEnabled ? '40px' : '14px';
+    return (
+      <StacktraceLinkWrapper>
+        <Placeholder height="14px" width={placeholderWidth} />
+      </StacktraceLinkWrapper>
+    );
+  }
+
+  // Match found - display link to source
+  if (match.config && match.sourceUrl) {
+    const label = t('Open this line in %s', match.config.provider.name);
+    return (
+      <StacktraceLinkWrapper>
+        <OpenInLink
+          onClick={onOpenLink}
+          href={getIntegrationSourceUrl(
+            match.config.provider.key,
+            match!.sourceUrl,
+            frame.lineNo
+          )}
+          openInNewTab
+          aria-label={label}
         >
-          <StyledIconInfo size="xs" />
-        </StyledHovercard>
-      </Fragment>
-    );
-  }
-
-  renderMatchNoUrl() {
-    const {config, error} = this.match;
-    const {organization} = this.props;
-    const url = `/settings/${organization.slug}/integrations/${config?.provider.key}/${config?.integrationId}/?tab=codeMappings`;
-    return (
-      <CodeMappingButtonContainer columnQuantity={2}>
-        <ErrorInformation>
-          {error && this.renderHovercard()}
-          <ErrorText>{this.errorText}</ErrorText>
-          {tct('[link:Configure Stack Trace Linking] to fix this problem.', {
-            link: (
-              <a
-                onClick={() => {
-                  this.onReconfigureMapping();
-                }}
-                href={url}
-              />
-            ),
-          })}
-        </ErrorInformation>
-      </CodeMappingButtonContainer>
-    );
-  }
-
-  renderMatchWithUrl(config: RepositoryProjectPathConfigWithIntegration, url: string) {
-    url = `${url}#L${this.props.frame.lineNo}`;
-    return (
-      <OpenInContainer columnQuantity={2}>
-        <div>{t('Open this line in')}</div>
-        <OpenInLink onClick={() => this.onOpenLink()} href={url} openInNewTab>
-          <StyledIconWrapper>{getIntegrationIcon(config.provider.key)}</StyledIconWrapper>
-          <OpenInName>{config.provider.name}</OpenInName>
+          <Tooltip title={label} skipWrapper>
+            <StyledIconWrapper>
+              {getIntegrationIcon(match.config.provider.key, 'sm')}
+            </StyledIconWrapper>
+          </Tooltip>
         </OpenInLink>
-      </OpenInContainer>
+        {coverageEnabled && isLoadingCoverage ? (
+          <Placeholder height="14px" width="14px" />
+        ) : coverage &&
+          shouldShowCodecovFeatures(organization, match, coverage.status) ? (
+          <CodecovLink
+            coverageUrl={`${coverage.coverageUrl}#L${frame.lineNo}`}
+            status={coverage.status}
+            organization={organization}
+            event={event}
+          />
+        ) : null}
+      </StacktraceLinkWrapper>
     );
   }
 
-  renderBody() {
-    const {config, sourceUrl} = this.match || {};
-    const {isDismissed, promptLoaded} = this.state;
+  // Hide stacktrace link errors if the stacktrace might be minified javascript
+  // Check if the line starts and ends with {snip}
+  const isMinifiedJsError =
+    event.platform === 'javascript' && /(\{snip\}).*\1/.test(line);
+  const isUnsupportedPlatform = !supportedStacktracePlatforms.includes(
+    event.platform as PlatformKey
+  );
 
-    if (config && sourceUrl) {
-      return this.renderMatchWithUrl(config, sourceUrl);
-    }
-    if (config) {
-      return this.renderMatchNoUrl();
-    }
+  const hideErrors = isMinifiedJsError || isUnsupportedPlatform;
+  // for .NET projects, if there is no match found but there is a GitHub source link, use that
+  if (
+    frame.sourceLink &&
+    hasGithubSourceLink &&
+    (match.error || match.integrations.length > 0)
+  ) {
+    return (
+      <StacktraceLinkWrapper>
+        <Tooltip title={t('GitHub')} skipWrapper>
+          <OpenInLink onClick={onOpenLink} href={frame.sourceLink} openInNewTab>
+            <StyledIconWrapper>{getIntegrationIcon('github', 'sm')}</StyledIconWrapper>
+          </OpenInLink>
+        </Tooltip>
+        {coverageEnabled && isLoadingCoverage ? (
+          <Placeholder height="14px" width="14px" />
+        ) : coverage &&
+          shouldShowCodecovFeatures(organization, match, coverage.status) ? (
+          <CodecovLink
+            coverageUrl={`${frame.sourceLink}`}
+            status={coverage.status}
+            organization={organization}
+            event={event}
+          />
+        ) : null}
+      </StacktraceLinkWrapper>
+    );
+  }
 
-    if (!promptLoaded || (promptLoaded && isDismissed)) {
+  // No match found - Has integration but no code mappings
+  if (!hideErrors && (match.error || match.integrations.length > 0)) {
+    const filename = frame.filename;
+    if (!project || !match.integrations.length || !filename) {
       return null;
     }
 
-    return this.renderNoMatch();
+    const sourceCodeProviders = match.integrations.filter(integration =>
+      ['github', 'gitlab'].includes(integration.provider?.key)
+    );
+    return (
+      <StacktraceLinkWrapper>
+        <FixMappingButton
+          priority="link"
+          icon={
+            sourceCodeProviders.length === 1
+              ? getIntegrationIcon(sourceCodeProviders[0].provider.key, 'sm')
+              : undefined
+          }
+          onClick={() => {
+            trackAnalytics(
+              'integrations.stacktrace_start_setup',
+              {
+                view: 'stacktrace_issue_details',
+                platform: event.platform,
+                provider: sourceCodeProviders[0]?.provider.key,
+                setup_type: 'automatic',
+                organization,
+                ...getAnalyticsDataForEvent(event),
+              },
+              {startSession: true}
+            );
+            openModal(deps => (
+              <StacktraceLinkModal
+                onSubmit={handleSubmit}
+                filename={filename}
+                project={project}
+                organization={organization}
+                integrations={match.integrations}
+                {...deps}
+              />
+            ));
+          }}
+        >
+          {t('Set up Code Mapping')}
+        </FixMappingButton>
+      </StacktraceLinkWrapper>
+    );
   }
+
+  return null;
 }
 
-export default withProjects(withOrganization(StacktraceLink));
-export {StacktraceLink};
+const fadeIn = keyframes`
+  from { opacity: 0; }
+  to { opacity: 1; }
+`;
 
-export const CodeMappingButtonContainer = styled(OpenInContainer)`
-  justify-content: space-between;
+const StacktraceLinkWrapper = styled('div')`
+  display: flex;
+  gap: ${space(1)};
+  align-items: center;
+  color: ${p => p.theme.subText};
+  font-family: ${p => p.theme.text.family};
+  padding: 0 ${space(1)};
+`;
+
+const FixMappingButton = styled(Button)`
+  color: ${p => p.theme.subText};
+  &:hover {
+    color: ${p => p.theme.subText};
+  }
 `;
 
 const StyledIconWrapper = styled('span')`
@@ -364,45 +403,24 @@ const StyledIconWrapper = styled('span')`
   line-height: 0;
 `;
 
-const StyledIconClose = styled(IconClose)`
-  margin: auto;
-  cursor: pointer;
-`;
-
-const StyledIconInfo = styled(IconInfo)`
-  margin-right: ${space(0.5)};
-  margin-bottom: -2px;
-  cursor: pointer;
-  line-height: 0;
-`;
-
-const StyledHovercard = styled(Hovercard)`
-  font-weight: normal;
-  width: inherit;
-  line-height: 0;
-  ${Header} {
-    font-weight: strong;
-    font-size: ${p => p.theme.fontSizeSmall};
-    color: ${p => p.theme.subText};
-  }
-  ${Body} {
-    font-weight: normal;
-    font-size: ${p => p.theme.fontSizeSmall};
-  }
-`;
-const HeaderContainer = styled('div')`
-  width: 100%;
+const LinkStyles = css`
   display: flex;
-  justify-content: space-between;
-`;
-const HovercardLine = styled('div')`
-  padding-bottom: 3px;
+  align-items: center;
+  gap: ${space(0.75)};
 `;
 
-const ErrorInformation = styled('div')`
-  padding-right: 5px;
-  margin-right: ${space(1)};
+const OpenInLink = styled(ExternalLink)`
+  ${LinkStyles}
+  color: ${p => p.theme.subText};
+  animation: ${fadeIn} 0.2s ease-in-out forwards;
+  &:hover {
+    color: ${p => p.theme.textColor};
+  }
 `;
-const ErrorText = styled('span')`
-  margin-right: ${space(0.5)};
+
+const CodecovWarning = styled('div')`
+  display: flex;
+  color: ${p => p.theme.errorText};
+  gap: ${space(0.75)};
+  align-items: center;
 `;

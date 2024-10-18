@@ -4,15 +4,15 @@ import {Observer} from 'mobx-react';
 import * as qs from 'query-string';
 
 import {addLoadingMessage} from 'sentry/actionCreators/indicator';
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
+import SentryProjectSelectorField from 'sentry/components/forms/fields/sentryProjectSelectorField';
 import Form from 'sentry/components/forms/form';
 import FormModel from 'sentry/components/forms/model';
-import SentryProjectSelectorField from 'sentry/components/forms/sentryProjectSelectorField';
 import List from 'sentry/components/list';
 import ListItem from 'sentry/components/list/listItem';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Project} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Project} from 'sentry/types/project';
 
 import FooterWithButtons from './components/footerWithButtons';
 import HeaderWithHelp from './components/headerWithHelp';

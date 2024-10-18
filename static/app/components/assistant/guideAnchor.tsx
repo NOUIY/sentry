@@ -1,7 +1,7 @@
-import {Component, createRef, Fragment} from 'react';
+import {Component, createRef, Fragment, useEffect} from 'react';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
-import {Query} from 'history';
+import type {Query} from 'history';
 
 import {
   closeGuide,
@@ -11,21 +11,23 @@ import {
   registerAnchor,
   unregisterAnchor,
 } from 'sentry/actionCreators/guides';
-import {Guide} from 'sentry/components/assistant/types';
-import Button from 'sentry/components/button';
-import {Body as HovercardBody, Hovercard} from 'sentry/components/hovercard';
+import type {Guide} from 'sentry/components/assistant/types';
+import {Button, LinkButton} from 'sentry/components/button';
+import {Hovercard} from 'sentry/components/hovercard';
 import {t, tct} from 'sentry/locale';
-import GuideStore, {GuideStoreState} from 'sentry/stores/guideStore';
-import space from 'sentry/styles/space';
-import theme from 'sentry/utils/theme';
+import type {GuideStoreState} from 'sentry/stores/guideStore';
+import GuideStore from 'sentry/stores/guideStore';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
 
 type Props = {
   target: string;
+  children?: React.ReactNode;
   /**
    * Hovercard renders the container
    */
   containerClassName?: string;
-  offset?: string;
+  offset?: number;
   /**
    * Trigger when the guide is completed (all steps have been clicked through)
    */
@@ -41,9 +43,30 @@ type Props = {
   };
 };
 
+function ScrollToGuide({children}: {children: React.ReactNode}) {
+  const containerElement = createRef<HTMLSpanElement>();
+
+  useEffect(() => {
+    if (containerElement.current) {
+      try {
+        const {top} = containerElement.current.getBoundingClientRect();
+        const scrollTop = window.pageYOffset;
+        const centerElement = top + scrollTop - window.innerHeight / 2;
+        window.scrollTo({top: centerElement});
+      } catch (err) {
+        Sentry.captureException(err);
+      }
+    }
+  }, [containerElement]);
+
+  return <span ref={containerElement}>{children}</span>;
+}
+
 type State = {
   active: boolean;
+  org: Organization | null;
   orgId: string | null;
+  orgSlug: string | null;
   step: number;
   currentGuide?: Guide;
 };
@@ -53,38 +76,27 @@ class BaseGuideAnchor extends Component<Props, State> {
     active: false,
     step: 0,
     orgId: null,
+    orgSlug: null,
+    org: null,
   };
 
   componentDidMount() {
     const {target} = this.props;
     registerAnchor(target);
-  }
-
-  componentDidUpdate(_prevProps: Props, prevState: State) {
-    if (this.containerElement.current && !prevState.active && this.state.active) {
-      try {
-        const {top} = this.containerElement.current.getBoundingClientRect();
-        const scrollTop = window.pageYOffset;
-        const centerElement = top + scrollTop - window.innerHeight / 2;
-        window.scrollTo({top: centerElement});
-      } catch (err) {
-        Sentry.captureException(err);
-      }
-    }
+    this.unsubscribe = GuideStore.listen(
+      (data: GuideStoreState) => this.onGuideStateChange(data),
+      undefined
+    );
   }
 
   componentWillUnmount() {
     const {target} = this.props;
     unregisterAnchor(target);
-    this.unsubscribe();
+    this.unsubscribe?.();
   }
 
-  unsubscribe = GuideStore.listen(
-    (data: GuideStoreState) => this.onGuideStateChange(data),
-    undefined
-  );
-
-  containerElement = createRef<HTMLSpanElement>();
+  // TODO(TS): Reflux returns "Function" instead of () => void
+  unsubscribe: Function | undefined;
 
   onGuideStateChange(data: GuideStoreState) {
     const active =
@@ -96,6 +108,8 @@ class BaseGuideAnchor extends Component<Props, State> {
       currentGuide: data.currentGuide ?? undefined,
       step: data.currentStep,
       orgId: data.orgId,
+      orgSlug: data.orgSlug,
+      org: data.organization,
     });
   }
 
@@ -111,9 +125,9 @@ class BaseGuideAnchor extends Component<Props, State> {
     this.props.onStepComplete?.(e);
     this.props.onFinish?.(e);
 
-    const {currentGuide, orgId} = this.state;
+    const {currentGuide, orgId, orgSlug, org} = this.state;
     if (currentGuide) {
-      recordFinish(currentGuide.guide, orgId);
+      recordFinish(currentGuide.guide, orgId, orgSlug, org);
     }
     closeGuide();
   };
@@ -150,7 +164,7 @@ class BaseGuideAnchor extends Component<Props, State> {
 
     const dismissButton = (
       <DismissButton
-        size="small"
+        size="sm"
         translucentBorder
         href={href}
         onClick={this.handleDismiss}
@@ -171,7 +185,7 @@ class BaseGuideAnchor extends Component<Props, State> {
             {lastStep ? (
               <Fragment>
                 <StyledButton
-                  size="small"
+                  size="sm"
                   translucentBorder
                   to={to}
                   onClick={this.handleFinish}
@@ -184,7 +198,7 @@ class BaseGuideAnchor extends Component<Props, State> {
             ) : (
               <Fragment>
                 <StyledButton
-                  size="small"
+                  size="sm"
                   translucentBorder
                   onClick={this.handleNextStep}
                   to={to}
@@ -219,14 +233,14 @@ class BaseGuideAnchor extends Component<Props, State> {
 
     return (
       <StyledHovercard
-        show
+        forceVisible
         body={this.getHovercardBody()}
-        tipColor={theme.purple300}
+        tipColor="purple300"
         position={position}
         offset={offset}
         containerClassName={containerClassName}
       >
-        <span ref={this.containerElement}>{children}</span>
+        <ScrollToGuide>{children}</ScrollToGuide>
       </StyledHovercard>
     );
   }
@@ -264,6 +278,12 @@ const GuideContainer = styled('div')`
   background-color: ${p => p.theme.purple300};
   border-color: ${p => p.theme.purple300};
   color: ${p => p.theme.white};
+
+  a {
+    :hover {
+      color: ${p => p.theme.white};
+    }
+  }
 `;
 
 const GuideContent = styled('div')`
@@ -278,7 +298,7 @@ const GuideContent = styled('div')`
 `;
 
 const GuideTitle = styled('div')`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   font-size: ${p => p.theme.fontSizeExtraLarge};
 `;
 
@@ -297,7 +317,9 @@ const StyledButton = styled(Button)`
   min-width: 40%;
 `;
 
-const DismissButton = styled(StyledButton)`
+const DismissButton = styled(LinkButton)`
+  font-size: ${p => p.theme.fontSizeMedium};
+  min-width: 40%;
   margin-left: ${space(1)};
 
   &:hover,
@@ -310,15 +332,10 @@ const DismissButton = styled(StyledButton)`
 
 const StepCount = styled('div')`
   font-size: ${p => p.theme.fontSizeSmall};
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   text-transform: uppercase;
 `;
 
 const StyledHovercard = styled(Hovercard)`
-  ${HovercardBody} {
-    background-color: ${theme.purple300};
-    margin: -1px;
-    border-radius: ${theme.borderRadius};
-    width: 300px;
-  }
+  background-color: ${p => p.theme.purple300};
 `;

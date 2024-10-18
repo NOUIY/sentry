@@ -1,91 +1,108 @@
-import {createStore, StoreDefinition} from 'reflux';
+import {createStore} from 'reflux';
 
-import OrganizationsActions from 'sentry/actions/organizationsActions';
-import {Organization} from 'sentry/types';
-import {makeSafeRefluxStore} from 'sentry/utils/makeSafeRefluxStore';
+import type {Organization} from 'sentry/types/organization';
 
-interface OrganizationsStoreDefinition extends StoreDefinition {
-  add(item: Organization): void;
+import type {StrictStoreDefinition} from './types';
+
+interface State {
+  loaded: boolean;
+  organizations: Organization[];
+}
+
+interface OrganizationsStoreDefinition extends StrictStoreDefinition<State> {
+  addOrReplace(item: Organization): void;
   get(slug: string): Organization | undefined;
-
   getAll(): Organization[];
   load(items: Organization[]): void;
-  loaded: boolean;
-  onChangeSlug(prev: Organization, next: Organization): void;
+  onChangeSlug(prev: Organization, next: Partial<Organization>): void;
   onRemoveSuccess(slug: string): void;
-  onUpdate(org: Organization): void;
+  onUpdate(org: Partial<Organization>): void;
   remove(slug: string): void;
-  state: Organization[];
 }
 
 const storeConfig: OrganizationsStoreDefinition = {
-  listenables: [OrganizationsActions],
-
-  state: [],
-  loaded: false,
-
-  // So we can use Reflux.connect in a component mixin
-  getInitialState() {
-    return this.state;
-  },
+  state: {organizations: [], loaded: false},
 
   init() {
-    this.state = [];
-    this.loaded = false;
+    // XXX: Do not use `this.listenTo` in this store. We avoid usage of reflux
+    // listeners due to their leaky nature in tests.
+
+    this.state = {organizations: [], loaded: false};
   },
 
-  onUpdate(org: Organization) {
-    this.add(org);
+  onUpdate(org) {
+    let match = false;
+    const newOrgs = [...this.state.organizations];
+    newOrgs.forEach((existing, idx) => {
+      if (existing.id === org.id) {
+        newOrgs[idx] = {...existing, ...org};
+        match = true;
+      }
+    });
+    if (!match) {
+      throw new Error(
+        'Cannot update an organization that is not in the OrganizationsStore'
+      );
+    }
+    this.state = {...this.state, organizations: newOrgs};
+    this.trigger(newOrgs);
   },
 
-  onChangeSlug(prev: Organization, next: Organization) {
+  onChangeSlug(prev, next) {
     if (prev.slug === next.slug) {
       return;
     }
 
     this.remove(prev.slug);
-    this.add(next);
+    this.addOrReplace({...prev, ...next});
   },
 
-  onRemoveSuccess(slug: string) {
+  onRemoveSuccess(slug) {
     this.remove(slug);
   },
 
-  get(slug: Organization['slug']) {
-    return this.state.find((item: Organization) => item.slug === slug);
+  get(slug) {
+    return this.state.organizations.find((item: Organization) => item.slug === slug);
   },
 
   getAll() {
+    return this.state.organizations;
+  },
+
+  getState() {
     return this.state;
   },
 
-  remove(slug: Organization['slug']) {
-    this.state = this.state.filter(item => slug !== item.slug);
-    this.trigger(this.state);
+  remove(slug) {
+    this.state = {
+      ...this.state,
+      organizations: this.state.organizations.filter(item => slug !== item.slug),
+    };
+    this.trigger(this.state.organizations);
   },
 
-  add(item: Organization) {
+  addOrReplace(item) {
     let match = false;
-    this.state.forEach((existing, idx) => {
+    const newOrgs = [...this.state.organizations];
+    newOrgs.forEach((existing, idx) => {
       if (existing.id === item.id) {
-        item = {...existing, ...item};
-        this.state[idx] = item;
+        newOrgs[idx] = {...existing, ...item};
         match = true;
       }
     });
     if (!match) {
-      this.state = [...this.state, item];
+      newOrgs.push(item);
     }
-    this.trigger(this.state);
+    this.state = {...this.state, organizations: newOrgs};
+    this.trigger(newOrgs);
   },
 
   load(items: Organization[]) {
-    this.state = items;
-    this.loaded = true;
-    this.trigger(items);
+    const newOrgs = [...items];
+    this.state = {organizations: newOrgs, loaded: true};
+    this.trigger(newOrgs);
   },
 };
 
-const OrganizationsStore = createStore(makeSafeRefluxStore(storeConfig));
-
+const OrganizationsStore = createStore(storeConfig);
 export default OrganizationsStore;

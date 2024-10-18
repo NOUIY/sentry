@@ -1,7 +1,5 @@
 import {Fragment} from 'react';
-import {browserHistory, WithRouterProps} from 'react-router';
 import {useTheme} from '@emotion/react';
-import {Location} from 'history';
 
 import ChartZoom from 'sentry/components/charts/chartZoom';
 import ErrorPanel from 'sentry/components/charts/errorPanel';
@@ -16,26 +14,28 @@ import Placeholder from 'sentry/components/placeholder';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import getDynamicText from 'sentry/utils/getDynamicText';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import useApi from 'sentry/utils/useApi';
+import {useLocation} from 'sentry/utils/useLocation';
 
 import {getExclusiveTimeDisplayedValue} from '../utils';
 
-type Props = WithRouterProps & {
+type Props = {
   eventView: EventView;
-  location: Location;
   organization: Organization;
   spanSlug: SpanSlug;
   withoutZerofill: boolean;
 };
 
 export default function ExclusiveTimeTimeSeries(props: Props) {
-  const {location, router, organization, eventView, spanSlug, withoutZerofill} = props;
+  const location = useLocation();
+  const {organization, eventView, spanSlug, withoutZerofill} = props;
 
   const api = useApi();
   const theme = useTheme();
@@ -52,6 +52,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
   };
 
   const yAxis = [
+    'percentileArray(spans_exclusive_time, 0.50)',
     'percentileArray(spans_exclusive_time, 0.75)',
     'percentileArray(spans_exclusive_time, 0.95)',
     'percentileArray(spans_exclusive_time, 0.99)',
@@ -83,13 +84,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
           )}
         />
       </HeaderTitleLegend>
-      <ChartZoom
-        router={router}
-        period={period}
-        start={start}
-        end={end}
-        utc={utc === 'true'}
-      >
+      <ChartZoom period={period} start={start} end={end} utc={utc === 'true'}>
         {zoomRenderProps => (
           <EventsRequest
             api={api}
@@ -133,7 +128,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
                   trigger: 'axis' as const,
                   // p50() coerces the axis to be time based
                   valueFormatter: (value, _seriesName) =>
-                    tooltipFormatter(value, 'p50()'),
+                    tooltipFormatter(value, 'duration'),
                 },
                 xAxis: timeframe
                   ? {
@@ -144,8 +139,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
                 yAxis: {
                   axisLabel: {
                     color: theme.chartLabel,
-                    // p50() coerces the axis to be time based
-                    formatter: (value: number) => axisLabelFormatter(value, 'p50()'),
+                    formatter: (value: number) => axisLabelFormatter(value, 'duration'),
                   },
                 },
               };

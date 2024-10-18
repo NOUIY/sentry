@@ -1,92 +1,87 @@
-import moment from 'moment';
-import momentTimezone from 'moment-timezone';
+import moment from 'moment-timezone';
 
-import ConfigStore from 'sentry/stores/configStore';
+import {getFormat} from 'sentry/utils/dates';
+import {useUser} from 'sentry/utils/useUser';
 
-interface Props extends React.HTMLAttributes<HTMLTimeElement> {
-  date: moment.MomentInput | momentTimezone.MomentInput;
+export interface DateTimeProps extends React.HTMLAttributes<HTMLTimeElement> {
+  /**
+   * Input date.
+   */
+  date: moment.MomentInput;
+  /**
+   * If true, will only return the date part, e.g. "Jan 1".
+   */
   dateOnly?: boolean;
+  /**
+   * When set, will force the date time display to be in the specified timezone
+   */
+  forcedTimezone?: string;
+  /**
+   * Formatting string. If specified, this formatting string will override all
+   * other formatting props (dateOnly, timeOnly, year).
+   */
   format?: string;
+  /**
+   * Whether to show the seconds. Is false by default.
+   */
   seconds?: boolean;
-  shortDate?: boolean;
-  timeAndDate?: boolean;
+  /**
+   * If true, will only return the time part, e.g. "2:50 PM"
+   */
   timeOnly?: boolean;
+  /**
+   * Whether to show the time zone. If not specified, the returned date string
+   * will not contain the time zone _unless_ the time is UTC, in which case
+   * the user would want to know that it's UTC and not their own time zone.
+   */
+  timeZone?: boolean;
+  /**
+   * Whether the date input is UTC time or not.
+   */
   utc?: boolean;
+  /**
+   * Whether to show the year. If not specified, the returned date string will
+   * not contain the year _if_ the date is not in the current calendar year.
+   * For example: "Feb 1" (2022), "Jan 1" (2022), "Dec 31, 2021".
+   */
+  year?: boolean;
 }
 
-function DateTime({
+export function DateTime({
   format,
   date,
   utc,
-  shortDate,
   dateOnly,
   timeOnly,
-  timeAndDate,
-  seconds = true,
+  year,
+  timeZone,
+  seconds = false,
+  forcedTimezone,
   ...props
-}: Props) {
-  function getFormat({clock24Hours}: {clock24Hours: boolean}): string {
-    if (format) {
-      return format;
-    }
-
-    // October 26, 2017
-    if (dateOnly) {
-      return 'LL';
-    }
-
-    // Oct 26, 11:30 AM
-    if (timeAndDate) {
-      if (clock24Hours) {
-        return 'MMM DD, HH:mm';
-      }
-
-      return 'MMM DD, LT';
-    }
-
-    // 4:57 PM
-    if (timeOnly) {
-      if (clock24Hours) {
-        return 'HH:mm';
-      }
-
-      return 'LT';
-    }
-
-    if (shortDate) {
-      return 'MM/DD/YYYY';
-    }
-
-    if (clock24Hours) {
-      if (seconds) {
-        // Oct 26, 2017 11:30:30
-        return 'MMM D, YYYY HH:mm:ss';
-      }
-
-      // Oct 26, 2017 11:30
-      return 'MMM D, YYYY HH:mm';
-    }
-
-    // Oct 26, 2017 11:30:30 AM
-    if (seconds) {
-      return 'll LTS z';
-    }
-
-    // Default is Oct 26, 2017 11:30 AM
-    return 'lll';
-  }
-
-  const user = ConfigStore.get('user');
+}: DateTimeProps) {
+  const user = useUser();
   const options = user?.options;
-  const formatString = getFormat(options);
+
+  const formatString =
+    format ??
+    getFormat({
+      dateOnly,
+      timeOnly,
+      // If the year prop is defined, then use it. Otherwise only show the year if `date`
+      // is in the current year.
+      year: year ?? moment().year() !== moment(date).year(),
+      // If timeZone is defined, use it. Otherwise only show the time zone if we're using
+      // UTC time.
+      timeZone: timeZone ?? utc,
+      seconds,
+      ...options,
+    });
 
   return (
     <time {...props}>
       {utc
         ? moment.utc(date as moment.MomentInput).format(formatString)
-        : momentTimezone.tz(date, options?.timezone ?? '').format(formatString)}
+        : moment.tz(date, forcedTimezone ?? options?.timezone ?? '').format(formatString)}
     </time>
   );
 }
-
-export default DateTime;

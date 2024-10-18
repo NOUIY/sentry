@@ -1,25 +1,31 @@
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
 import {openEmailVerification} from 'sentry/actionCreators/modal';
-import Button from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import CircleIndicator from 'sentry/components/circleIndicator';
-import Field from 'sentry/components/forms/field';
+import EmptyMessage from 'sentry/components/emptyMessage';
+import FieldGroup from 'sentry/components/forms/fieldGroup';
 import ListLink from 'sentry/components/links/listLink';
 import NavTabs from 'sentry/components/navTabs';
-import {Panel, PanelBody, PanelHeader, PanelItem} from 'sentry/components/panels';
-import Tooltip from 'sentry/components/tooltip';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
+import PanelItem from 'sentry/components/panels/panelItem';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconDelete} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Authenticator, OrganizationSummary} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Authenticator} from 'sentry/types/auth';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {OrganizationSummary} from 'sentry/types/organization';
+import oxfordizeArray from 'sentry/utils/oxfordizeArray';
 import recreateRoute from 'sentry/utils/recreateRoute';
-import AsyncView from 'sentry/views/asyncView';
+import useApi from 'sentry/utils/useApi';
 import RemoveConfirm from 'sentry/views/settings/account/accountSecurity/components/removeConfirm';
 import TwoFactorRequired from 'sentry/views/settings/account/accountSecurity/components/twoFactorRequired';
 import PasswordForm from 'sentry/views/settings/account/passwordForm';
-import EmptyMessage from 'sentry/views/settings/components/emptyMessage';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import TextBlock from 'sentry/views/settings/components/text/textBlock';
 
@@ -31,24 +37,27 @@ type Props = {
   hasVerifiedEmail: boolean;
   onDisable: (auth: Authenticator) => void;
   orgsRequire2fa: OrganizationSummary[];
-} & AsyncView['props'] &
-  RouteComponentProps<{}, {}>;
+} & RouteComponentProps<{}, {}>;
 
 /**
  * Lists 2fa devices + password change form
  */
-class AccountSecurity extends AsyncView<Props> {
-  getTitle() {
-    return t('Security');
-  }
+function AccountSecurity({
+  authenticators,
+  countEnrolled,
+  deleteDisabled,
+  onDisable,
+  hasVerifiedEmail,
+  orgsRequire2fa,
+  handleRefresh,
+  params,
+  routes,
+}: Props) {
+  const api = useApi();
 
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    return [];
-  }
-
-  handleSessionClose = async () => {
+  async function handleSessionClose() {
     try {
-      await this.api.requestPromise('/auth/', {
+      await api.requestPromise('/auth/', {
         method: 'DELETE',
         data: {all: true},
       });
@@ -57,19 +66,15 @@ class AccountSecurity extends AsyncView<Props> {
       addErrorMessage(t('There was a problem closing all sessions'));
       throw err;
     }
-  };
+  }
 
-  formatOrgSlugs = () => {
-    const {orgsRequire2fa} = this.props;
+  const formatOrgSlugs = () => {
     const slugs = orgsRequire2fa.map(({slug}) => slug);
 
-    return [slugs.slice(0, -1).join(', '), slugs.slice(-1)[0]].join(
-      slugs.length > 1 ? ' and ' : ''
-    );
+    return oxfordizeArray(slugs);
   };
 
-  handleAdd2FAClicked = () => {
-    const {handleRefresh} = this.props;
+  const handleAdd2FAClicked = () => {
     openEmailVerification({
       onClose: () => {
         handleRefresh();
@@ -78,140 +83,142 @@ class AccountSecurity extends AsyncView<Props> {
     });
   };
 
-  renderBody() {
-    const {authenticators, countEnrolled, deleteDisabled, onDisable, hasVerifiedEmail} =
-      this.props;
-    const isEmpty = !authenticators?.length;
-    return (
-      <div>
-        <SettingsPageHeader
-          title={t('Security')}
-          tabs={
-            <NavTabs underlined>
-              <ListLink to={recreateRoute('', this.props)} index>
-                {t('Settings')}
-              </ListLink>
-              <ListLink to={recreateRoute('session-history/', this.props)}>
-                {t('Session History')}
-              </ListLink>
-            </NavTabs>
-          }
-        />
+  const isEmpty = !authenticators?.length;
 
-        {!isEmpty && countEnrolled === 0 && <TwoFactorRequired />}
+  return (
+    <SentryDocumentTitle title={t('Security')}>
+      <SettingsPageHeader
+        title={t('Security')}
+        tabs={
+          <NavTabs underlined>
+            <ListLink to={recreateRoute('', {params, routes})} index>
+              {t('Settings')}
+            </ListLink>
+            <ListLink to={recreateRoute('session-history/', {params, routes})}>
+              {t('Session History')}
+            </ListLink>
+          </NavTabs>
+        }
+      />
 
-        <PasswordForm />
+      {!isEmpty && countEnrolled === 0 && <TwoFactorRequired />}
 
-        <Panel>
-          <PanelHeader>{t('Sessions')}</PanelHeader>
-          <PanelBody>
-            <Field
-              alignRight
-              flexibleControlStateSize
-              label={t('Sign out of all devices')}
-              help={t(
-                'Signing out of all devices will sign you out of this device as well.'
-              )}
-            >
-              <Button data-test-id="signoutAll" onClick={this.handleSessionClose}>
-                {t('Sign out of all devices')}
-              </Button>
-            </Field>
-          </PanelBody>
-        </Panel>
+      <PasswordForm />
+      <Panel>
+        <PanelHeader>{t('Sessions')}</PanelHeader>
+        <PanelBody>
+          <FieldGroup
+            alignRight
+            flexibleControlStateSize
+            label={t('Sign out of all devices')}
+            help={t(
+              'Signing out of all devices will sign you out of this device as well.'
+            )}
+          >
+            <Button onClick={handleSessionClose}>{t('Sign out of all devices')}</Button>
+          </FieldGroup>
+        </PanelBody>
+      </Panel>
 
-        <Panel>
-          <PanelHeader>{t('Two-Factor Authentication')}</PanelHeader>
+      <Panel>
+        <PanelHeader>{t('Two-Factor Authentication')}</PanelHeader>
+        {isEmpty && (
+          <EmptyMessage>{t('No available authenticators to add')}</EmptyMessage>
+        )}
+        <PanelBody>
+          {!isEmpty &&
+            authenticators?.map(auth => {
+              const {
+                id,
+                authId,
+                description,
+                isBackupInterface,
+                isEnrolled,
+                disallowNewEnrollment,
+                configureButton,
+                name,
+              } = auth;
+              if (disallowNewEnrollment && !isEnrolled) {
+                return null;
+              }
+              return (
+                <AuthenticatorPanelItem key={id}>
+                  <AuthenticatorHeader>
+                    <AuthenticatorTitle>
+                      <AuthenticatorStatus
+                        role="status"
+                        aria-label={
+                          isEnrolled
+                            ? t('Authentication Method Active')
+                            : t('Authentication Method Inactive')
+                        }
+                        enabled={isEnrolled}
+                      />
+                      <AuthenticatorName>{name}</AuthenticatorName>
+                    </AuthenticatorTitle>
 
-          {isEmpty && (
-            <EmptyMessage>{t('No available authenticators to add')}</EmptyMessage>
-          )}
+                    <Actions>
+                      {!isBackupInterface && !isEnrolled && hasVerifiedEmail && (
+                        <LinkButton
+                          to={`/settings/account/security/mfa/${id}/enroll/`}
+                          size="sm"
+                          priority="primary"
+                        >
+                          {t('Add')}
+                        </LinkButton>
+                      )}
+                      {!isBackupInterface && !isEnrolled && !hasVerifiedEmail && (
+                        <Button
+                          onClick={handleAdd2FAClicked}
+                          size="sm"
+                          priority="primary"
+                        >
+                          {t('Add')}
+                        </Button>
+                      )}
 
-          <PanelBody>
-            {!isEmpty &&
-              authenticators?.map(auth => {
-                const {
-                  id,
-                  authId,
-                  description,
-                  isBackupInterface,
-                  isEnrolled,
-                  configureButton,
-                  name,
-                } = auth;
-                return (
-                  <AuthenticatorPanelItem key={id}>
-                    <AuthenticatorHeader>
-                      <AuthenticatorTitle>
-                        <AuthenticatorStatus enabled={isEnrolled} />
-                        <AuthenticatorName>{name}</AuthenticatorName>
-                      </AuthenticatorTitle>
+                      {isEnrolled && authId && (
+                        <LinkButton
+                          to={`/settings/account/security/mfa/${authId}/`}
+                          size="sm"
+                        >
+                          {configureButton}
+                        </LinkButton>
+                      )}
 
-                      <Actions>
-                        {!isBackupInterface && !isEnrolled && hasVerifiedEmail && (
-                          <Button
-                            to={`/settings/account/security/mfa/${id}/enroll/`}
-                            size="small"
-                            priority="primary"
-                            className="enroll-button"
+                      {!isBackupInterface && isEnrolled && (
+                        <Tooltip
+                          title={t(
+                            `Two-factor authentication is required for organization(s): %s.`,
+                            formatOrgSlugs()
+                          )}
+                          disabled={!deleteDisabled}
+                        >
+                          <RemoveConfirm
+                            onConfirm={() => onDisable(auth)}
+                            disabled={deleteDisabled}
                           >
-                            {t('Add')}
-                          </Button>
-                        )}
-                        {!isBackupInterface && !isEnrolled && !hasVerifiedEmail && (
-                          <Button
-                            onClick={this.handleAdd2FAClicked}
-                            size="small"
-                            priority="primary"
-                            className="enroll-button"
-                          >
-                            {t('Add')}
-                          </Button>
-                        )}
+                            <Button
+                              size="sm"
+                              aria-label={t('Delete')}
+                              icon={<IconDelete />}
+                            />
+                          </RemoveConfirm>
+                        </Tooltip>
+                      )}
+                    </Actions>
 
-                        {isEnrolled && authId && (
-                          <Button
-                            to={`/settings/account/security/mfa/${authId}/`}
-                            size="small"
-                            className="details-button"
-                          >
-                            {configureButton}
-                          </Button>
-                        )}
+                    {isBackupInterface && !isEnrolled ? t('requires 2FA') : null}
+                  </AuthenticatorHeader>
 
-                        {!isBackupInterface && isEnrolled && (
-                          <Tooltip
-                            title={t(
-                              `Two-factor authentication is required for organization(s): ${this.formatOrgSlugs()}.`
-                            )}
-                            disabled={!deleteDisabled}
-                          >
-                            <RemoveConfirm
-                              onConfirm={() => onDisable(auth)}
-                              disabled={deleteDisabled}
-                            >
-                              <Button
-                                size="small"
-                                aria-label={t('delete')}
-                                icon={<IconDelete />}
-                              />
-                            </RemoveConfirm>
-                          </Tooltip>
-                        )}
-                      </Actions>
-
-                      {isBackupInterface && !isEnrolled ? t('requires 2FA') : null}
-                    </AuthenticatorHeader>
-
-                    <Description>{description}</Description>
-                  </AuthenticatorPanelItem>
-                );
-              })}
-          </PanelBody>
-        </Panel>
-      </div>
-    );
-  }
+                  <Description>{description}</Description>
+                </AuthenticatorPanelItem>
+              );
+            })}
+        </PanelBody>
+      </Panel>
+    </SentryDocumentTitle>
+  );
 }
 
 const AuthenticatorName = styled('span')`

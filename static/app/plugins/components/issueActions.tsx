@@ -1,10 +1,16 @@
-import GroupActions from 'sentry/actions/groupActions';
-import PluginComponentBase from 'sentry/components/bases/pluginComponentBase';
-import {Form, FormState} from 'sentry/components/deprecatedforms';
+import Form from 'sentry/components/deprecatedforms/form';
+import FormState from 'sentry/components/forms/state';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {t} from 'sentry/locale';
-import {Group, Organization, Plugin, Project} from 'sentry/types';
+import PluginComponentBase from 'sentry/plugins/pluginComponentBase';
+import GroupStore from 'sentry/stores/groupStore';
+import type {Group} from 'sentry/types/group';
+import type {Plugin} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {getAnalyticsDataForGroup} from 'sentry/utils/events';
 
 type Field = {
   depends?: string[];
@@ -12,7 +18,7 @@ type Field = {
 } & Parameters<typeof PluginComponentBase.prototype.renderField>[0]['config'];
 
 type ActionType = 'link' | 'create' | 'unlink';
-type FieldStateValue = typeof FormState[keyof typeof FormState];
+type FieldStateValue = (typeof FormState)[keyof typeof FormState];
 
 type Props = {
   actionType: ActionType;
@@ -301,8 +307,19 @@ class IssueActions extends PluginComponentBase<Props, State> {
   }
 
   onSuccess(data) {
-    GroupActions.updateSuccess(null, [this.getGroup().id], {stale: true});
-    this.props.onSuccess && this.props.onSuccess(data);
+    // TODO(ts): This needs a better approach. We splice in this attribute to trigger
+    // a refetch in GroupDetails
+    type StaleGroup = Group & {stale?: boolean};
+
+    trackAnalytics('issue_details.external_issue_created', {
+      organization: this.props.organization,
+      ...getAnalyticsDataForGroup(this.props.group),
+      external_issue_provider: this.props.plugin.slug,
+      external_issue_type: 'plugin',
+    });
+
+    GroupStore.onUpdateSuccess('', [this.getGroup().id], {stale: true} as StaleGroup);
+    this.props.onSuccess?.(data);
   }
 
   createIssue() {

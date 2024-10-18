@@ -1,18 +1,19 @@
-import type {LineSeriesOption} from 'echarts';
+import type {LineSeriesOption, YAXisComponentOption} from 'echarts';
 
 import type {AreaChartSeries} from 'sentry/components/charts/areaChart';
 import XAxis from 'sentry/components/charts/components/xAxis';
 import AreaSeries from 'sentry/components/charts/series/areaSeries';
-import type {SessionApiResponse} from 'sentry/types';
+import type {SessionApiResponse} from 'sentry/types/organization';
 import {lightTheme as theme} from 'sentry/utils/theme';
+import type {MetricChartData} from 'sentry/views/alerts/rules/metric/details/metricChartOption';
 import {
   getMetricAlertChartOption,
-  MetricChartData,
   transformSessionResponseToSeries,
 } from 'sentry/views/alerts/rules/metric/details/metricChartOption';
 
 import {DEFAULT_FONT_FAMILY, slackChartDefaults, slackChartSize} from './slack';
-import {ChartType, RenderDescriptor} from './types';
+import type {RenderDescriptor} from './types';
+import {ChartType} from './types';
 
 const metricAlertXaxis = XAxis({
   theme,
@@ -20,6 +21,15 @@ const metricAlertXaxis = XAxis({
   isGroupedByDate: true,
   axisLabel: {fontSize: 11, fontFamily: DEFAULT_FONT_FAMILY},
 });
+const metricAlertYaxis: YAXisComponentOption = {
+  axisLabel: {fontSize: 11, fontFamily: DEFAULT_FONT_FAMILY},
+  splitLine: {
+    lineStyle: {
+      color: theme.chartLineColor,
+      opacity: 0.3,
+    },
+  },
+};
 
 function transformAreaSeries(series: AreaChartSeries[]): LineSeriesOption[] {
   return series.map(({seriesName, data, ...otherSeriesProps}) => {
@@ -40,7 +50,7 @@ function transformAreaSeries(series: AreaChartSeries[]): LineSeriesOption[] {
     });
 
     // Fix incident label font family, cannot use Rubik
-    if (areaSeries.markLine?.label?.fontFamily) {
+    if (areaSeries.markLine?.label) {
       areaSeries.markLine.label.fontFamily = DEFAULT_FONT_FAMILY;
     }
 
@@ -60,6 +70,14 @@ metricAlertCharts.push({
       backgroundColor: theme.background,
       series: transformAreaSeries(chartOption.series),
       xAxis: metricAlertXaxis,
+      yAxis: {
+        ...chartOption.yAxis,
+        ...metricAlertYaxis,
+        axisLabel: {
+          ...chartOption.yAxis!.axisLabel,
+          ...metricAlertYaxis.axisLabel,
+        },
+      },
       grid: slackChartDefaults.grid,
     };
   },
@@ -85,6 +103,14 @@ metricAlertCharts.push({
       backgroundColor: theme.background,
       series: transformAreaSeries(chartOption.series),
       xAxis: metricAlertXaxis,
+      yAxis: {
+        ...chartOption.yAxis,
+        ...metricAlertYaxis,
+        axisLabel: {
+          ...chartOption.yAxis!.axisLabel,
+          ...metricAlertYaxis.axisLabel,
+        },
+      },
       grid: slackChartDefaults.grid,
     };
   },

@@ -1,7 +1,7 @@
 from django.urls import reverse
 
-from sentry.models import OrganizationAccessRequest
-from sentry.testutils import APITestCase
+from sentry.models.organizationaccessrequest import OrganizationAccessRequest
+from sentry.testutils.cases import APITestCase
 
 
 class UpdateOrganizationAccessRequestTest(APITestCase):

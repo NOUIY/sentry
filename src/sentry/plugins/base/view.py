@@ -1,8 +1,10 @@
-__all__ = ["PluggableViewMixin"]
+from __future__ import annotations
+
+from typing import Any
 
 from django.http import HttpResponseRedirect
 
-from .response import Response
+from sentry.plugins.base.response import DeferredResponse
 
 
 class PluggableViewMixin:
@@ -11,13 +13,13 @@ class PluggableViewMixin:
     enable embedding of content within base-views.
     """
 
-    def redirect(self, url):
+    def redirect(self, url: str) -> HttpResponseRedirect:
         """
         Returns a redirect response type.
         """
         return HttpResponseRedirect(url)
 
-    def render(self, template, context=None):
+    def render(self, template: str, context: dict[str, Any] | None = None) -> DeferredResponse:
         """
         Given a template name, and an optional context (dictionary), returns a
         ready-to-render response.
@@ -29,4 +31,7 @@ class PluggableViewMixin:
         if context is None:
             context = {}
         context["plugin"] = self
-        return Response(template, context)
+        return DeferredResponse(template, context)
+
+
+__all__ = ["PluggableViewMixin"]

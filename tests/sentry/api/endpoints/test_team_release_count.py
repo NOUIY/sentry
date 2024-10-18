@@ -1,5 +1,5 @@
-from sentry.models import Release
-from sentry.testutils import APITestCase
+from sentry.models.release import Release
+from sentry.testutils.cases import APITestCase
 from sentry.testutils.helpers.datetime import before_now
 
 

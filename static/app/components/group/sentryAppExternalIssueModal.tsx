@@ -1,24 +1,16 @@
 import {Component, Fragment} from 'react';
 
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import {Client} from 'sentry/api';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import SentryAppExternalIssueForm from 'sentry/components/group/sentryAppExternalIssueForm';
 import NavTabs from 'sentry/components/navTabs';
 import {t, tct} from 'sentry/locale';
-import {
-  Group,
-  PlatformExternalIssue,
-  SentryAppComponent,
-  SentryAppInstallation,
-} from 'sentry/types';
-import {Event} from 'sentry/types/event';
-import withApi from 'sentry/utils/withApi';
+import type {Event} from 'sentry/types/event';
+import type {Group} from 'sentry/types/group';
+import type {SentryAppComponent, SentryAppInstallation} from 'sentry/types/integrations';
 
 type Props = ModalRenderProps & {
-  api: Client;
   event: Event;
   group: Group;
-  onSubmitSuccess: (externalIssue: PlatformExternalIssue) => void;
   sentryAppComponent: SentryAppComponent;
   sentryAppInstallation: SentryAppInstallation;
 };
@@ -40,8 +32,7 @@ class SentryAppExternalIssueModal extends Component<Props, State> {
     this.setState({action: 'create'});
   };
 
-  onSubmitSuccess = (externalIssue: PlatformExternalIssue) => {
-    this.props.onSubmitSuccess(externalIssue);
+  onSubmitSuccess = () => {
     this.props.closeModal();
   };
 
@@ -78,4 +69,4 @@ class SentryAppExternalIssueModal extends Component<Props, State> {
   }
 }
 
-export default withApi(SentryAppExternalIssueModal);
+export default SentryAppExternalIssueModal;

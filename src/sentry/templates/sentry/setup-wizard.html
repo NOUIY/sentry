@@ -24,6 +24,8 @@
       container: '#setup-wizard-container',
       props: {
         hash: {{ hash|to_json|safe }},
+        organizations: {{ organizations|to_json|safe }},
+        enableProjectSelection: {{ enableProjectSelection|to_json|safe }},
       },
     });
   </script>

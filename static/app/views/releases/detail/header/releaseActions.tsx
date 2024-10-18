@@ -1,23 +1,25 @@
 import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import {archiveRelease, restoreRelease} from 'sentry/actionCreators/release';
 import {Client} from 'sentry/api';
+import {LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import {openConfirmModal} from 'sentry/components/confirm';
-import DropdownMenuControlV2 from 'sentry/components/dropdownMenuControlV2';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import ProjectBadge from 'sentry/components/idBadge/projectBadge';
-import NavigationButtonGroup from 'sentry/components/navigationButtonGroup';
 import TextOverflow from 'sentry/components/textOverflow';
-import Tooltip from 'sentry/components/tooltip';
-import {IconEllipsis} from 'sentry/icons';
+import {Tooltip} from 'sentry/components/tooltip';
+import {IconEllipsis, IconNext, IconPrevious} from 'sentry/icons';
 import {t, tct, tn} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Release, ReleaseMeta} from 'sentry/types';
-import {trackAnalyticsEvent} from 'sentry/utils/analytics';
-import {formatVersion} from 'sentry/utils/formatters';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {Release, ReleaseMeta} from 'sentry/types/release';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {formatVersion} from 'sentry/utils/versions/formatVersion';
 
 import {isReleaseArchived} from '../../utils';
 
@@ -45,7 +47,7 @@ function ReleaseActions({
         projectSlug,
         releaseVersion: release.version,
       });
-      browserHistory.push(`/organizations/${organization.slug}/releases/`);
+      browserHistory.push(normalizeUrl(`/organizations/${organization.slug}/releases/`));
     } catch {
       // do nothing, action creator is already displaying error message
     }
@@ -115,18 +117,16 @@ function ReleaseActions({
     return toRelease
       ? {
           pathname: location.pathname
-            .replace(encodeURIComponent(release.version), toRelease)
-            .replace(release.version, toRelease),
+            .replace(encodeURIComponent(release.version), encodeURIComponent(toRelease))
+            .replace(release.version, encodeURIComponent(toRelease)),
           query: {...location.query, activeRepo: undefined},
         }
       : '';
   }
 
   function handleNavigationClick(direction: string) {
-    trackAnalyticsEvent({
-      eventKey: `release_detail.pagination`,
-      eventName: `Release Detail: Pagination`,
-      organization_id: parseInt(organization.id, 10),
+    trackAnalytics(`release_detail.pagination`, {
+      organization,
       direction,
     });
   }
@@ -179,37 +179,54 @@ function ReleaseActions({
         },
   ];
 
-  const {
-    nextReleaseVersion,
-    prevReleaseVersion,
-    firstReleaseVersion,
-    lastReleaseVersion,
-  } = release.currentProjectMeta;
+  const hasPrevious = !!release.currentProjectMeta.prevReleaseVersion;
+  const hasNext = !!release.currentProjectMeta.nextReleaseVersion;
 
   return (
     <ButtonBar gap={1}>
-      <NavigationButtonGroup
-        hasPrevious={!!prevReleaseVersion}
-        hasNext={!!nextReleaseVersion}
-        links={[
-          replaceReleaseUrl(firstReleaseVersion),
-          replaceReleaseUrl(prevReleaseVersion),
-          replaceReleaseUrl(nextReleaseVersion),
-          replaceReleaseUrl(lastReleaseVersion),
-        ]}
-        onOldestClick={() => handleNavigationClick('oldest')}
-        onOlderClick={() => handleNavigationClick('older')}
-        onNewerClick={() => handleNavigationClick('newer')}
-        onNewestClick={() => handleNavigationClick('newest')}
-      />
-      <DropdownMenuControlV2
+      <ButtonBar merged>
+        <LinkButton
+          size="sm"
+          to={replaceReleaseUrl(release.currentProjectMeta.firstReleaseVersion)}
+          disabled={!hasPrevious}
+          aria-label={t('Oldest')}
+          icon={<IconPrevious />}
+          onClick={() => handleNavigationClick('oldest')}
+        />
+        <LinkButton
+          size="sm"
+          to={replaceReleaseUrl(release.currentProjectMeta.prevReleaseVersion)}
+          disabled={!hasPrevious}
+          onClick={() => handleNavigationClick('older')}
+        >
+          {t('Older')}
+        </LinkButton>
+        <LinkButton
+          size="sm"
+          to={replaceReleaseUrl(release.currentProjectMeta.nextReleaseVersion)}
+          disabled={!hasNext}
+          onClick={() => handleNavigationClick('newer')}
+        >
+          {t('Newer')}
+        </LinkButton>
+        <LinkButton
+          size="sm"
+          to={replaceReleaseUrl(release.currentProjectMeta.lastReleaseVersion)}
+          disabled={!hasNext}
+          aria-label={t('Newest')}
+          icon={<IconNext />}
+          onClick={() => handleNavigationClick('newest')}
+        />
+      </ButtonBar>
+      <DropdownMenu
+        size="sm"
         items={menuItems}
         triggerProps={{
           showChevron: false,
           icon: <IconEllipsis />,
           'aria-label': t('Actions'),
         }}
-        placement="bottom right"
+        position="bottom-end"
       />
     </ButtonBar>
   );

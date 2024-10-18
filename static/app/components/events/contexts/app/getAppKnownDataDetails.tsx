@@ -1,20 +1,18 @@
 import {t} from 'sentry/locale';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
 
-import {getRelativeTimeFromEventDateCreated} from '../utils';
+import {getRelativeTimeFromEventDateCreated, type KnownDataDetails} from '../utils';
 
-import {AppData, AppKnownDataType} from './types';
+import type {AppData} from './types';
+import {AppKnownDataType} from './types';
 
-type Output = {
-  subject: string;
-  value?: React.ReactNode;
+type Props = {
+  data: AppData;
+  event: Event;
+  type: AppKnownDataType;
 };
 
-function getAppKnownDataDetails(
-  event: Event,
-  data: AppData,
-  type: AppKnownDataType
-): Output {
+export function getAppKnownDataDetails({data, event, type}: Props): KnownDataDetails {
   switch (type) {
     case AppKnownDataType.ID:
       return {
@@ -59,12 +57,12 @@ function getAppKnownDataDetails(
         subject: t('App Build'),
         value: data.app_build,
       };
-    default:
+    case AppKnownDataType.IN_FOREGROUND:
       return {
-        subject: type,
-        value: data[type],
+        subject: t('In Foreground'),
+        value: data.in_foreground,
       };
+    default:
+      return undefined;
   }
 }
-
-export default getAppKnownDataDetails;

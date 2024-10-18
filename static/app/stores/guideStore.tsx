@@ -1,17 +1,18 @@
-import {browserHistory} from 'react-router';
-import {createStore, StoreDefinition} from 'reflux';
+import {createStore} from 'reflux';
 
-import OrganizationsActions from 'sentry/actions/organizationsActions';
 import getGuidesContent from 'sentry/components/assistant/getGuidesContent';
-import {Guide, GuidesContent, GuidesServerData} from 'sentry/components/assistant/types';
-import {IS_ACCEPTANCE_TEST} from 'sentry/constants';
+import type {
+  Guide,
+  GuidesContent,
+  GuidesServerData,
+} from 'sentry/components/assistant/types';
 import ConfigStore from 'sentry/stores/configStore';
 import HookStore from 'sentry/stores/hookStore';
-import {trackAnalyticsEvent} from 'sentry/utils/analytics';
-import {
-  cleanupActiveRefluxSubscriptions,
-  makeSafeRefluxStore,
-} from 'sentry/utils/makeSafeRefluxStore';
+import ModalStore from 'sentry/stores/modalStore';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+
+import type {StrictStoreDefinition} from './types';
 
 function guidePrioritySort(a: Guide, b: Guide) {
   const a_priority = a.priority ?? Number.MAX_SAFE_INTEGER;
@@ -57,6 +58,10 @@ export type GuideStoreState = {
    */
   orgSlug: string | null;
   /**
+   * Current Organization
+   */
+  organization: Organization | null;
+  /**
    * The previously shown guide
    */
   prevGuide: Guide | null;
@@ -70,58 +75,82 @@ const defaultState: GuideStoreState = {
   currentStep: 0,
   orgId: null,
   orgSlug: null,
+  organization: null,
   forceShow: false,
   prevGuide: null,
 };
 
-interface GuideStoreDefinition extends StoreDefinition {
-  browserHistoryListener: null | (() => void);
+function isForceEnabled() {
+  return window.location.hash === '#assistant';
+}
 
+interface GuideStoreDefinition extends StrictStoreDefinition<GuideStoreState> {
   closeGuide(dismissed?: boolean): void;
+
   fetchSucceeded(data: GuidesServerData): void;
+  modalStoreListener: null | Function;
   nextStep(): void;
+  onURLChange(): void;
   recordCue(guide: string): void;
   registerAnchor(target: string): void;
+  setActiveOrganization(data: Organization): void;
   setForceHide(forceHide: boolean): void;
-  state: GuideStoreState;
+  teardown(): void;
   toStep(step: number): void;
   unregisterAnchor(target: string): void;
+  updateCurrentGuide(dismissed?: boolean): void;
   updatePrevGuide(nextGuide: Guide | null): void;
 }
 
 const storeConfig: GuideStoreDefinition = {
-  state: defaultState,
-  unsubscribeListeners: [],
-  browserHistoryListener: null,
+  state: {...defaultState},
+  modalStoreListener: null,
 
   init() {
-    this.state = defaultState;
+    // XXX: Do not use `this.listenTo` in this store. We avoid usage of reflux
+    // listeners due to their leaky nature in tests.
 
-    this.unsubscribeListeners.push(
-      this.listenTo(OrganizationsActions.setActive, this.onSetActiveOrganization)
-    );
+    this.state = {...defaultState, forceShow: isForceEnabled()};
 
     window.addEventListener('load', this.onURLChange, false);
-    this.browserHistoryListener = browserHistory.listen(() => this.onURLChange());
+
+    // Guides will show above modals, but are not interactable because
+    // of the focus trap, so we force them to be hidden while a modal is open.
+    this.modalStoreListener = ModalStore.listen(() => {
+      const isOpen = typeof ModalStore.getState().renderer === 'function';
+
+      if (isOpen) {
+        this.setForceHide(true);
+      } else {
+        this.setForceHide(false);
+      }
+    }, undefined);
   },
 
   teardown() {
-    cleanupActiveRefluxSubscriptions(this.unsubscribeListeners);
     window.removeEventListener('load', this.onURLChange);
 
-    if (this.browserHistoryListener) {
-      this.browserHistoryListener();
+    if (this.modalStoreListener) {
+      this.modalStoreListener();
     }
   },
 
+  getState() {
+    return this.state;
+  },
+
   onURLChange() {
-    this.state.forceShow = window.location.hash === '#assistant';
+    this.state = {...this.state, forceShow: isForceEnabled()};
     this.updateCurrentGuide();
   },
 
-  onSetActiveOrganization(data) {
-    this.state.orgId = data ? data.id : null;
-    this.state.orgSlug = data ? data.slug : null;
+  setActiveOrganization(data: Organization) {
+    this.state = {
+      ...this.state,
+      orgId: data ? data.id : null,
+      orgSlug: data ? data.slug : null,
+      organization: data ? data : null,
+    };
     this.updateCurrentGuide();
   },
 
@@ -134,7 +163,7 @@ const storeConfig: GuideStoreDefinition = {
       return;
     }
 
-    const guidesContent: GuidesContent = getGuidesContent(this.state.orgSlug);
+    const guidesContent: GuidesContent = getGuidesContent(this.state.organization);
     // map server guide state (i.e. seen status) with guide content
     const guides = guidesContent.reduce((acc: Guide[], content) => {
       const serverGuide = data.find(guide => guide.guide === content.guide);
@@ -146,32 +175,39 @@ const storeConfig: GuideStoreDefinition = {
       return acc;
     }, []);
 
-    this.state.guides = guides;
+    this.state = {...this.state, guides};
     this.updateCurrentGuide();
   },
 
   closeGuide(dismissed?: boolean) {
     const {currentGuide, guides} = this.state;
-    // update the current guide seen to true or all guides
-    // if markOthersAsSeen is true and the user is dismissing
-    guides
-      .filter(
-        guide =>
-          guide.guide === currentGuide?.guide ||
-          (currentGuide?.markOthersAsSeen && dismissed)
-      )
-      .forEach(guide => (guide.seen = true));
-    this.state.forceShow = false;
+
+    const newGuides = guides.map(guide => {
+      // update the current guide seen to true or all guides
+      // if markOthersAsSeen is true and the user is dismissing
+      if (
+        guide.guide === currentGuide?.guide ||
+        (currentGuide?.markOthersAsSeen && dismissed)
+      ) {
+        return {
+          ...guide,
+          seen: true,
+        };
+      }
+
+      return guide;
+    });
+    this.state = {...this.state, guides: newGuides, forceShow: false};
     this.updateCurrentGuide();
   },
 
   nextStep() {
-    this.state.currentStep += 1;
+    this.state = {...this.state, currentStep: this.state.currentStep + 1};
     this.trigger(this.state);
   },
 
   toStep(step: number) {
-    this.state.currentStep = step;
+    this.state = {...this.state, currentStep: step};
     this.trigger(this.state);
   },
 
@@ -186,7 +222,7 @@ const storeConfig: GuideStoreDefinition = {
   },
 
   setForceHide(forceHide) {
-    this.state.forceHide = forceHide;
+    this.state = {...this.state, forceHide};
     this.trigger(this.state);
   },
 
@@ -196,14 +232,10 @@ const storeConfig: GuideStoreDefinition = {
       return;
     }
 
-    const data = {
+    trackAnalytics('assistant.guide_cued', {
+      organization: this.state.orgId,
       guide,
-      eventKey: 'assistant.guide_cued',
-      eventName: 'Assistant Guide Cued',
-      organization_id: this.state.orgId,
-      user_id: parseInt(user.id, 10),
-    };
-    trackAnalyticsEvent(data);
+    });
   },
 
   updatePrevGuide(nextGuide) {
@@ -214,7 +246,7 @@ const storeConfig: GuideStoreDefinition = {
 
     if (!prevGuide || prevGuide.guide !== nextGuide.guide) {
       this.recordCue(nextGuide.guide);
-      this.state.prevGuide = nextGuide;
+      this.state = {...this.state, prevGuide: nextGuide};
     }
   },
 
@@ -242,7 +274,7 @@ const storeConfig: GuideStoreDefinition = {
         if (seen) {
           return false;
         }
-        if (user?.isSuperuser && !IS_ACCEPTANCE_TEST) {
+        if (user?.isSuperuser) {
           return true;
         }
         if (dateThreshold) {
@@ -268,17 +300,18 @@ const storeConfig: GuideStoreDefinition = {
         : null;
 
     this.updatePrevGuide(nextGuide);
-    this.state.currentStep =
+    const currentStep =
       this.state.currentGuide &&
       nextGuide &&
       this.state.currentGuide.guide === nextGuide.guide
         ? this.state.currentStep
         : 0;
-    this.state.currentGuide = nextGuide;
+    this.state = {...this.state, currentGuide: nextGuide, currentStep};
+
     this.trigger(this.state);
     HookStore.get('callback:on-guide-update').map(cb => cb(nextGuide, {dismissed}));
   },
 };
 
-const GuideStore = createStore(makeSafeRefluxStore(storeConfig));
+const GuideStore = createStore(storeConfig);
 export default GuideStore;

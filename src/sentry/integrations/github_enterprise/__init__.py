@@ -1,3 +1,7 @@
-from sentry.utils.imports import import_submodules
+from sentry import options
+from sentry.rules import rules
 
-import_submodules(globals(), __name__, __path__)
+from .actions.create_ticket import GitHubEnterpriseCreateTicketAction
+
+if options.get("github-enterprise-app.alert-rule-action"):
+    rules.add(GitHubEnterpriseCreateTicketAction)

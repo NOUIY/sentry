@@ -1,14 +1,16 @@
+import type {KnownDataDetails} from 'sentry/components/events/contexts/utils';
 import {t} from 'sentry/locale';
 
 import formatMemory from './formatMemory';
-import {GPUData, GPUKnownDataType} from './types';
+import type {GPUData} from './types';
+import {GPUKnownDataType} from './types';
 
-type Output = {
-  subject: string;
-  value?: React.ReactNode;
+type Props = {
+  data: GPUData;
+  type: GPUKnownDataType;
 };
 
-function getGPUKnownDataDetails(data: GPUData, type: GPUKnownDataType): Output {
+export function getGPUKnownDataDetails({data, type}: Props): KnownDataDetails {
   switch (type) {
     case GPUKnownDataType.NAME:
       return {
@@ -20,7 +22,7 @@ function getGPUKnownDataDetails(data: GPUData, type: GPUKnownDataType): Output {
         subject: t('Version'),
         value: data.version,
       };
-    case GPUKnownDataType.MEMORY:
+    case GPUKnownDataType.MEMORY_SIZE:
       return {
         subject: t('Memory'),
         value: data.memory_size ? formatMemory(data.memory_size) : undefined,
@@ -29,6 +31,11 @@ function getGPUKnownDataDetails(data: GPUData, type: GPUKnownDataType): Output {
       return {
         subject: t('NPOT Support'),
         value: data.npot_support,
+      };
+    case GPUKnownDataType.VENDOR_NAME:
+      return {
+        subject: t('Vendor Name'),
+        value: data.vendor_name,
       };
     case GPUKnownDataType.MULTI_THREAD_RENDERING:
       return {
@@ -51,11 +58,6 @@ function getGPUKnownDataDetails(data: GPUData, type: GPUKnownDataType): Output {
         value: data.id,
       };
     default:
-      return {
-        subject: type,
-        value: data[type],
-      };
+      return undefined;
   }
 }
-
-export default getGPUKnownDataDetails;

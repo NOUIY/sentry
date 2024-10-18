@@ -1,21 +1,21 @@
-import {Component} from 'react';
 import styled from '@emotion/styled';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import AvatarList from 'sentry/components/avatar/avatarList';
-import Button from 'sentry/components/button';
-import Clipboard from 'sentry/components/clipboard';
-import {Hovercard} from 'sentry/components/hovercard';
+import {LinkButton} from 'sentry/components/button';
+import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
+import {Divider, Hovercard} from 'sentry/components/hovercard';
 import LastCommit from 'sentry/components/lastCommit';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import RepoLabel from 'sentry/components/repoLabel';
 import TimeSince from 'sentry/components/timeSince';
 import Version from 'sentry/components/version';
-import {IconCopy} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Deploy, Organization, Release, Repository} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Repository} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {Deploy, Release} from 'sentry/types/release';
 import {defined} from 'sentry/utils';
 import withApi from 'sentry/utils/withApi';
 import withRelease from 'sentry/utils/withRelease';
@@ -38,23 +38,24 @@ interface Props extends React.ComponentProps<typeof Hovercard> {
   repositoriesLoading?: boolean;
 }
 
-type State = {
-  visible: boolean;
-};
-
-class VersionHoverCard extends Component<Props, State> {
-  state: State = {
-    visible: false,
-  };
-
-  toggleHovercard() {
-    this.setState({
-      visible: true,
-    });
-  }
-
-  getRepoLink() {
-    const {organization} = this.props;
+function VersionHoverCard({
+  api: _api,
+  projectSlug: _projectSlug,
+  deploysLoading,
+  deploysError,
+  release,
+  releaseLoading,
+  releaseError,
+  repositories,
+  repositoriesLoading,
+  repositoriesError,
+  organization,
+  deploys,
+  releaseVersion,
+  children,
+  ...hovercardProps
+}: Props) {
+  function getRepoLink() {
     const orgSlug = organization.slug;
     return {
       header: null,
@@ -66,16 +67,15 @@ class VersionHoverCard extends Component<Props, State> {
               'Connect a repository to see commit info, files changed, and authors involved in future releases.'
             )}
           </p>
-          <Button href={`/organizations/${orgSlug}/repos/`} priority="primary">
+          <LinkButton href={`/organizations/${orgSlug}/repos/`} priority="primary">
             {t('Connect a repository')}
-          </Button>
+          </LinkButton>
         </ConnectRepo>
       ),
     };
   }
 
-  getBody() {
-    const {releaseVersion, release, deploys} = this.props;
+  function getBody() {
     if (release === undefined || !defined(deploys)) {
       return {header: null, body: null};
     }
@@ -96,26 +96,13 @@ class VersionHoverCard extends Component<Props, State> {
     }
 
     return {
-      header: (
-        <HeaderWrapper>
-          {t('Release')}
-          <VersionWrapper>
-            <StyledVersion version={releaseVersion} truncate anchor={false} />
-
-            <Clipboard value={releaseVersion}>
-              <ClipboardIconWrapper>
-                <IconCopy size="xs" />
-              </ClipboardIconWrapper>
-            </Clipboard>
-          </VersionWrapper>
-        </HeaderWrapper>
-      ),
+      header: <VersionHoverHeader releaseVersion={releaseVersion} />,
       body: (
         <div>
           <div className="row">
             <div className="col-xs-4">
               <h6>{t('New Issues')}</h6>
-              <div className="count-since">{release.newGroups}</div>
+              <CountSince>{release.newGroups}</CountSince>
             </div>
             <div className="col-xs-8">
               <h6 style={{textAlign: 'right'}}>
@@ -128,25 +115,23 @@ class VersionHoverCard extends Component<Props, State> {
                 users={release.authors}
                 avatarSize={25}
                 tooltipOptions={{container: 'body'} as any}
-                typeMembers="authors"
+                typeAvatars="authors"
               />
             </div>
           </div>
-          {lastCommit && <LastCommit commit={lastCommit} headerClass="commit-heading" />}
+          {lastCommit && <StyledLastCommit commit={lastCommit} />}
           {deploys.length > 0 && (
             <div>
-              <div className="divider">
-                <h6 className="deploy-heading">{t('Deploys')}</h6>
-              </div>
+              <Divider>
+                <h6>{t('Deploys')}</h6>
+              </Divider>
               {mostRecentDeploySlice.map((env, idx) => {
                 const dateFinished = recentDeploysByEnvironment[env];
                 return (
-                  <div className="deploy" key={idx}>
-                    <div className="deploy-meta" style={{position: 'relative'}}>
-                      <VersionRepoLabel>{env}</VersionRepoLabel>
-                      {dateFinished && <StyledTimeSince date={dateFinished} />}
-                    </div>
-                  </div>
+                  <DeployWrap key={idx}>
+                    <VersionRepoLabel>{env}</VersionRepoLabel>
+                    {dateFinished && <StyledTimeSince date={dateFinished} />}
+                  </DeployWrap>
                 );
               })}
             </div>
@@ -156,44 +141,52 @@ class VersionHoverCard extends Component<Props, State> {
     };
   }
 
-  render() {
-    const {
-      deploysLoading,
-      deploysError,
-      release,
-      releaseLoading,
-      releaseError,
-      repositories,
-      repositoriesLoading,
-      repositoriesError,
-    } = this.props;
-    let header: React.ReactNode = null;
-    let body: React.ReactNode = null;
+  let header: React.ReactNode = null;
+  let body: React.ReactNode = null;
 
-    const loading = !!(deploysLoading || releaseLoading || repositoriesLoading);
-    const error = deploysError ?? releaseError ?? repositoriesError;
-    const hasRepos = repositories && repositories.length > 0;
+  const loading = !!(deploysLoading || releaseLoading || repositoriesLoading);
+  const error = deploysError ?? releaseError ?? repositoriesError;
+  const hasRepos = repositories && repositories.length > 0;
 
-    if (loading) {
-      body = <LoadingIndicator mini />;
-    } else if (error) {
-      body = <LoadingError />;
-    } else {
-      const renderObj: {[key: string]: React.ReactNode} =
-        hasRepos && release ? this.getBody() : this.getRepoLink();
-      header = renderObj.header;
-      body = renderObj.body;
-    }
-
-    return (
-      <Hovercard {...this.props} header={header} body={body}>
-        {this.props.children}
-      </Hovercard>
-    );
+  if (loading) {
+    body = <LoadingIndicator mini />;
+  } else if (error) {
+    body = <LoadingError />;
+  } else {
+    const renderObj: {[key: string]: React.ReactNode} =
+      hasRepos && release ? getBody() : getRepoLink();
+    header = renderObj.header;
+    body = renderObj.body;
   }
+
+  return (
+    <Hovercard {...hovercardProps} header={header} body={body}>
+      {children}
+    </Hovercard>
+  );
 }
 
-export {VersionHoverCard};
+interface VersionHoverHeaderProps {
+  releaseVersion: string;
+}
+
+function VersionHoverHeader({releaseVersion}: VersionHoverHeaderProps) {
+  return (
+    <HeaderWrapper>
+      {t('Release')}
+      <VersionWrapper>
+        <StyledVersion version={releaseVersion} truncate anchor={false} />
+        <CopyToClipboardButton
+          borderless
+          iconSize="xs"
+          size="zero"
+          text={releaseVersion}
+        />
+      </VersionWrapper>
+    </HeaderWrapper>
+  );
+}
+
 export default withApi(withRelease(withRepositories(VersionHoverCard)));
 
 const ConnectRepo = styled('div')`
@@ -207,10 +200,7 @@ const VersionRepoLabel = styled(RepoLabel)`
 
 const StyledTimeSince = styled(TimeSince)`
   color: ${p => p.theme.gray300};
-  position: absolute;
-  left: 98px;
-  width: 50%;
-  padding: 3px 0;
+  font-size: ${p => p.theme.fontSizeSmall};
 `;
 
 const HeaderWrapper = styled('div')`
@@ -218,18 +208,32 @@ const HeaderWrapper = styled('div')`
   align-items: center;
   justify-content: space-between;
 `;
+
 const VersionWrapper = styled('div')`
   display: flex;
   flex: 1;
   align-items: center;
   justify-content: flex-end;
 `;
+
 const StyledVersion = styled(Version)`
   margin-right: ${space(0.5)};
   max-width: 190px;
 `;
-const ClipboardIconWrapper = styled('span')`
-  &:hover {
-    cursor: pointer;
-  }
+
+const CountSince = styled('div')`
+  color: ${p => p.theme.headingColor};
+  font-size: ${p => p.theme.headerFontSize};
+`;
+
+const StyledLastCommit = styled(LastCommit)`
+  margin-top: ${space(2)};
+`;
+
+const DeployWrap = styled('div')`
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: ${space(1)};
+  justify-items: start;
+  align-items: center;
 `;

@@ -1,7 +1,7 @@
 import isEmpty from 'lodash/isEmpty';
-import isNull from 'lodash/isNull';
+import memoize from 'lodash/memoize';
 
-import {Meta} from 'sentry/types';
+import type {Meta} from 'sentry/types/group';
 
 const GET_META = Symbol('GET_META');
 const IS_PROXY = Symbol('IS_PROXY');
@@ -32,7 +32,7 @@ export class MetaProxy {
     // trap calls to `getMeta` to return meta object
     if (prop === GET_META) {
       return key => {
-        if (this.local && this.local[key] && this.local[key]['']) {
+        if (this.local?.[key]?.['']) {
           // TODO: Error checks
           const meta = this.local[key][''];
 
@@ -48,7 +48,7 @@ export class MetaProxy {
     }
 
     const value = Reflect.get(obj, prop, receiver);
-    if (!Reflect.has(obj, prop) || typeof value !== 'object' || isNull(value)) {
+    if (!Reflect.has(obj, prop) || typeof value !== 'object' || value === null) {
       return value;
     }
 
@@ -60,11 +60,11 @@ export class MetaProxy {
 
     // Make sure we apply proxy to all children (objects and arrays)
     // Do we need to check for annotated inside of objects?
-    return new Proxy(value, new MetaProxy(this.local && this.local[prop]));
+    return new Proxy(value, new MetaProxy(this.local?.[prop]));
   }
 }
 
-export function withMeta<T>(event: T): T {
+export const withMeta = memoize(function withMeta<T>(event: T): T {
   if (!event) {
     return event;
   }
@@ -80,7 +80,7 @@ export function withMeta<T>(event: T): T {
   //
   // https://github.com/microsoft/TypeScript/issues/20846
   return new Proxy(event, new MetaProxy((event as any)._meta)) as T;
-}
+});
 
 export function getMeta<T extends {}>(
   obj: T | undefined,

@@ -1,8 +1,6 @@
 import {createStore} from 'reflux';
 
-import {makeSafeRefluxStore} from 'sentry/utils/makeSafeRefluxStore';
-
-import {CommonStoreDefinition} from './types';
+import type {StrictStoreDefinition} from './types';
 
 type Preferences = {
   /**
@@ -11,49 +9,44 @@ type Preferences = {
   collapsed?: boolean;
 };
 
-interface PreferenceStoreDefinition extends CommonStoreDefinition<Preferences> {
-  getInitialState(): Preferences;
-
+interface PreferenceStoreDefinition extends StrictStoreDefinition<Preferences> {
   hideSidebar(): void;
   loadInitialState(prefs: Preferences): void;
-  prefs: Preferences;
   reset(): void;
   showSidebar(): void;
 }
 
 const storeConfig: PreferenceStoreDefinition = {
-  prefs: {},
-  unsubscribeListeners: [],
+  state: {},
 
   init() {
+    // XXX: Do not use `this.listenTo` in this store. We avoid usage of reflux
+    // listeners due to their leaky nature in tests.
+
     this.reset();
   },
 
-  getInitialState() {
-    return this.prefs;
-  },
-
   reset() {
-    this.prefs = {collapsed: false};
+    this.state = {collapsed: false};
   },
 
   loadInitialState(prefs) {
-    this.prefs = {...prefs};
-    this.trigger(this.prefs);
+    this.state = {...prefs};
+    this.trigger(this.state);
   },
 
   hideSidebar() {
-    this.prefs = {...this.prefs, collapsed: true};
-    this.trigger(this.prefs);
+    this.state = {...this.state, collapsed: true};
+    this.trigger(this.state);
   },
 
   showSidebar() {
-    this.prefs = {...this.prefs, collapsed: false};
-    this.trigger(this.prefs);
+    this.state = {...this.state, collapsed: false};
+    this.trigger(this.state);
   },
 
   getState() {
-    return this.prefs;
+    return this.state;
   },
 };
 
@@ -61,5 +54,5 @@ const storeConfig: PreferenceStoreDefinition = {
  * This store is used to hold local user preferences
  * Side-effects (like reading/writing to cookies) are done in associated actionCreators
  */
-const PreferenceStore = createStore(makeSafeRefluxStore(storeConfig));
+const PreferenceStore = createStore(storeConfig);
 export default PreferenceStore;

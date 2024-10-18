@@ -1,284 +1,240 @@
-import 'prism-sentry/index.css';
-
-import {Component, Fragment} from 'react';
-import {browserHistory, RouteComponentProps} from 'react-router';
+import {Fragment, useCallback, useContext, useEffect, useMemo} from 'react';
 import styled from '@emotion/styled';
+import type {LocationDescriptorObject} from 'history';
+import omit from 'lodash/omit';
 
-import {loadDocs} from 'sentry/actionCreators/projects';
-import {Client} from 'sentry/api';
 import Feature from 'sentry/components/acl/feature';
-import Alert from 'sentry/components/alert';
-import Button from 'sentry/components/button';
+import {Alert} from 'sentry/components/alert';
+import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import NotFound from 'sentry/components/errors/notFound';
-import LoadingError from 'sentry/components/loadingError';
-import LoadingIndicator from 'sentry/components/loadingIndicator';
-import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
-import {
-  performance as performancePlatforms,
-  PlatformKey,
-} from 'sentry/data/platformCategories';
+import HookOrDefault from 'sentry/components/hookOrDefault';
+import {SdkDocumentation} from 'sentry/components/onboarding/gettingStartedDoc/sdkDocumentation';
+import type {ProductSolution} from 'sentry/components/onboarding/productSelection';
+import {platformProductAvailability} from 'sentry/components/onboarding/productSelection';
+import {setPageFiltersStorage} from 'sentry/components/organizations/pageFilters/persistence';
+import {performance as performancePlatforms} from 'sentry/data/platformCategories';
+import type {Platform} from 'sentry/data/platformPickerCategories';
 import platforms from 'sentry/data/platforms';
-import {t, tct} from 'sentry/locale';
-import {PageHeader} from 'sentry/styles/organization';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
-import Projects from 'sentry/utils/projects';
-import withApi from 'sentry/utils/withApi';
-import withOrganization from 'sentry/utils/withOrganization';
+import {t} from 'sentry/locale';
+import ConfigStore from 'sentry/stores/configStore';
+import PageFiltersStore from 'sentry/stores/pageFiltersStore';
+import {space} from 'sentry/styles/space';
+import type {IssueAlertRule} from 'sentry/types/alerts';
+import type {OnboardingSelectedSDK} from 'sentry/types/onboarding';
+import type {PlatformIntegration, PlatformKey, Project} from 'sentry/types/project';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {useApiQuery} from 'sentry/utils/queryClient';
+import {decodeList} from 'sentry/utils/queryString';
+import {useLocation} from 'sentry/utils/useLocation';
+import {useNavigate} from 'sentry/utils/useNavigate';
+import useOrganization from 'sentry/utils/useOrganization';
+import {GettingStartedWithProjectContext} from 'sentry/views/projects/gettingStartedWithProjectContext';
+
+import {OtherPlatformsInfo} from './otherPlatformsInfo';
+import {PlatformDocHeader} from './platformDocHeader';
+
+const ProductUnavailableCTAHook = HookOrDefault({
+  hookName: 'component:product-unavailable-cta',
+});
 
 type Props = {
-  api: Client;
-  organization: Organization;
-} & RouteComponentProps<{orgId: string; platform: string; projectId: string}, {}>;
-
-type State = {
-  error: boolean;
-  html: string;
+  currentPlatformKey: PlatformKey;
   loading: boolean;
+  platform: PlatformIntegration | undefined;
+  project: Project | undefined;
 };
 
-class ProjectInstallPlatform extends Component<Props, State> {
-  state: State = {
-    loading: true,
-    error: false,
-    html: '',
-  };
+export function ProjectInstallPlatform({
+  loading,
+  project,
+  currentPlatformKey,
+  platform: currentPlatform,
+}: Props) {
+  const organization = useOrganization();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const gettingStartedWithProjectContext = useContext(GettingStartedWithProjectContext);
 
-  componentDidMount() {
-    this.fetchData();
-    window.scrollTo(0, 0);
+  const isSelfHosted = ConfigStore.get('isSelfHosted');
 
-    const {platform} = this.props.params;
+  const products = useMemo(
+    () => decodeList(location.query.product ?? []) as ProductSolution[],
+    [location.query.product]
+  );
 
-    // redirect if platform is not known.
-    if (!platform || platform === 'other') {
-      this.redirectToNeutralDocs();
+  const {
+    data: projectAlertRules,
+    isPending: projectAlertRulesIsLoading,
+    isError: projectAlertRulesIsError,
+  } = useApiQuery<IssueAlertRule[]>(
+    [`/projects/${organization.slug}/${project?.slug}/rules/`],
+    {
+      enabled: !!project?.slug,
+      staleTime: 0,
     }
-  }
+  );
 
-  get isGettingStarted() {
-    return window.location.href.indexOf('getting-started') > 0;
-  }
-
-  fetchData = async () => {
-    const {api, params} = this.props;
-    const {orgId, projectId, platform} = params;
-
-    this.setState({loading: true});
-
-    try {
-      const {html} = await loadDocs(api, orgId, projectId, platform as PlatformKey);
-      this.setState({html});
-    } catch (error) {
-      this.setState({error});
-    }
-
-    this.setState({loading: false});
-  };
-
-  redirectToNeutralDocs() {
-    const {orgId, projectId} = this.props.params;
-
-    const url = `/organizations/${orgId}/projects/${projectId}/getting-started/`;
-
-    browserHistory.push(url);
-  }
-
-  render() {
-    const {params} = this.props;
-    const {orgId, projectId} = params;
-
-    const platform = platforms.find(p => p.id === params.platform);
-
-    if (!platform) {
-      return <NotFound />;
+  useEffect(() => {
+    if (!project || projectAlertRulesIsLoading || projectAlertRulesIsError) {
+      return;
     }
 
-    const issueStreamLink = `/organizations/${orgId}/issues/`;
-    const performanceOverviewLink = `/organizations/${orgId}/performance/`;
-    const gettingStartedLink = `/organizations/${orgId}/projects/${projectId}/getting-started/`;
-    const platformLink = platform.link ?? undefined;
+    if (gettingStartedWithProjectContext.project?.id === project.id) {
+      return;
+    }
 
-    return (
-      <Fragment>
-        <StyledPageHeader>
-          <h2>{t('Configure %(platform)s', {platform: platform.name})}</h2>
-          <ButtonBar gap={1}>
-            <Button size="small" to={gettingStartedLink}>
-              {t('< Back')}
-            </Button>
-            <Button size="small" href={platformLink} external>
-              {t('Full Documentation')}
-            </Button>
-          </ButtonBar>
-        </StyledPageHeader>
-
-        <div>
-          <Alert type="info" showIcon>
-            {tct(
-              `
-             This is a quick getting started guide. For in-depth instructions
-             on integrating Sentry with [platform], view
-             [docLink:our complete documentation].`,
-              {
-                platform: platform.name,
-                docLink: <a href={platformLink} />,
-              }
-            )}
-          </Alert>
-
-          {this.state.loading ? (
-            <LoadingIndicator />
-          ) : this.state.error ? (
-            <LoadingError onRetry={this.fetchData} />
-          ) : (
-            <Fragment>
-              <SentryDocumentTitle
-                title={`${t('Configure')} ${platform.name}`}
-                projectSlug={projectId}
-              />
-              <DocumentationWrapper dangerouslySetInnerHTML={{__html: this.state.html}} />
-            </Fragment>
-          )}
-
-          {this.isGettingStarted && (
-            <Projects
-              key={`${orgId}-${projectId}`}
-              orgId={orgId}
-              slugs={[projectId]}
-              passthroughPlaceholderProject={false}
-            >
-              {({projects, initiallyLoaded, fetching, fetchError}) => {
-                const projectsLoading = !initiallyLoaded && fetching;
-                const projectFilter =
-                  !projectsLoading && !fetchError && projects.length
-                    ? {
-                        project: (projects[0] as Project).id,
-                      }
-                    : {};
-                const showPerformancePrompt = performancePlatforms.includes(
-                  platform.id as PlatformKey
-                );
-
-                return (
-                  <Fragment>
-                    {showPerformancePrompt && (
-                      <Feature
-                        features={['performance-view']}
-                        hookName="feature-disabled:performance-new-project"
-                      >
-                        {({hasFeature}) => {
-                          if (hasFeature) {
-                            return null;
-                          }
-                          return (
-                            <StyledAlert type="info" showIcon>
-                              {t(
-                                `Your selected platform supports performance, but your organization does not have performance enabled.`
-                              )}
-                            </StyledAlert>
-                          );
-                        }}
-                      </Feature>
-                    )}
-
-                    <StyledButtonBar gap={1}>
-                      <Button
-                        priority="primary"
-                        busy={projectsLoading}
-                        to={{
-                          pathname: issueStreamLink,
-                          query: projectFilter,
-                          hash: '#welcome',
-                        }}
-                      >
-                        {t('Take me to Issues')}
-                      </Button>
-                      <Button
-                        busy={projectsLoading}
-                        to={{
-                          pathname: performanceOverviewLink,
-                          query: projectFilter,
-                        }}
-                      >
-                        {t('Take me to Performance')}
-                      </Button>
-                    </StyledButtonBar>
-                  </Fragment>
-                );
-              }}
-            </Projects>
-          )}
-        </div>
-      </Fragment>
+    const platformKey = Object.keys(platforms).find(
+      key => platforms[key].id === project.platform
     );
-  }
-}
 
-const DocumentationWrapper = styled('div')`
-  line-height: 1.5;
-
-  .gatsby-highlight {
-    margin-bottom: ${space(3)};
-
-    &:last-child {
-      margin-bottom: 0;
+    if (!platformKey) {
+      return;
     }
+
+    gettingStartedWithProjectContext.setProject({
+      id: project.id,
+      name: project.name,
+      // sometimes the team slug here can be undefined
+      teamSlug: project.team?.slug,
+      alertRules: projectAlertRules,
+      platform: {
+        ...omit(platforms[platformKey], 'id'),
+        key: platforms[platformKey].id,
+      } as OnboardingSelectedSDK,
+    });
+  }, [
+    gettingStartedWithProjectContext,
+    project,
+    projectAlertRules,
+    projectAlertRulesIsLoading,
+    projectAlertRulesIsError,
+  ]);
+
+  const platform: Platform = {
+    key: currentPlatformKey,
+    id: currentPlatform?.id,
+    name: currentPlatform?.name,
+    link: currentPlatform?.link,
+  };
+
+  const redirectWithProjectSelection = useCallback(
+    (to: LocationDescriptorObject) => {
+      if (!project?.id) {
+        return;
+      }
+      // We need to persist and pin the project filter
+      // so the selection does not reset on further navigation
+      PageFiltersStore.updateProjects([Number(project?.id)], null);
+      PageFiltersStore.pin('projects', true);
+      setPageFiltersStorage(organization.slug, new Set(['projects']));
+
+      navigate({
+        ...to,
+        query: {
+          ...to.query,
+          project: project?.id,
+        },
+      });
+    },
+    [navigate, organization.slug, project?.id]
+  );
+
+  if (!project) {
+    return null;
   }
 
-  .alert {
-    margin-bottom: ${space(3)};
-    border-radius: ${p => p.theme.borderRadius};
+  if (!platform.id && platform.key !== 'other') {
+    return <NotFound />;
   }
 
-  pre {
-    word-break: break-all;
-    white-space: pre-wrap;
+  // because we fall back to 'other' this will always be defined
+  if (!currentPlatform) {
+    return null;
   }
 
-  blockquote {
-    padding: ${space(1)};
-    margin-left: 0;
-    background: ${p => p.theme.alert.info.backgroundLight};
-    border-left: 2px solid ${p => p.theme.alert.info.border};
-  }
-  blockquote > *:last-child {
-    margin-bottom: 0;
-  }
-`;
+  const issueStreamLink = `/organizations/${organization.slug}/issues/`;
+  const showPerformancePrompt = performancePlatforms.includes(platform.id as PlatformKey);
+  const isGettingStarted = window.location.href.indexOf('getting-started') > 0;
+  const showDocsWithProductSelection =
+    (platformProductAvailability[platform.key] ?? []).length > 0;
+
+  return (
+    <Fragment>
+      {!isSelfHosted && showDocsWithProductSelection && (
+        <ProductUnavailableCTAHook organization={organization} />
+      )}
+      <PlatformDocHeader projectSlug={project.slug} platform={platform} />
+      {platform.key === 'other' ? (
+        <OtherPlatformsInfo
+          projectSlug={project.slug}
+          platform={platform.name ?? 'other'}
+        />
+      ) : (
+        <SdkDocumentation
+          platform={currentPlatform}
+          organization={organization}
+          projectSlug={project.slug}
+          projectId={project.id}
+          activeProductSelection={products}
+        />
+      )}
+      <div>
+        {isGettingStarted && showPerformancePrompt && (
+          <Feature
+            features="performance-view"
+            hookName="feature-disabled:performance-new-project"
+          >
+            {({hasFeature}) => {
+              if (hasFeature) {
+                return null;
+              }
+              return (
+                <StyledAlert type="info" showIcon>
+                  {t(
+                    `Your selected platform supports performance, but your organization does not have performance enabled.`
+                  )}
+                </StyledAlert>
+              );
+            }}
+          </Feature>
+        )}
+        <StyledButtonBar gap={1}>
+          <Button
+            priority="primary"
+            busy={loading}
+            onClick={() => {
+              trackAnalytics('onboarding.take_me_to_issues_clicked', {
+                organization,
+                platform: platform.name ?? 'unknown',
+                project_id: project.id,
+                products,
+              });
+              redirectWithProjectSelection({
+                pathname: issueStreamLink,
+                hash: '#welcome',
+              });
+            }}
+          >
+            {t('Take me to Issues')}
+          </Button>
+        </StyledButtonBar>
+      </div>
+    </Fragment>
+  );
+}
 
 const StyledButtonBar = styled(ButtonBar)`
   margin-top: ${space(3)};
   width: max-content;
 
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
     width: auto;
     grid-row-gap: ${space(1)};
     grid-auto-flow: row;
   }
 `;
 
-const StyledPageHeader = styled(PageHeader)`
-  margin-bottom: ${space(3)};
-
-  h2 {
-    margin: 0;
-  }
-
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
-    flex-direction: column;
-    align-items: flex-start;
-
-    h2 {
-      margin-bottom: ${space(2)};
-    }
-  }
-`;
-
 const StyledAlert = styled(Alert)`
   margin-top: ${space(2)};
 `;
-
-export {ProjectInstallPlatform};
-export default withApi(withOrganization(ProjectInstallPlatform));

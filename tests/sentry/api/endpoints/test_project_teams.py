@@ -1,4 +1,4 @@
-from sentry.testutils import APITestCase
+from sentry.testutils.cases import APITestCase
 
 
 class ProjectTeamsTest(APITestCase):

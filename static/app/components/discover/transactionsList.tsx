@@ -1,30 +1,37 @@
-import {Component, Fragment} from 'react';
-import {browserHistory} from 'react-router';
+import {Component, Fragment, useContext, useEffect} from 'react';
 import styled from '@emotion/styled';
-import {Location, LocationDescriptor, Query} from 'history';
+import type {Location, LocationDescriptor} from 'history';
 
 import GuideAnchor from 'sentry/components/assistant/guideAnchor';
-import Button from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import DiscoverButton from 'sentry/components/discoverButton';
-import DropdownButton from 'sentry/components/dropdownButton';
-import DropdownControl, {DropdownItem} from 'sentry/components/dropdownControl';
-import Pagination, {CursorHandler} from 'sentry/components/pagination';
+import {InvestigationRuleCreation} from 'sentry/components/dynamicSampling/investigationRule';
+import type {CursorHandler} from 'sentry/components/pagination';
+import Pagination from 'sentry/components/pagination';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import DiscoverQuery, {TableDataRow} from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
-import {Sort} from 'sentry/utils/discover/fields';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import {parseCursor} from 'sentry/utils/cursor';
+import type {TableDataRow} from 'sentry/utils/discover/discoverQuery';
+import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {Sort} from 'sentry/utils/discover/fields';
+import {SavedQueryDatasets} from 'sentry/utils/discover/types';
 import {TrendsEventsDiscoverQuery} from 'sentry/utils/performance/trends/trendsDiscoverQuery';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
-import {Actions} from 'sentry/views/eventsV2/table/cellAction';
-import {TableColumn} from 'sentry/views/eventsV2/table/types';
-import {decodeColumnOrder} from 'sentry/views/eventsV2/utils';
-import {SpanOperationBreakdownFilter} from 'sentry/views/performance/transactionSummary/filter';
+import {hasDatasetSelector} from 'sentry/views/dashboards/utils';
+import type {Actions} from 'sentry/views/discover/table/cellAction';
+import type {TableColumn} from 'sentry/views/discover/table/types';
+import {decodeColumnOrder} from 'sentry/views/discover/utils';
+import type {SpanOperationBreakdownFilter} from 'sentry/views/performance/transactionSummary/filter';
 import {mapShowTransactionToPercentile} from 'sentry/views/performance/transactionSummary/transactionEvents/utils';
-import {TransactionFilterOptions} from 'sentry/views/performance/transactionSummary/utils';
-import {TrendChangeType, TrendView} from 'sentry/views/performance/trends/types';
+import {PerformanceAtScaleContext} from 'sentry/views/performance/transactionSummary/transactionOverview/performanceAtScaleContext';
+import type {TransactionFilterOptions} from 'sentry/views/performance/transactionSummary/utils';
+import {DisplayModes} from 'sentry/views/performance/transactionSummary/utils';
+import type {TrendChangeType, TrendView} from 'sentry/views/performance/trends/types';
 
 import TransactionsTable from './transactionsTable';
 
@@ -95,7 +102,7 @@ type Props = {
     (
       organization: Organization,
       tableRow: TableDataRow,
-      query: Query
+      location: Location
     ) => LocationDescriptor
   >;
   generatePerformanceTransactionEventsView?: () => EventView;
@@ -113,13 +120,111 @@ type Props = {
    * The callback for when Open in Discover is clicked.
    */
   handleOpenInDiscoverClick?: (e: React.MouseEvent<Element>) => void;
+  referrer?: string;
   showTransactions?: TransactionFilterOptions;
+  supportsInvestigationRule?: boolean;
   /**
    * A list of preferred table headers to use over the field names.
    */
   titles?: string[];
   trendView?: TrendView;
 };
+
+type TableRenderProps = Omit<React.ComponentProps<typeof Pagination>, 'size'> &
+  React.ComponentProps<typeof TransactionsTable> & {
+    header: React.ReactNode;
+    paginationCursorSize: React.ComponentProps<typeof Pagination>['size'];
+    target?: string;
+  };
+
+function TableRender({
+  pageLinks,
+  onCursor,
+  header,
+  eventView,
+  organization,
+  isLoading,
+  location,
+  columnOrder,
+  tableData,
+  titles,
+  generateLink,
+  handleCellAction,
+  referrer,
+  useAggregateAlias,
+  target,
+  paginationCursorSize,
+}: TableRenderProps) {
+  const query = decodeScalar(location.query.query, '');
+  const display = decodeScalar(location.query.display, DisplayModes.DURATION);
+  const performanceAtScaleContext = useContext(PerformanceAtScaleContext);
+  const hasResults = tableData?.meta && tableData.data?.length > 0;
+
+  useEffect(() => {
+    if (!performanceAtScaleContext) {
+      return;
+    }
+
+    // we are now only collecting analytics data from the transaction summary page
+    // when the display mode is set to duration
+    if (display !== DisplayModes.DURATION) {
+      return;
+    }
+
+    if (isLoading || hasResults === null) {
+      performanceAtScaleContext.setTransactionListTableData(undefined);
+      return;
+    }
+
+    if (
+      !hasResults === performanceAtScaleContext.transactionListTableData?.empty &&
+      query === performanceAtScaleContext.transactionListTableData?.query
+    ) {
+      return;
+    }
+
+    performanceAtScaleContext.setTransactionListTableData({
+      empty: !hasResults,
+      query,
+    });
+  }, [display, isLoading, hasResults, performanceAtScaleContext, query]);
+
+  const content = (
+    <TransactionsTable
+      eventView={eventView}
+      organization={organization}
+      location={location}
+      isLoading={isLoading}
+      tableData={tableData}
+      columnOrder={columnOrder}
+      titles={titles}
+      generateLink={generateLink}
+      handleCellAction={handleCellAction}
+      useAggregateAlias={useAggregateAlias}
+      referrer={referrer}
+    />
+  );
+
+  return (
+    <Fragment>
+      <Header>
+        {header}
+        <StyledPagination
+          pageLinks={pageLinks}
+          onCursor={onCursor}
+          size={paginationCursorSize}
+        />
+      </Header>
+      {target ? (
+        <GuideAnchor target={target} position="top-start">
+          {content}
+        </GuideAnchor>
+      ) : (
+        content
+      )}
+    </Fragment>
+  );
+}
 
 class _TransactionsList extends Component<Props> {
   static defaultProps = {
@@ -161,7 +266,15 @@ class _TransactionsList extends Component<Props> {
     return generatePerformanceTransactionEventsView?.() ?? this.getEventView();
   }
 
-  renderHeader(): React.ReactNode {
+  renderHeader({
+    cursor,
+    numSamples,
+    supportsInvestigationRule,
+  }: {
+    numSamples: number | null | undefined;
+    cursor?: string | undefined;
+    supportsInvestigationRule?: boolean;
+  }): React.ReactNode {
     const {
       organization,
       selected,
@@ -171,40 +284,34 @@ class _TransactionsList extends Component<Props> {
       handleOpenInDiscoverClick,
       showTransactions,
       breakdown,
+      eventView,
     } = this.props;
-
+    const cursorOffset = parseCursor(cursor)?.offset ?? 0;
+    numSamples = numSamples ?? null;
+    const totalNumSamples = numSamples === null ? null : numSamples + cursorOffset;
     return (
       <Fragment>
         <div>
-          <DropdownControl
-            button={({isOpen, getActorProps}) => (
-              <StyledDropdownButton
-                {...getActorProps()}
-                isOpen={isOpen}
-                prefix={t('Filter')}
-                size="xsmall"
-              >
-                {selected.label}
-              </StyledDropdownButton>
-            )}
-          >
-            {options.map(({value, label}) => (
-              <DropdownItem
-                data-test-id={`option-${value}`}
-                key={value}
-                onSelect={handleDropdownChange}
-                eventKey={value}
-                isActive={value === selected.value}
-              >
-                {label}
-              </DropdownItem>
-            ))}
-          </DropdownControl>
+          <CompactSelect
+            triggerProps={{prefix: t('Filter'), size: 'xs'}}
+            value={selected.value}
+            options={options}
+            onChange={opt => handleDropdownChange(opt.value)}
+          />
         </div>
+        {supportsInvestigationRule && (
+          <InvestigationRuleWrapper>
+            <InvestigationRuleCreation
+              buttonProps={{size: 'xs'}}
+              eventView={eventView}
+              numSamples={totalNumSamples}
+            />
+          </InvestigationRuleWrapper>
+        )}
         {!this.isTrend() &&
           (handleOpenAllEventsClick ? (
             <GuideAnchor target="release_transactions_open_in_transaction_events">
-              <Button
+              <LinkButton
                 onClick={handleOpenAllEventsClick}
                 to={this.generatePerformanceTransactionEventsView().getPerformanceTransactionEventsViewUrlTarget(
                   organization.slug,
@@ -213,20 +320,24 @@ class _TransactionsList extends Component<Props> {
                     breakdown,
                   }
                 )}
-                size="xsmall"
+                size="xs"
                 data-test-id="transaction-events-open"
               >
-                {t('View All Events')}
-              </Button>
+                {t('View Sampled Events')}
+              </LinkButton>
             </GuideAnchor>
           ) : (
             <GuideAnchor target="release_transactions_open_in_discover">
               <DiscoverButton
                 onClick={handleOpenInDiscoverClick}
                 to={this.generateDiscoverEventView().getResultsViewUrlTarget(
-                  organization.slug
+                  organization.slug,
+                  false,
+                  hasDatasetSelector(organization)
+                    ? SavedQueryDatasets.TRANSACTIONS
+                    : undefined
                 )}
-                size="xsmall"
+                size="xs"
                 data-test-id="discover-open"
               >
                 {t('Open in Discover')}
@@ -247,42 +358,40 @@ class _TransactionsList extends Component<Props> {
       titles,
       generateLink,
       forceLoading,
+      referrer,
     } = this.props;
 
     const eventView = this.getEventView();
     const columnOrder = eventView.getColumns();
     const cursor = decodeScalar(location.query?.[cursorName]);
-
-    const tableRenderer = ({isLoading, pageLinks, tableData}) => (
-      <Fragment>
-        <Header>
-          {this.renderHeader()}
-          <StyledPagination
-            pageLinks={pageLinks}
-            onCursor={this.handleCursor}
-            size="xsmall"
-          />
-        </Header>
-        <TransactionsTable
-          eventView={eventView}
-          organization={organization}
-          location={location}
-          isLoading={isLoading}
-          tableData={tableData}
-          columnOrder={columnOrder}
-          titles={titles}
-          generateLink={generateLink}
-          handleCellAction={handleCellAction}
-        />
-      </Fragment>
-    );
+    const tableCommonProps: Omit<
+      TableRenderProps,
+      'isLoading' | 'pageLinks' | 'tableData' | 'header'
+    > = {
+      handleCellAction,
+      referrer,
+      eventView,
+      organization,
+      location,
+      columnOrder,
+      titles,
+      generateLink,
+      useAggregateAlias: false,
+      target: 'transactions_table',
+      paginationCursorSize: 'xs',
+      onCursor: this.handleCursor,
+    };
 
     if (forceLoading) {
-      return tableRenderer({
-        isLoading: true,
-        pageLinks: null,
-        tableData: null,
-      });
+      return (
+        <TableRender
+          {...tableCommonProps}
+          isLoading
+          pageLinks={null}
+          tableData={null}
+          header={this.renderHeader({numSamples: null})}
+        />
+      );
     }
 
     return (
@@ -294,7 +403,19 @@ class _TransactionsList extends Component<Props> {
         cursor={cursor}
         referrer="api.discover.transactions-list"
       >
-        {tableRenderer}
+        {({isLoading, pageLinks, tableData}) => (
+          <TableRender
+            {...tableCommonProps}
+            isLoading={isLoading}
+            pageLinks={pageLinks}
+            tableData={tableData}
+            header={this.renderHeader({
+              numSamples: tableData?.data?.length ?? null,
+              supportsInvestigationRule: this.props.supportsInvestigationRule,
+              cursor,
+            })}
+          />
+        )}
       </DiscoverQuery>
     );
   }
@@ -322,30 +443,28 @@ class _TransactionsList extends Component<Props> {
         limit={5}
       >
         {({isLoading, trendsData, pageLinks}) => (
-          <Fragment>
-            <Header>
-              {this.renderHeader()}
-              <StyledPagination
-                pageLinks={pageLinks}
-                onCursor={this.handleCursor}
-                size="small"
-              />
-            </Header>
-            <TransactionsTable
-              eventView={sortedEventView}
-              organization={organization}
-              location={location}
-              isLoading={isLoading}
-              tableData={trendsData}
-              titles={['transaction', 'percentage', 'difference']}
-              columnOrder={decodeColumnOrder([
-                {field: 'transaction'},
-                {field: 'trend_percentage()'},
-                {field: 'trend_difference()'},
-              ])}
-              generateLink={generateLink}
-            />
-          </Fragment>
+          <TableRender
+            organization={organization}
+            eventView={sortedEventView}
+            location={location}
+            isLoading={isLoading}
+            tableData={trendsData}
+            pageLinks={pageLinks}
+            onCursor={this.handleCursor}
+            paginationCursorSize="sm"
+            header={this.renderHeader({
+              numSamples: null,
+              supportsInvestigationRule: false,
+            })}
+            titles={['transaction', 'percentage', 'difference']}
+            columnOrder={decodeColumnOrder([
+              {field: 'transaction'},
+              {field: 'trend_percentage()'},
+              {field: 'trend_difference()'},
+            ])}
+            generateLink={generateLink}
+            useAggregateAlias
+          />
         )}
       </TrendsEventsDiscoverQuery>
     );
@@ -367,26 +486,26 @@ class _TransactionsList extends Component<Props> {
 
 const Header = styled('div')`
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   margin-bottom: ${space(1)};
   align-items: center;
-`;
-
-const StyledDropdownButton = styled(DropdownButton)`
-  min-width: 145px;
 `;
 
 const StyledPagination = styled(Pagination)`
   margin: 0 0 0 ${space(1)};
 `;
 
-const TransactionsList = (
+const InvestigationRuleWrapper = styled('div')`
+  margin-right: ${space(1)};
+`;
+
+function TransactionsList(
   props: Omit<Props, 'cursorName' | 'limit'> & {
     cursorName?: Props['cursorName'];
     limit?: Props['limit'];
   }
-) => {
+) {
   return <_TransactionsList {...props} />;
-};
+}
 
 export default TransactionsList;

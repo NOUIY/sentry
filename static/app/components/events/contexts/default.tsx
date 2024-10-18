@@ -1,5 +1,5 @@
 import ContextBlock from 'sentry/components/events/contexts/contextBlock';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
 
 type Props = {
   alias: string;
@@ -7,7 +7,7 @@ type Props = {
   event: Event;
 };
 
-function getKnownData(data: Props['data']) {
+export function getDefaultContextData(data: Props['data']) {
   return Object.entries(data)
     .filter(([k]) => k !== 'type' && k !== 'title')
     .map(([key, value]) => ({
@@ -17,6 +17,6 @@ function getKnownData(data: Props['data']) {
     }));
 }
 
-const DefaultContextType = ({data}: Props) => <ContextBlock data={getKnownData(data)} />;
-
-export default DefaultContextType;
+export function DefaultContext({data}: Props) {
+  return <ContextBlock data={getDefaultContextData(data)} />;
+}

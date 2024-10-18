@@ -1,11 +1,10 @@
 import {Component} from 'react';
-import {browserHistory} from 'react-router';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import DataZoomInside from 'sentry/components/charts/components/dataZoomInside';
 import ToolBox from 'sentry/components/charts/components/toolBox';
-import {EChartChartReadyHandler, EChartDataZoomHandler} from 'sentry/types/echarts';
-import {callIfFunction} from 'sentry/utils/callIfFunction';
+import type {EChartChartReadyHandler, EChartDataZoomHandler} from 'sentry/types/echarts';
+import {browserHistory} from 'sentry/utils/browserHistory';
 
 type RenderProps = {
   dataZoom: ReturnType<typeof DataZoomInside>;
@@ -71,7 +70,7 @@ class BarChartZoom extends Component<Props> {
    * Enable zoom immediately instead of having to toggle to zoom
    */
   handleChartReady = chart => {
-    callIfFunction(this.props.onChartReady, chart);
+    this.props.onChartReady?.(chart);
   };
 
   /**
@@ -88,7 +87,7 @@ class BarChartZoom extends Component<Props> {
     }
 
     // This attempts to activate the area zoom toolbox feature
-    const zoom = chart._componentsViews?.find(c => c._features && c._features.dataZoom);
+    const zoom = chart._componentsViews?.find(c => c._features?.dataZoom);
     if (zoom && !zoom._features.dataZoom._isZoomActive) {
       // Calling dispatchAction will re-trigger handleChartFinished
       chart.dispatchAction({
@@ -129,15 +128,15 @@ class BarChartZoom extends Component<Props> {
       } else {
         // Dispatch the restore action here to stop ECharts from zooming
         chart.dispatchAction({type: 'restore'});
-        callIfFunction(this.props.onDataZoomCancelled);
+        this.props.onDataZoomCancelled?.();
       }
     } else {
       // Dispatch the restore action here to stop ECharts from zooming
       chart.dispatchAction({type: 'restore'});
-      callIfFunction(this.props.onDataZoomCancelled);
+      this.props.onDataZoomCancelled?.();
     }
 
-    callIfFunction(this.props.onDataZoom, evt, chart);
+    this.props.onDataZoom?.(evt, chart);
   };
 
   render() {

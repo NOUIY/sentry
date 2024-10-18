@@ -4,11 +4,11 @@ import styled from '@emotion/styled';
 import {openModal} from 'sentry/actionCreators/modal';
 import Link from 'sentry/components/links/link';
 import SentryAppPublishRequestModal from 'sentry/components/modals/sentryAppPublishRequestModal';
-import {PanelItem} from 'sentry/components/panels';
+import PanelItem from 'sentry/components/panels/panelItem';
 import SentryAppIcon from 'sentry/components/sentryAppIcon';
-import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, SentryApp} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {SentryApp} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
 
 import SentryApplicationRowButtons from './sentryApplicationRowButtons';
 
@@ -111,7 +111,7 @@ type PublishStatusProps = {status: SentryApp['status']; theme?: any};
 
 const PublishStatus = styled(({status, ...props}: PublishStatusProps) => (
   <CenterFlex>
-    <div {...props}>{t(`${status}`)}</div>
+    <div {...props}>{status}</div>
   </CenterFlex>
 ))`
   color: ${(props: PublishStatusProps) =>

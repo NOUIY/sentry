@@ -4,8 +4,7 @@ import styled from '@emotion/styled';
 import TimeSince from 'sentry/components/timeSince';
 import {IconClock} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 /**
  * Renders the first & last seen times for a group or event with
@@ -17,24 +16,26 @@ type Props = {
   lastSeen: string;
 };
 
-const Times = ({lastSeen, firstSeen}: Props) => (
-  <Container>
-    <FlexWrapper>
-      {lastSeen && (
-        <Fragment>
-          <StyledIconClock size="11px" />
-          <TimeSince date={lastSeen} suffix={t('ago')} />
-        </Fragment>
-      )}
-      {firstSeen && lastSeen && (
-        <span className="hidden-xs hidden-sm">&nbsp;—&nbsp;</span>
-      )}
-      {firstSeen && (
-        <TimeSince date={firstSeen} suffix={t('old')} className="hidden-xs hidden-sm" />
-      )}
-    </FlexWrapper>
-  </Container>
-);
+function Times({lastSeen, firstSeen}: Props) {
+  return (
+    <Container>
+      <FlexWrapper>
+        {lastSeen && (
+          <Fragment>
+            <StyledIconClock legacySize="11px" />
+            <TimeSince date={lastSeen} suffix={t('ago')} />
+          </Fragment>
+        )}
+        {firstSeen && lastSeen && (
+          <span className="hidden-xs hidden-sm">&nbsp;—&nbsp;</span>
+        )}
+        {firstSeen && (
+          <TimeSince date={firstSeen} suffix={t('old')} className="hidden-xs hidden-sm" />
+        )}
+      </FlexWrapper>
+    </Container>
+  );
+}
 
 const Container = styled('div')`
   flex-shrink: 1;
@@ -42,7 +43,7 @@ const Container = styled('div')`
 `;
 
 const FlexWrapper = styled('div')`
-  ${overflowEllipsis}
+  ${p => p.theme.overflowEllipsis}
 
   /* The following aligns the icon with the text, fixes bug in Firefox */
   display: flex;

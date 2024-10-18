@@ -1,28 +1,30 @@
-import copy
-
+import pytest
 import responses
 
-from sentry.models import ExternalIssue
+from fixtures.gitlab import GitLabTestCase
+from sentry.integrations.models.external_issue import ExternalIssue
+from sentry.integrations.services.integration import integration_service
 from sentry.shared_integrations.exceptions import IntegrationError
-from sentry.testutils.factories import DEFAULT_EVENT_DATA
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.factories import EventType
+from sentry.testutils.helpers.datetime import before_now
+from sentry.testutils.skips import requires_snuba
 from sentry.utils.http import absolute_uri
 
-from .testutils import GitLabTestCase
+pytestmark = [requires_snuba]
 
 
 class GitlabIssuesTest(GitLabTestCase):
     def setUp(self):
         super().setUp()
-        min_ago = iso_format(before_now(minutes=1))
+        min_ago = before_now(minutes=1).isoformat()
         event = self.store_event(
             data={
                 "event_id": "a" * 32,
                 "message": "message",
                 "timestamp": min_ago,
-                "stacktrace": copy.deepcopy(DEFAULT_EVENT_DATA["stacktrace"]),
             },
             project_id=self.project.id,
+            default_event_type=EventType.DEFAULT,
         )
         self.group = event.group
 
@@ -122,7 +124,7 @@ class GitlabIssuesTest(GitLabTestCase):
             {
                 "name": "comment",
                 "label": "Comment",
-                "default": "Sentry issue: [{issue_id}]({url})".format(
+                "default": "Sentry Issue: [{issue_id}]({url})".format(
                     url=absolute_uri(
                         self.group.get_absolute_url(params={"referrer": "gitlab_integration"})
                     ),
@@ -216,11 +218,13 @@ class GitlabIssuesTest(GitLabTestCase):
         )
         project_id = 10
         project_name = "This_is / a_project"
-        org_integration = self.installation.org_integration
-        org_integration.config["project_issue_defaults"] = {
-            str(self.group.project_id): {"project": project_id}
-        }
-        org_integration.save()
+        assert self.installation.org_integration is not None
+        self.installation.org_integration = integration_service.update_organization_integration(
+            org_integration_id=self.installation.org_integration.id,
+            config={
+                "project_issue_defaults": {str(self.group.project_id): {"project": project_id}}
+            },
+        )
 
         responses.add(
             responses.GET,
@@ -281,11 +285,13 @@ class GitlabIssuesTest(GitLabTestCase):
         )
         project_id = 10
         project_name = "This_is / a_project"
-        org_integration = self.installation.org_integration
-        org_integration.config["project_issue_defaults"] = {
-            str(self.group.project_id): {"project": project_id}
-        }
-        org_integration.save()
+        assert self.installation.org_integration is not None
+        self.installation.org_integration = integration_service.update_organization_integration(
+            org_integration_id=self.installation.org_integration.id,
+            config={
+                "project_issue_defaults": {str(self.group.project_id): {"project": project_id}}
+            },
+        )
 
         responses.add(
             responses.GET,
@@ -390,12 +396,13 @@ class GitlabIssuesTest(GitLabTestCase):
         )
         self.installation.after_link_issue(external_issue, data=data)
 
+    @responses.activate
     def test_after_link_issue_required_fields(self):
         data = {"externalIssue": "2#231", "comment": "This is not good."}
         external_issue = ExternalIssue.objects.create(
             organization_id=self.organization.id, integration_id=self.integration.id, key="#"
         )
-        with self.assertRaises(IntegrationError):
+        with pytest.raises(IntegrationError):
             self.installation.after_link_issue(external_issue, data=data)
 
     @responses.activate
@@ -409,5 +416,5 @@ class GitlabIssuesTest(GitLabTestCase):
         external_issue = ExternalIssue.objects.create(
             organization_id=self.organization.id, integration_id=self.integration.id, key="2#321"
         )
-        with self.assertRaises(IntegrationError):
+        with pytest.raises(IntegrationError):
             self.installation.after_link_issue(external_issue, data=data)

@@ -1,3 +1,4 @@
+import pytest
 from django.utils import timezone
 
 from sentry import audit_log
@@ -7,10 +8,12 @@ from sentry.audit_log import (
     AuditLogEventNotRegistered,
     DuplicateAuditLogEvent,
 )
-from sentry.models import AuditLogEntry
-from sentry.testutils import TestCase
+from sentry.models.auditlogentry import AuditLogEntry
+from sentry.testutils.cases import TestCase
+from sentry.testutils.silo import control_silo_test
 
 
+@control_silo_test
 class AuditLogEventManagerTest(TestCase):
     def test_audit_log_manager(self):
         test_manager = AuditLogEventManager()
@@ -27,7 +30,7 @@ class AuditLogEventManagerTest(TestCase):
         log_event = test_manager.get(event_id=500)
 
         log_entry = AuditLogEntry.objects.create(
-            organization=self.organization,
+            organization_id=self.organization.id,
             event=audit_log.get_event_id("MEMBER_INVITE"),
             actor=self.user,
             datetime=timezone.now(),
@@ -51,7 +54,7 @@ class AuditLogEventManagerTest(TestCase):
                 template="test member {email} is {role}",
             )
         )
-        with self.assertRaises(DuplicateAuditLogEvent):
+        with pytest.raises(DuplicateAuditLogEvent):
             test_manager.add(
                 AuditLogEvent(
                     event_id=500,
@@ -62,7 +65,7 @@ class AuditLogEventManagerTest(TestCase):
             )
         assert test_manager.get_event_id(name="TEST_LOG_ENTRY") == 500
 
-        with self.assertRaises(AuditLogEventNotRegistered):
+        with pytest.raises(AuditLogEventNotRegistered):
             test_manager.get_event_id(name="TEST_DUPLICATE")
 
     def test_duplicate_event_name(self):
@@ -76,7 +79,7 @@ class AuditLogEventManagerTest(TestCase):
                 template="test member {email} is {role}",
             )
         )
-        with self.assertRaises(DuplicateAuditLogEvent):
+        with pytest.raises(DuplicateAuditLogEvent):
             test_manager.add(
                 AuditLogEvent(
                     event_id=501,
@@ -88,7 +91,7 @@ class AuditLogEventManagerTest(TestCase):
         assert test_manager.get_event_id(name="TEST_LOG_ENTRY") == 500
         assert "test.duplicate" not in test_manager.get_api_names()
 
-        with self.assertRaises(AuditLogEventNotRegistered):
+        with pytest.raises(AuditLogEventNotRegistered):
             test_manager.get(501)
 
     def test_duplicate_api_name(self):
@@ -102,7 +105,7 @@ class AuditLogEventManagerTest(TestCase):
                 template="test member {email} is {role}",
             )
         )
-        with self.assertRaises(DuplicateAuditLogEvent):
+        with pytest.raises(DuplicateAuditLogEvent):
             test_manager.add(
                 AuditLogEvent(
                     event_id=501,
@@ -113,5 +116,5 @@ class AuditLogEventManagerTest(TestCase):
             )
         assert test_manager.get_event_id_from_api_name(api_name="test-log.entry") == 500
 
-        with self.assertRaises(AuditLogEventNotRegistered):
+        with pytest.raises(AuditLogEventNotRegistered):
             test_manager.get(501)

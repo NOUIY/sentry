@@ -1,19 +1,9 @@
 import math
+from abc import ABC, abstractmethod
 
 
 def mean(values):
     return sum(values) / len(values)
-
-
-def stddev(values, mean_=None):
-    if mean_ is None:
-        mean_ = mean(values)
-
-    n = 0
-    for val in values:
-        n += (val - mean_) ** 2
-    n = math.sqrt(n / float(len(values) - 1))
-    return n
 
 
 def median(values):
@@ -22,12 +12,6 @@ def median(values):
     if size % 2 == 1:
         return values[int((size - 1) / 2)]
     return (values[int(size / 2 - 1)] + values[int(size / 2)]) / 2
-
-
-def mad(values, K=1.4826):
-    # http://en.wikipedia.org/wiki/Median_absolute_deviation
-    med = median(values)
-    return K * median([abs(val - med) for val in values])
 
 
 def nice_int(x):
@@ -60,3 +44,21 @@ def nice_int(x):
             break
 
     return sign * nice_frac * rounded
+
+
+class MovingAverage(ABC):
+    @abstractmethod
+    def update(self, n: int, avg: float, value: float) -> float:
+        raise NotImplementedError
+
+
+class ExponentialMovingAverage(MovingAverage):
+    def __init__(self, weight: float):
+        super().__init__()
+        assert 0 < weight and weight < 1
+        self.weight = weight
+
+    def update(self, n: int, avg: float, value: float) -> float:
+        if n == 0:
+            return value
+        return value * self.weight + avg * (1 - self.weight)

@@ -1,23 +1,18 @@
 import * as React from 'react';
-import {findDOMNode, render} from 'react-dom';
-import * as ReactRouter from 'react-router';
+import {findDOMNode} from 'react-dom';
+import {createRoot} from 'react-dom/client';
 import * as Sentry from '@sentry/react';
-import moment from 'moment';
-import * as PropTypes from 'prop-types';
-import * as Reflux from 'reflux';
+import moment from 'moment-timezone';
 
 import plugins from 'sentry/plugins';
 
 const globals = {
   // The following globals are used in sentry-plugins webpack externals
   // configuration.
-  PropTypes,
   React,
-  Reflux,
   Sentry,
   moment,
-  Router: ReactRouter,
-  ReactDOM: {findDOMNode, render},
+  ReactDOM: {findDOMNode, createRoot},
 
   // django templates make use of these globals
   SentryApp: {},
@@ -27,7 +22,6 @@ const globals = {
 // modules that are not compiled with the sentry bundle.
 const SentryApp = {
   // The following components are used in sentry-plugins.
-  Form: require('sentry/components/deprecatedforms/form').default,
   FormState: require('sentry/components/forms/state').default,
   LoadingIndicator: require('sentry/components/loadingIndicator').default,
   plugins: {
@@ -45,9 +39,11 @@ const SentryApp = {
   Modal: require('sentry/actionCreators/modal'),
   getModalPortal: require('sentry/utils/getModalPortal').default,
   Client: require('sentry/api').Client,
+  // This is used in the Email Modal in the Sandbox
+  IconArrow: require('sentry/icons/iconArrow').IconArrow,
 };
 
 globals.SentryApp = SentryApp;
 Object.keys(globals).forEach(name => (window[name] = globals[name]));
 
-export default globals;
+export {globals as exportedGlobals};

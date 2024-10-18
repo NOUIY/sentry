@@ -1,12 +1,13 @@
 import {Component, Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import omit from 'lodash/omit';
 
-import Alert from 'sentry/components/alert';
-import Button from 'sentry/components/button';
-import DateTime from 'sentry/components/dateTime';
+import {Alert} from 'sentry/components/alert';
+import {LinkButton} from 'sentry/components/button';
+import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
+import {DateTime} from 'sentry/components/dateTime';
+import {getFormattedTimeRangeWithLeadingAndTrailingZero} from 'sentry/components/events/interfaces/spans/utils';
 import Link from 'sentry/components/links/link';
 import {
   ErrorDot,
@@ -17,16 +18,18 @@ import {
 } from 'sentry/components/performance/waterfall/rowDetails';
 import {generateIssueEventTarget} from 'sentry/components/quickTrace/utils';
 import {PAGE_URL_PARAM} from 'sentry/constants/pageFilters';
-import {IconAnchor} from 'sentry/icons';
 import {t, tn} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {generateEventSlug} from 'sentry/utils/discover/urls';
 import getDynamicText from 'sentry/utils/getDynamicText';
-import {TraceFullDetailed} from 'sentry/utils/performance/quickTrace/types';
+import type {TraceFullDetailed} from 'sentry/utils/performance/quickTrace/types';
 import {getTransactionDetailsUrl} from 'sentry/utils/performance/urls';
 import {WEB_VITAL_DETAILS} from 'sentry/utils/performance/vitals/constants';
-import {CustomerProfiler} from 'sentry/utils/performanceForSentry';
+import {CustomProfiler} from 'sentry/utils/performanceForSentry';
+import {generateProfileFlamechartRoute} from 'sentry/utils/profiling/routes';
 import {transactionSummaryRouteWithQuery} from 'sentry/views/performance/transactionSummary/utils';
 
 import {Row, Tags, TransactionDetails, TransactionDetailsContainer} from './styles';
@@ -34,25 +37,34 @@ import {Row, Tags, TransactionDetails, TransactionDetailsContainer} from './styl
 type Props = {
   location: Location;
   organization: Organization;
-  scrollToHash: (hash: string) => void;
+  scrollIntoView: () => void;
   transaction: TraceFullDetailed;
 };
 
 class TransactionDetail extends Component<Props> {
+  componentDidMount() {
+    const {organization, transaction} = this.props;
+
+    trackAnalytics('performance_views.trace_view.open_transaction_details', {
+      organization,
+      operation: transaction['transaction.op'],
+      transaction: transaction.transaction,
+    });
+  }
+
   renderTransactionErrors() {
     const {organization, transaction} = this.props;
-    const {errors} = transaction;
+    const {errors, performance_issues} = transaction;
 
-    if (errors.length === 0) {
+    if (errors.length + performance_issues.length === 0) {
       return null;
     }
 
     return (
       <Alert
         system
-        showIcon
         type="error"
-        expand={errors.map(error => (
+        expand={[...errors, ...performance_issues].map(error => (
           <ErrorMessageContent key={error.event_id}>
             <ErrorDot level={error.level} />
             <ErrorLevel>{error.level}</ErrorLevel>
@@ -66,9 +78,9 @@ class TransactionDetail extends Component<Props> {
       >
         <ErrorMessageTitle>
           {tn(
-            'An error event occurred in this transaction.',
-            '%s error events occurred in this transaction.',
-            errors.length
+            '%s issue occurred in this transaction.',
+            '%s issues occurred in this transaction.',
+            errors.length + performance_issues.length
           )}
         </ErrorMessageTitle>
       </Alert>
@@ -91,9 +103,9 @@ class TransactionDetail extends Component<Props> {
     );
 
     return (
-      <StyledButton size="xsmall" to={target}>
-        {t('View Transaction')}
-      </StyledButton>
+      <StyledLinkButton size="xs" to={target}>
+        {t('View Event')}
+      </StyledLinkButton>
     );
   }
 
@@ -108,9 +120,36 @@ class TransactionDetail extends Component<Props> {
     });
 
     return (
-      <StyledButton size="xsmall" to={target}>
+      <StyledLinkButton size="xs" to={target}>
         {t('View Summary')}
-      </StyledButton>
+      </StyledLinkButton>
+    );
+  }
+
+  renderGoToProfileButton() {
+    const {organization, transaction} = this.props;
+
+    if (!transaction.profile_id) {
+      return null;
+    }
+
+    const target = generateProfileFlamechartRoute({
+      orgSlug: organization.slug,
+      projectSlug: transaction.project_slug,
+      profileId: transaction.profile_id,
+    });
+
+    function handleOnClick() {
+      trackAnalytics('profiling_views.go_to_flamegraph', {
+        organization,
+        source: 'performance.trace_view',
+      });
+    }
+
+    return (
+      <StyledLinkButton size="xs" to={target} onClick={handleOnClick}>
+        {t('View Profile')}
+      </StyledLinkButton>
     );
   }
 
@@ -148,7 +187,7 @@ class TransactionDetail extends Component<Props> {
 
       const hash = `#txn-${transactionId}`;
 
-      this.props.scrollToHash(hash);
+      this.props.scrollIntoView();
 
       // TODO(txiao): This is causing a rerender of the whole page,
       // which can be slow.
@@ -164,6 +203,8 @@ class TransactionDetail extends Component<Props> {
     const {location, organization, transaction} = this.props;
     const startTimestamp = Math.min(transaction.start_timestamp, transaction.timestamp);
     const endTimestamp = Math.max(transaction.start_timestamp, transaction.timestamp);
+    const {start: startTimeWithLeadingZero, end: endTimeWithLeadingZero} =
+      getFormattedTimeRangeWithLeadingAndTrailingZero(startTimestamp, endTimestamp);
     const duration = (endTimestamp - startTimestamp) * 1000;
     const durationString = `${Number(duration.toFixed(3)).toLocaleString()}ms`;
 
@@ -176,19 +217,31 @@ class TransactionDetail extends Component<Props> {
                 <TransactionIdTitle
                   onClick={this.scrollBarIntoView(transaction.event_id)}
                 >
-                  Transaction ID
-                  <StyledIconAnchor />
+                  {t('Event ID')}
                 </TransactionIdTitle>
               }
               extra={this.renderGoToTransactionButton()}
             >
               {transaction.event_id}
+              <CopyToClipboardButton
+                borderless
+                size="zero"
+                iconSize="xs"
+                text={`${window.location.href.replace(window.location.hash, '')}#txn-${
+                  transaction.event_id
+                }`}
+              />
             </Row>
             <Row title="Transaction" extra={this.renderGoToSummaryButton()}>
               {transaction.transaction}
             </Row>
             <Row title="Transaction Status">{transaction['transaction.status']}</Row>
             <Row title="Span ID">{transaction.span_id}</Row>
+            {transaction.profile_id && (
+              <Row title="Profile ID" extra={this.renderGoToProfileButton()}>
+                {transaction.profile_id}
+              </Row>
+            )}
             <Row title="Project">{transaction.project_slug}</Row>
             <Row title="Start Date">
               {getDynamicText({
@@ -196,7 +249,7 @@ class TransactionDetail extends Component<Props> {
                 value: (
                   <Fragment>
                     <DateTime date={startTimestamp * 1000} />
-                    {` (${startTimestamp})`}
+                    {` (${startTimeWithLeadingZero})`}
                   </Fragment>
                 ),
               })}
@@ -207,7 +260,7 @@ class TransactionDetail extends Component<Props> {
                 value: (
                   <Fragment>
                     <DateTime date={endTimestamp * 1000} />
-                    {` (${endTimestamp})`}
+                    {` (${endTimeWithLeadingZero})`}
                   </Fragment>
                 ),
               })}
@@ -218,7 +271,8 @@ class TransactionDetail extends Component<Props> {
             <Tags
               location={location}
               organization={organization}
-              transaction={transaction}
+              tags={transaction.tags ?? []}
+              event={transaction}
             />
           </tbody>
         </table>
@@ -228,7 +282,7 @@ class TransactionDetail extends Component<Props> {
 
   render() {
     return (
-      <CustomerProfiler id="TransactionDetail">
+      <CustomProfiler id="TransactionDetail">
         <TransactionDetailsContainer
           onClick={event => {
             // prevent toggling the transaction detail
@@ -238,7 +292,7 @@ class TransactionDetail extends Component<Props> {
           {this.renderTransactionErrors()}
           {this.renderTransactionDetail()}
         </TransactionDetailsContainer>
-      </CustomerProfiler>
+      </CustomProfiler>
     );
   }
 }
@@ -251,13 +305,7 @@ const TransactionIdTitle = styled('a')`
   }
 `;
 
-const StyledIconAnchor = styled(IconAnchor)`
-  display: block;
-  color: ${p => p.theme.gray300};
-  margin-left: ${space(1)};
-`;
-
-const StyledButton = styled(Button)`
+const StyledLinkButton = styled(LinkButton)`
   position: absolute;
   top: ${space(0.75)};
   right: ${space(0.5)};

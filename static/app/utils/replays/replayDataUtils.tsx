@@ -1,115 +1,105 @@
-import first from 'lodash/first';
+import invariant from 'invariant';
+import {duration} from 'moment-timezone';
 
-import {
-  getVirtualCrumb,
-  transformCrumbs,
-} from 'sentry/components/events/interfaces/breadcrumbs/utils';
-import {t} from 'sentry/locale';
-import type {BreadcrumbTypeDefault, Crumb, RawCrumb} from 'sentry/types/breadcrumbs';
-import {BreadcrumbLevelType, BreadcrumbType} from 'sentry/types/breadcrumbs';
-import {Event} from 'sentry/types/event';
-import type {RecordingEvent, ReplayCrumb, ReplaySpan} from 'sentry/views/replays/types';
+import isValidDate from 'sentry/utils/date/isValidDate';
+import getMinMax from 'sentry/utils/getMinMax';
+import type {ReplayRecord} from 'sentry/views/replays/types';
 
-export function rrwebEventListFactory(
-  startTimestampMS: number,
-  endTimestampMS: number,
-  rawSpanData: ReplaySpan[],
-  rrwebEvents: RecordingEvent[]
-) {
-  const highlights = rawSpanData
-    .filter(({op, data}) => op === 'largest-contentful-paint' && data?.nodeId > 0)
-    .map(({startTimestamp, data: {nodeId}}) => ({
-      type: 6, // plugin type
-      data: {
-        nodeId,
-        text: 'LCP',
-      },
-      timestamp: Math.floor(startTimestamp * 1000),
-    }));
+const defaultValues = {
+  has_viewed: false,
+};
 
-  const events = ([] as RecordingEvent[])
-    .concat(rrwebEvents)
-    .concat(highlights)
-    .concat({
-      type: 5, // EventType.Custom,
-      timestamp: endTimestampMS,
-      data: {
-        tag: 'replay-end',
-      },
-    });
-  events.sort((a, b) => a.timestamp - b.timestamp);
+export function mapResponseToReplayRecord(apiResponse: any): ReplayRecord {
+  // Marshal special fields into tags
+  const user = Object.fromEntries(
+    Object.entries(apiResponse.user)
+      .filter(([key, value]) => key !== 'display_name' && value)
+      .map(([key, value]) => [`user.${key}`, [value]])
+  );
+  const unorderedTags: ReplayRecord['tags'] = {
+    ...apiResponse.tags,
+    ...(apiResponse.browser?.name ? {'browser.name': [apiResponse.browser.name]} : {}),
+    ...(apiResponse.browser?.version
+      ? {'browser.version': [apiResponse.browser.version]}
+      : {}),
+    ...(apiResponse.device?.brand ? {'device.brand': [apiResponse.device.brand]} : {}),
+    ...(apiResponse.device?.family ? {'device.family': [apiResponse.device.family]} : {}),
+    ...(apiResponse.device?.model_id
+      ? {'device.model_id': [apiResponse.device.model_id]}
+      : {}),
+    ...(apiResponse.device?.name ? {'device.name': [apiResponse.device.name]} : {}),
+    ...(apiResponse.environment ? {environment: [apiResponse.environment]} : {}),
+    ...(apiResponse.platform ? {platform: [apiResponse.platform]} : {}),
+    ...(apiResponse.releases ? {releases: [...apiResponse.releases]} : {}),
+    ...(apiResponse.replay_type ? {replayType: [apiResponse.replay_type]} : {}),
+    ...(apiResponse.os?.name ? {'os.name': [apiResponse.os.name]} : {}),
+    ...(apiResponse.os?.version ? {'os.version': [apiResponse.os.version]} : {}),
+    ...(apiResponse.sdk?.name ? {'sdk.name': [apiResponse.sdk.name]} : {}),
+    ...(apiResponse.sdk?.version ? {'sdk.version': [apiResponse.sdk.version]} : {}),
+    ...user,
+  };
 
-  const firstRRWebEvent = first(events);
-  if (firstRRWebEvent) {
-    firstRRWebEvent.timestamp = startTimestampMS;
-  }
-
-  return events;
-}
-
-export function breadcrumbFactory(
-  startTimestamp: number,
-  events: Event[],
-  rawCrumbs: ReplayCrumb[]
-): Crumb[] {
-  const {tags} = events[0];
-  const initBreadcrumb = {
-    type: BreadcrumbType.INIT,
-    timestamp: new Date(startTimestamp).toISOString(),
-    level: BreadcrumbLevelType.INFO,
-    action: 'replay-init',
-    message: t('Start recording'),
-    data: {
-      url: tags.find(tag => tag.key === 'url')?.value,
-    },
-  } as BreadcrumbTypeDefault;
-
-  const errorCrumbs = events
-    .map(getVirtualCrumb)
-    .filter((crumb: RawCrumb | undefined): crumb is RawCrumb => crumb !== undefined);
-
-  const result = transformCrumbs([
-    initBreadcrumb,
-    ...(rawCrumbs.map(({timestamp, ...crumb}) => ({
-      ...crumb,
-      type: BreadcrumbType.DEFAULT,
-      timestamp: new Date(timestamp * 1000).toISOString(),
-    })) as RawCrumb[]),
-    ...errorCrumbs,
-  ]);
-
-  return result.sort((a, b) => +new Date(a.timestamp || 0) - +new Date(b.timestamp || 0));
-}
-
-export function spansFactory(spans: ReplaySpan[]) {
-  return spans.sort((a, b) => a.startTimestamp - b.startTimestamp);
+  const startedAt = new Date(apiResponse.started_at);
+  invariant(isValidDate(startedAt), 'replay.started_at is invalid');
+  const finishedAt = new Date(apiResponse.finished_at);
+  invariant(isValidDate(finishedAt), 'replay.finished_at is invalid');
+  return {
+    ...defaultValues,
+    ...apiResponse,
+    ...(apiResponse.started_at ? {started_at: startedAt} : {}),
+    ...(apiResponse.finished_at ? {finished_at: finishedAt} : {}),
+    ...(apiResponse.duration !== undefined
+      ? {duration: duration(apiResponse.duration * 1000)}
+      : {}),
+    tags: unorderedTags,
+  };
 }
 
 /**
- * The original `this._event.startTimestamp` and `this._event.endTimestamp`
- * are the same. It's because the root replay event is re-purposing the
- * `transaction` type, but it is not a real span occuring over time.
- * So we need to figure out the real start and end timestamps based on when
+ * We need to figure out the real start and end timestamps based on when
  * first and last bits of data were collected. In milliseconds.
+ *
+ * @deprecated Once the backend returns the corrected timestamps, this is not needed.
  */
 export function replayTimestamps(
-  rrwebEvents: RecordingEvent[],
-  rawCrumbs: ReplayCrumb[],
-  rawSpanData: ReplaySpan[]
+  replayRecord: ReplayRecord,
+  rrwebEvents: {timestamp: number}[],
+  rawCrumbs: {timestamp: number}[],
+  rawSpanData: {endTimestamp: number; op: string; startTimestamp: number}[]
 ) {
-  const rrwebTimestamps = rrwebEvents.map(event => event.timestamp);
-  const breadcrumbTimestamps = (
-    rawCrumbs.map(rawCrumb => rawCrumb.timestamp).filter(Boolean) as number[]
-  ).map(timestamp => +new Date(timestamp * 1000));
-  const spanStartTimestamps = rawSpanData.map(span => span.startTimestamp * 1000);
-  const spanEndTimestamps = rawSpanData.map(span => span.endTimestamp * 1000);
+  const rrwebTimestamps = rrwebEvents.map(event => event.timestamp).filter(Boolean);
+  const breadcrumbTimestamps = rawCrumbs
+    .map(rawCrumb => rawCrumb.timestamp)
+    .filter(Boolean);
+  const rawSpanDataFiltered = rawSpanData.filter(
+    ({op}) => op !== 'web-vital' && op !== 'largest-contentful-paint'
+  );
+  const spanStartTimestamps = rawSpanDataFiltered
+    .map(span => span.startTimestamp)
+    .filter(Boolean);
+  const spanEndTimestamps = rawSpanDataFiltered
+    .map(span => span.endTimestamp)
+    .filter(Boolean);
+
+  // Calculate min/max of each array individually, to prevent extra allocations.
+  // Also using `getMinMax()` so we can handle any huge arrays.
+  const {min: minRRWeb, max: maxRRWeb} = getMinMax(rrwebTimestamps);
+  const {min: minCrumbs, max: maxCrumbs} = getMinMax(breadcrumbTimestamps);
+  const {min: minSpanStarts} = getMinMax(spanStartTimestamps);
+  const {max: maxSpanEnds} = getMinMax(spanEndTimestamps);
 
   return {
-    startTimestampMS: Math.min(
-      ...[...rrwebTimestamps, ...breadcrumbTimestamps, ...spanStartTimestamps]
+    startTimestampMs: Math.min(
+      replayRecord.started_at.getTime(),
+      minRRWeb,
+      minCrumbs * 1000,
+      minSpanStarts * 1000
     ),
-    endTimestampMS: Math.max(
-      ...[...rrwebTimestamps, ...breadcrumbTimestamps, ...spanEndTimestamps]
+    endTimestampMs: Math.max(
+      replayRecord.finished_at.getTime(),
+      maxRRWeb,
+      maxCrumbs * 1000,
+      maxSpanEnds * 1000
     ),
   };
 }

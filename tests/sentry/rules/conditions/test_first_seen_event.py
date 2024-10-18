@@ -1,6 +1,9 @@
-from sentry.models import Rule
+from sentry.models.rule import Rule
 from sentry.rules.conditions.first_seen_event import FirstSeenEventCondition
 from sentry.testutils.cases import RuleTestCase
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class FirstSeenEventConditionTest(RuleTestCase):

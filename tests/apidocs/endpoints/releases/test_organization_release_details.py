@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from django.test.client import RequestFactory
 from django.urls import reverse
 
-from tests.apidocs.util import APIDocsTestCase
+from fixtures.apidocs_test_case import APIDocsTestCase
 
 
 class OrganizationReleaseDetailsDocsTest(APIDocsTestCase):
@@ -25,12 +25,14 @@ class OrganizationReleaseDetailsDocsTest(APIDocsTestCase):
 
         self.login_as(user=user)
         release = self.create_release(
-            project=self.project1, version="1", date_added=datetime(2013, 8, 13, 3, 8, 24, 880386)
+            project=self.project1,
+            version="1",
+            date_added=datetime(2013, 8, 13, 3, 8, 24, 880386, tzinfo=UTC),
         )
 
         self.url = reverse(
             "sentry-api-0-organization-release-details",
-            kwargs={"organization_slug": org.slug, "version": release.version},
+            kwargs={"organization_id_or_slug": org.slug, "version": release.version},
         )
 
     def test_get(self):

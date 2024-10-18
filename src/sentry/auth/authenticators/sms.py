@@ -1,17 +1,34 @@
+from __future__ import annotations
+
 import logging
+from hashlib import md5
+from typing import TYPE_CHECKING
 
-from django.utils.translation import ugettext_lazy as _
+from django.http.request import HttpRequest
+from django.utils.functional import classproperty
+from django.utils.translation import gettext_lazy as _
 
-from sentry.utils.decorators import classproperty
+from sentry.ratelimits import backend as ratelimiter
 from sentry.utils.otp import TOTP
-from sentry.utils.sms import send_sms, sms_available
+from sentry.utils.sms import phone_number_as_e164, send_sms, sms_available
 
-from .base import ActivationMessageResult, AuthenticatorInterface, OtpMixin
+from .base import ActivationMessageResult, OtpMixin
+
+if TYPE_CHECKING:
+    from django.utils.functional import _StrPromise
 
 logger = logging.getLogger("sentry.auth")
 
 
-class SmsInterface(OtpMixin, AuthenticatorInterface):
+class SMSRateLimitExceeded(Exception):
+    def __init__(self, phone_number, user_id, remote_ip):
+        super().__init__()
+        self.phone_number = phone_number
+        self.user_id = user_id
+        self.remote_ip = remote_ip
+
+
+class SmsInterface(OtpMixin):
     """This interface sends OTP codes via text messages to the user."""
 
     type = 2
@@ -34,19 +51,18 @@ class SmsInterface(OtpMixin, AuthenticatorInterface):
         config["phone_number"] = None
         return config
 
-    def make_otp(self):
+    def make_otp(self) -> TOTP:
         return TOTP(self.config["secret"], digits=6, interval=self.code_ttl, default_window=1)
 
-    def _get_phone_number(self):
+    @property
+    def phone_number(self):
         return self.config["phone_number"]
 
-    def _set_phone_number(self, value):
+    @phone_number.setter
+    def phone_number(self, value):
         self.config["phone_number"] = value
 
-    phone_number = property(_get_phone_number, _set_phone_number)
-    del _get_phone_number, _set_phone_number
-
-    def activate(self, request):
+    def activate(self, request: HttpRequest) -> ActivationMessageResult:
         phone_number = self.config["phone_number"]
         if len(phone_number) == 10:
             mask = "(***) ***-**%s" % (phone_number[-2:])
@@ -69,11 +85,11 @@ class SmsInterface(OtpMixin, AuthenticatorInterface):
             type="error",
         )
 
-    def send_text(self, for_enrollment=False, request=None):
+    def send_text(self, *, request: HttpRequest, for_enrollment: bool = False) -> bool:
         ctx = {"code": self.make_otp().generate_otp()}
 
         if for_enrollment:
-            text = _(
+            text: _StrPromise | str = _(
                 "%(code)s is your Sentry two-factor enrollment code. "
                 "You are about to set up text message based two-factor "
                 "authentication."
@@ -82,7 +98,7 @@ class SmsInterface(OtpMixin, AuthenticatorInterface):
             text = _("%(code)s is your Sentry authentication code.")
 
         if request is not None:
-            text = "{}\n\n{}".format(text, _("Requested from %(ip)s"))
+            text = f"{text}\n"
             ctx["ip"] = request.META["REMOTE_ADDR"]
 
         if request and request.user.is_authenticated:
@@ -92,14 +108,23 @@ class SmsInterface(OtpMixin, AuthenticatorInterface):
         else:
             user_id = None
 
+        phone_number = phone_number_as_e164(self.phone_number)
+
+        if ratelimiter.is_limited(
+            f"sms:{md5(phone_number.encode('utf-8')).hexdigest()}",
+            limit=3,
+            window=300,
+        ):
+            raise SMSRateLimitExceeded(phone_number, user_id, request.META.get("REMOTE_ADDR", None))
+
         logger.info(
             "mfa.twilio-request",
             extra={
                 "ip": request.META["REMOTE_ADDR"] if request else None,
                 "user_id": user_id,
                 "authenticator_id": self.authenticator.id if self.authenticator else None,
-                "phone_number": self.phone_number,
+                "phone_number": phone_number,
             },
         )
 
-        return send_sms(text % ctx, to=self.phone_number)
+        return send_sms(text % ctx, to=phone_number)

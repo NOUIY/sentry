@@ -1,29 +1,32 @@
 import {Fragment, PureComponent} from 'react';
 import styled from '@emotion/styled';
-import {Location, LocationDescriptor, Query} from 'history';
+import type {Location, LocationDescriptor} from 'history';
 
+import {LinkButton} from 'sentry/components/button';
 import SortLink from 'sentry/components/gridEditable/sortLink';
 import Link from 'sentry/components/links/link';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import QuestionTooltip from 'sentry/components/questionTooltip';
+import {IconProfiling} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {TableData, TableDataRow} from 'sentry/utils/discover/discoverQuery';
-import EventView, {MetaType} from 'sentry/utils/discover/eventView';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import type {TableData, TableDataRow} from 'sentry/utils/discover/discoverQuery';
+import type {MetaType} from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
-import {
-  Alignments,
-  fieldAlignment,
-  getAggregateAlias,
-} from 'sentry/utils/discover/fields';
+import type {Alignments} from 'sentry/utils/discover/fields';
+import {fieldAlignment, getAggregateAlias} from 'sentry/utils/discover/fields';
+import ViewReplayLink from 'sentry/utils/discover/viewReplayLink';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
 import {VisuallyCompleteWithData} from 'sentry/utils/performanceForSentry';
-import CellAction, {Actions} from 'sentry/views/eventsV2/table/cellAction';
-import {TableColumn} from 'sentry/views/eventsV2/table/types';
+import type {Actions} from 'sentry/views/discover/table/cellAction';
+import CellAction from 'sentry/views/discover/table/cellAction';
+import type {TableColumn} from 'sentry/views/discover/table/types';
 import {GridCell, GridCellNumber} from 'sentry/views/performance/styles';
-import {TrendsDataEvents} from 'sentry/views/performance/trends/types';
+import type {TrendsDataEvents} from 'sentry/views/performance/trends/types';
 
 type Props = {
   columnOrder: TableColumn<React.ReactText>[];
@@ -32,17 +35,19 @@ type Props = {
   location: Location;
   organization: Organization;
   tableData: TableData | TrendsDataEvents | null;
+  useAggregateAlias: boolean;
   generateLink?: Record<
     string,
     (
       organization: Organization,
       tableRow: TableDataRow,
-      query: Query
+      location: Location
     ) => LocationDescriptor
   >;
   handleCellAction?: (
     c: TableColumn<React.ReactText>
   ) => (a: Actions, v: React.ReactText) => void;
+  referrer?: string;
   titles?: string[];
 };
 
@@ -114,11 +119,19 @@ class TransactionsTable extends PureComponent<Props> {
     columnOrder: TableColumn<React.ReactText>[],
     tableMeta: MetaType
   ): React.ReactNode[] {
-    const {eventView, organization, location, generateLink, handleCellAction, titles} =
-      this.props;
+    const {
+      eventView,
+      organization,
+      location,
+      generateLink,
+      handleCellAction,
+      titles,
+      useAggregateAlias,
+      referrer,
+    } = this.props;
     const fields = eventView.getFields();
 
-    if (titles && titles.length) {
+    if (titles?.length) {
       // Slice to match length of given titles
       columnOrder = columnOrder.slice(0, titles.length);
     }
@@ -126,28 +139,48 @@ class TransactionsTable extends PureComponent<Props> {
     const resultsRow = columnOrder.map((column, index) => {
       const field = String(column.key);
       // TODO add a better abstraction for this in fieldRenderers.
-      const fieldName = getAggregateAlias(field);
+      const fieldName = useAggregateAlias ? getAggregateAlias(field) : field;
       const fieldType = tableMeta[fieldName];
 
-      const fieldRenderer = getFieldRenderer(field, tableMeta);
+      const fieldRenderer = getFieldRenderer(field, tableMeta, useAggregateAlias);
       let rendered = fieldRenderer(row, {organization, location});
 
-      const target = generateLink?.[field]?.(organization, row, location.query);
+      const target = generateLink?.[field]?.(organization, row, location);
 
-      if (target) {
+      if (fields[index] === 'profile.id') {
         rendered = (
-          <Link data-test-id={`view-${fields[index]}`} to={target}>
-            {rendered}
-          </Link>
+          <LinkButton
+            data-test-id={`view-${fields[index]}`}
+            disabled={!target || isEmptyObject(target)}
+            to={target || {}}
+            onClick={getProfileAnalyticsHandler(organization, referrer)}
+            size="xs"
+          >
+            <IconProfiling size="xs" />
+          </LinkButton>
         );
+      } else if (target && !isEmptyObject(target)) {
+        if (fields[index] === 'replayId') {
+          rendered = (
+            <ViewReplayLink replayId={row.replayId} to={target}>
+              {rendered}
+            </ViewReplayLink>
+          );
+        } else {
+          rendered = (
+            <Link data-test-id={`view-${fields[index]}`} to={target}>
+              {rendered}
+            </Link>
+          );
+        }
       }
 
       const isNumeric = ['integer', 'number', 'duration'].includes(fieldType);
       const key = `${rowIndex}:${column.key}:${index}`;
       rendered = isNumeric ? (
-        <GridCellNumber>{rendered}</GridCellNumber>
+        <GridCellNumber data-test-id="grid-cell">{rendered}</GridCellNumber>
       ) : (
-        <GridCell>{rendered}</GridCell>
+        <GridCell data-test-id="grid-cell">{rendered}</GridCell>
       );
 
       if (handleCellAction) {
@@ -192,14 +225,17 @@ class TransactionsTable extends PureComponent<Props> {
   render() {
     const {isLoading, tableData} = this.props;
 
-    const hasResults =
-      tableData && tableData.data && tableData.meta && tableData.data.length > 0;
+    const hasResults = tableData?.meta && tableData.data?.length > 0;
 
     // Custom set the height so we don't have layout shift when results are loaded.
     const loader = <LoadingIndicator style={{margin: '70px auto'}} />;
 
     return (
-      <VisuallyCompleteWithData id="TransactionsTable" hasData={hasResults}>
+      <VisuallyCompleteWithData
+        id="TransactionsTable"
+        hasData={hasResults}
+        isLoading={isLoading}
+      >
         <PanelTable
           data-test-id="transactions-table"
           isEmpty={!hasResults}
@@ -216,13 +252,28 @@ class TransactionsTable extends PureComponent<Props> {
   }
 }
 
+function getProfileAnalyticsHandler(organization: Organization, referrer?: string) {
+  return () => {
+    let source;
+    if (referrer === 'performance.transactions_summary') {
+      source = 'performance.transactions_summary.overview';
+    } else {
+      source = 'discover.transactions_table';
+    }
+    trackAnalytics('profiling_views.go_to_flamegraph', {
+      organization,
+      source,
+    });
+  };
+}
+
 const HeadCellContainer = styled('div')`
   padding: ${space(2)};
 `;
 
 const BodyCellContainer = styled('div')`
   padding: ${space(1)} ${space(2)};
-  ${overflowEllipsis};
+  ${p => p.theme.overflowEllipsis};
 `;
 
 const StyledIconQuestion = styled(QuestionTooltip)`

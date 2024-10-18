@@ -1,7 +1,7 @@
 import styled from '@emotion/styled';
 
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 function EventTitleError() {
   return (
@@ -24,7 +24,7 @@ const Title = styled('span')`
 `;
 
 const ErrorMessage = styled('span')`
-  color: ${p => p.theme.alert.error.iconColor};
+  color: ${p => p.theme.alert.error.color};
   background: ${p => p.theme.alert.error.backgroundLight};
   font-size: ${p => p.theme.fontSizeMedium};
   padding: 0 ${space(0.5)};

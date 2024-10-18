@@ -1,30 +1,34 @@
-from datetime import timedelta
+import uuid
+from datetime import datetime, timedelta
+from unittest import mock
+from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
 from django.db.models import ProtectedError
 from django.utils import timezone
 
-from sentry.models import (
-    Group,
-    GroupRedirect,
-    GroupRelease,
-    GroupSnooze,
-    GroupStatus,
-    Release,
-    get_group_with_redirect,
-)
-from sentry.models.release import _get_cache_key
-from sentry.testutils import SnubaTestCase, TestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.issues.grouptype import FeedbackGroup, ProfileFileIOGroupType
+from sentry.models.group import Group, GroupStatus, get_group_with_redirect
+from sentry.models.groupredirect import GroupRedirect
+from sentry.models.grouprelease import GroupRelease
+from sentry.models.groupsnooze import GroupSnooze
+from sentry.models.release import Release, _get_cache_key
+from sentry.replays.testutils import mock_replay
+from sentry.testutils.cases import ReplaysSnubaTestCase, SnubaTestCase, TestCase
+from sentry.testutils.helpers.datetime import before_now
+from sentry.testutils.helpers.features import with_feature
+from sentry.testutils.skips import requires_snuba
+from sentry.types.group import GroupSubStatus
+from tests.sentry.issues.test_utils import OccurrenceTestMixin
+
+pytestmark = requires_snuba
 
 
 class GroupTest(TestCase, SnubaTestCase):
     def setUp(self):
         super().setUp()
-        self.min_ago = iso_format(before_now(minutes=1))
-        self.two_min_ago = iso_format(before_now(minutes=2))
-        self.just_over_one_min_ago = iso_format(before_now(seconds=61))
+        self.min_ago = before_now(minutes=1).isoformat()
 
     def test_is_resolved(self):
         group = self.create_group(status=GroupStatus.RESOLVED)
@@ -45,42 +49,6 @@ class GroupTest(TestCase, SnubaTestCase):
         group.project.update_option("sentry:resolve_age", 1)
 
         assert group.is_resolved()
-
-    def test_get_latest_event_no_events(self):
-        project = self.create_project()
-        group = self.create_group(project=project)
-        assert group.get_latest_event() is None
-
-    def test_get_latest_event(self):
-        self.store_event(
-            data={"event_id": "a" * 32, "fingerprint": ["group-1"], "timestamp": self.two_min_ago},
-            project_id=self.project.id,
-        )
-        self.store_event(
-            data={"event_id": "b" * 32, "fingerprint": ["group-1"], "timestamp": self.min_ago},
-            project_id=self.project.id,
-        )
-
-        group = Group.objects.first()
-
-        assert group.get_latest_event().event_id == "b" * 32
-
-    def test_get_latest_almost_identical_timestamps(self):
-        self.store_event(
-            data={
-                "event_id": "a" * 32,
-                "fingerprint": ["group-1"],
-                "timestamp": self.just_over_one_min_ago,
-            },
-            project_id=self.project.id,
-        )
-        self.store_event(
-            data={"event_id": "b" * 32, "fingerprint": ["group-1"], "timestamp": self.min_ago},
-            project_id=self.project.id,
-        )
-        group = Group.objects.first()
-
-        assert group.get_latest_event().event_id == "b" * 32
 
     def test_is_ignored_with_expired_snooze(self):
         group = self.create_group(status=GroupStatus.IGNORED)
@@ -167,13 +135,13 @@ class GroupTest(TestCase, SnubaTestCase):
 
         assert group2 == group
 
-        with self.assertRaises(Group.DoesNotExist):
+        with pytest.raises(Group.DoesNotExist):
             Group.objects.by_qualified_short_id(
                 group.organization.id, "server_name:my-server-with-dashes-0ac14dadda3b428cf"
             )
 
-        group.update(status=GroupStatus.PENDING_DELETION)
-        with self.assertRaises(Group.DoesNotExist):
+        group.update(status=GroupStatus.PENDING_DELETION, substatus=None)
+        with pytest.raises(Group.DoesNotExist):
             Group.objects.by_qualified_short_id(group.organization.id, short_id)
 
     def test_qualified_share_id_bulk(self):
@@ -192,8 +160,8 @@ class GroupTest(TestCase, SnubaTestCase):
             )
         )
 
-        group.update(status=GroupStatus.PENDING_DELETION)
-        with self.assertRaises(Group.DoesNotExist):
+        group.update(status=GroupStatus.PENDING_DELETION, substatus=None)
+        with pytest.raises(Group.DoesNotExist):
             Group.objects.by_qualified_short_id_bulk(
                 group.organization.id, [group_short_id, group_2_short_id]
             )
@@ -244,7 +212,7 @@ class GroupTest(TestCase, SnubaTestCase):
         assert group.get_email_subject() == expect
 
     def test_get_absolute_url(self):
-        for (org_slug, group_id, params, expected) in [
+        for org_slug, group_id, params, expected in [
             ("org1", 23, None, "http://testserver/organizations/org1/issues/23/"),
             (
                 "org2",
@@ -256,7 +224,7 @@ class GroupTest(TestCase, SnubaTestCase):
                 "\u00F6rg3",
                 86,
                 {"env\u00EDronment": "d\u00E9v"},
-                "http://testserver/organizations/%C3%B6rg3/issues/86/?env%C3%ADronment=d%C3%A9v",
+                "http://testserver/organizations/org3/issues/86/?env%C3%ADronment=d%C3%A9v",
             ),
         ]:
             org = self.create_organization(slug=org_slug)
@@ -264,6 +232,18 @@ class GroupTest(TestCase, SnubaTestCase):
             group = self.create_group(id=group_id, project=project)
             actual = group.get_absolute_url(params)
             assert actual == expected
+
+    def test_get_absolute_url_feedback(self):
+        org_slug = "org1"
+        org = self.create_organization(slug=org_slug)
+        project = self.create_project(organization=org)
+        group_id = 23
+        params = None
+        expected = f"http://testserver/organizations/org1/feedback/?feedbackSlug={project.slug}%3A23&project={project.id}"
+
+        group = self.create_group(id=group_id, project=project, type=FeedbackGroup.type_id)
+        actual = group.get_absolute_url(params)
+        assert actual == expected
 
     def test_get_absolute_url_event(self):
         project = self.create_project()
@@ -274,6 +254,20 @@ class GroupTest(TestCase, SnubaTestCase):
         url = f"http://testserver/organizations/{project.organization.slug}/issues/{group.id}/events/{event.event_id}/"
         assert url == group.get_absolute_url(event_id=event.event_id)
 
+    @with_feature("system:multi-region")
+    def test_get_absolute_url_customer_domains(self):
+        project = self.create_project()
+        event = self.store_event(
+            data={"fingerprint": ["group1"], "timestamp": self.min_ago}, project_id=project.id
+        )
+        org = self.organization
+        group = event.group
+        expected = f"http://{org.slug}.testserver/issues/{group.id}/events/{event.event_id}/"
+        assert expected == group.get_absolute_url(event_id=event.event_id)
+
+        expected = f"http://{org.slug}.testserver/issues/{group.id}/"
+        assert expected == group.get_absolute_url()
+
     def test_get_releases(self):
         now = timezone.now().replace(microsecond=0)
         project = self.create_project()
@@ -283,12 +277,12 @@ class GroupTest(TestCase, SnubaTestCase):
         last_release = Release.objects.create(
             organization_id=self.organization.id,
             version="100",
-            date_added=iso_format(now - timedelta(seconds=10)),
+            date_added=now - timedelta(seconds=10),
         )
         first_release = Release.objects.create(
             organization_id=self.organization.id,
             version="200",
-            date_added=iso_format(now - timedelta(seconds=100)),
+            date_added=now - timedelta(seconds=100),
         )
         GroupRelease.objects.create(
             project_id=project.id,
@@ -317,3 +311,183 @@ class GroupTest(TestCase, SnubaTestCase):
         assert group.get_last_release() == "100"
 
         assert group2.get_last_release() is None
+
+    @patch("sentry.models.group.logger.error")
+    def test_group_substatus_defaults(self, mock_logger):
+        group = self.create_group(status=GroupStatus.UNRESOLVED)
+        assert group.substatus is None
+        assert mock_logger.call_count == 1
+
+        for nullable_status in (
+            GroupStatus.IGNORED,
+            GroupStatus.MUTED,
+            GroupStatus.RESOLVED,
+            GroupStatus.PENDING_DELETION,
+            GroupStatus.DELETION_IN_PROGRESS,
+            GroupStatus.REPROCESSING,
+        ):
+            assert self.create_group(status=nullable_status).substatus is None
+
+    def test_group_valid_substatus(self):
+        desired_status_substatus_pairs = [
+            (GroupStatus.UNRESOLVED, GroupSubStatus.ESCALATING),
+            (GroupStatus.UNRESOLVED, GroupSubStatus.REGRESSED),
+            (GroupStatus.UNRESOLVED, GroupSubStatus.NEW),
+            (GroupStatus.IGNORED, GroupSubStatus.FOREVER),
+            (GroupStatus.IGNORED, GroupSubStatus.UNTIL_CONDITION_MET),
+            (GroupStatus.IGNORED, GroupSubStatus.UNTIL_ESCALATING),
+        ]
+        for status, substatus in desired_status_substatus_pairs:
+            group = self.create_group(status=status, substatus=substatus)
+            assert group.substatus is substatus
+
+
+class GroupIsOverResolveAgeTest(TestCase):
+    def test_simple(self):
+        group = self.group
+        group.last_seen = timezone.now() - timedelta(hours=2)
+        group.project.update_option("sentry:resolve_age", 1)  # 1 hour
+        assert group.is_over_resolve_age() is True
+        group.last_seen = timezone.now()
+        assert group.is_over_resolve_age() is False
+
+
+class GroupGetLatestEventTest(TestCase, OccurrenceTestMixin):
+    def setUp(self):
+        super().setUp()
+        self.min_ago = before_now(minutes=1).isoformat()
+        self.two_min_ago = before_now(minutes=2).isoformat()
+        self.just_over_one_min_ago = before_now(seconds=61).isoformat()
+
+    def test_get_latest_event_no_events(self):
+        project = self.create_project()
+        group = self.create_group(project=project)
+        assert group.get_latest_event() is None
+
+    def test_get_latest_event(self):
+        self.store_event(
+            data={"event_id": "a" * 32, "fingerprint": ["group-1"], "timestamp": self.two_min_ago},
+            project_id=self.project.id,
+        )
+        self.store_event(
+            data={"event_id": "b" * 32, "fingerprint": ["group-1"], "timestamp": self.min_ago},
+            project_id=self.project.id,
+        )
+
+        group = Group.objects.get()
+
+        group_event = group.get_latest_event()
+        assert group_event is not None
+
+        assert group_event.event_id == "b" * 32
+        assert group_event.occurrence is None
+
+    def test_get_latest_almost_identical_timestamps(self):
+        self.store_event(
+            data={
+                "event_id": "a" * 32,
+                "fingerprint": ["group-1"],
+                "timestamp": self.just_over_one_min_ago,
+            },
+            project_id=self.project.id,
+        )
+        self.store_event(
+            data={"event_id": "b" * 32, "fingerprint": ["group-1"], "timestamp": self.min_ago},
+            project_id=self.project.id,
+        )
+        group = Group.objects.get()
+
+        group_event = group.get_latest_event()
+        assert group_event is not None
+
+        assert group_event.event_id == "b" * 32
+        assert group_event.occurrence is None
+
+    def test_get_latest_event_occurrence(self):
+        event_id = uuid.uuid4().hex
+        occurrence, _ = self.process_occurrence(
+            project_id=self.project.id,
+            event_id=event_id,
+            event_data={
+                "fingerprint": ["group-1"],
+                "timestamp": before_now(minutes=1).isoformat(),
+            },
+        )
+
+        group = Group.objects.get()
+        group.update(type=ProfileFileIOGroupType.type_id)
+
+        group_event = group.get_latest_event()
+        assert group_event is not None
+        assert group_event.event_id == event_id
+        self.assert_occurrences_identical(group_event.occurrence, occurrence)
+
+
+class GroupReplaysCacheTest(SnubaTestCase, ReplaysSnubaTestCase):
+    def test_simple(self):
+        replay1_id = "46eb3948be25448abd53fe36b5891ff2"
+        self.project.flags.has_replays = True
+        self.project.save()
+        self.store_event(
+            data={
+                "message": "Hello world",
+                "level": "error",
+                "contexts": {"replay": {"replay_id": replay1_id}},
+                "timestamp": before_now(minutes=1).isoformat(),
+            },
+            project_id=self.project.id,
+        )
+
+        self.store_replays(
+            mock_replay(
+                datetime.now() - timedelta(minutes=60),
+                self.project.id,
+                replay1_id,
+            )
+        )
+        group = Group.objects.get()
+        assert group.has_replays() is True
+
+        # test caching
+        with mock.patch(
+            "sentry.models.group.metrics.incr",
+        ) as incr:
+            assert group.has_replays() is True
+            incr.assert_any_call(
+                "group.has_replays.cached",
+                tags={
+                    "has_replays": True,
+                },
+            )
+
+    def test_no_replay_project(self):
+        event = self.store_event(
+            data={"fingerprint": ["group1"], "timestamp": before_now(minutes=1).isoformat()},
+            project_id=self.project.id,
+        )
+        group = event.group
+        assert group.has_replays() is False
+
+    def test_no_replay_on_issue(self):
+        self.project.flags.has_replays = True
+        self.project.save()
+
+        event = self.store_event(
+            data={"fingerprint": ["group1"], "timestamp": before_now(minutes=1).isoformat()},
+            project_id=self.project.id,
+        )
+
+        group = event.group
+        assert group.has_replays() is False
+
+        # test caching
+        with mock.patch(
+            "sentry.models.group.metrics.incr",
+        ) as incr:
+            assert group.has_replays() is False
+            incr.assert_any_call(
+                "group.has_replays.cached",
+                tags={
+                    "has_replays": False,
+                },
+            )

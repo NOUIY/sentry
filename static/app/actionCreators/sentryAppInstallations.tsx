@@ -4,9 +4,9 @@ import {
   addSuccessMessage,
   clearIndicators,
 } from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import {t} from 'sentry/locale';
-import {SentryApp, SentryAppInstallation} from 'sentry/types';
+import type {SentryApp, SentryAppInstallation} from 'sentry/types/integrations';
 
 /**
  * Install a sentry application
@@ -30,7 +30,7 @@ export function installSentryApp(
   );
   promise.then(
     () => clearIndicators(),
-    () => addErrorMessage(t(`Unable to install ${app.name}`))
+    () => addErrorMessage(t('Unable to install %s', app.name))
   );
   return promise;
 }
@@ -49,9 +49,11 @@ export function uninstallSentryApp(
   const promise = client.requestPromise(`/sentry-app-installations/${install.uuid}/`, {
     method: 'DELETE',
   });
+  const capitalizedAppSlug =
+    install.app.slug.charAt(0).toUpperCase() + install.app.slug.slice(1);
   promise.then(
     () => {
-      addSuccessMessage(t(`${install.app.slug} successfully uninstalled.`));
+      addSuccessMessage(t('%s successfully uninstalled.', capitalizedAppSlug));
     },
     () => clearIndicators()
   );

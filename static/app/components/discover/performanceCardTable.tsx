@@ -1,29 +1,31 @@
 import {Fragment} from 'react';
-import {Link} from 'react-router';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import Alert from 'sentry/components/alert';
-import {AsyncComponentProps} from 'sentry/components/asyncComponent';
+import {Alert} from 'sentry/components/alert';
+import Link from 'sentry/components/links/link';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import NotAvailable from 'sentry/components/notAvailable';
-import {PanelItem} from 'sentry/components/panels';
-import PanelTable from 'sentry/components/panels/panelTable';
+import PanelItem from 'sentry/components/panels/panelItem';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import {IconArrow} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
-import {Organization, ReleaseProject} from 'sentry/types';
-import DiscoverQuery, {TableData} from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {ReleaseProject} from 'sentry/types/release';
+import type {TableData} from 'sentry/utils/discover/discoverQuery';
+import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
+import type EventView from 'sentry/utils/discover/eventView';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
-import {MobileVital, WebVital} from 'sentry/utils/discover/fields';
+import {SavedQueryDatasets} from 'sentry/utils/discover/types';
+import {MobileVital, WebVital} from 'sentry/utils/fields';
 import {
   MOBILE_VITAL_DETAILS,
   WEB_VITAL_DETAILS,
 } from 'sentry/utils/performance/vitals/constants';
-import {PROJECT_PERFORMANCE_TYPE} from 'sentry/views/performance/utils';
+import {hasDatasetSelector} from 'sentry/views/dashboards/utils';
+import {ProjectPerformanceType} from 'sentry/views/performance/utils';
 
 type PerformanceCardTableProps = {
   allReleasesEventView: EventView;
@@ -49,7 +51,7 @@ function PerformanceCardTable({
 }: PerformanceCardTableProps) {
   const miseryRenderer =
     allReleasesTableData?.meta &&
-    getFieldRenderer('user_misery', allReleasesTableData.meta);
+    getFieldRenderer('user_misery()', allReleasesTableData.meta, false);
 
   function renderChange(
     allReleasesScore: number,
@@ -85,8 +87,8 @@ function PerformanceCardTable({
   }
 
   function userMiseryTrend() {
-    const allReleasesUserMisery = allReleasesTableData?.data?.[0]?.user_misery;
-    const thisReleaseUserMisery = thisReleaseTableData?.data?.[0]?.user_misery;
+    const allReleasesUserMisery = allReleasesTableData?.data?.[0]?.['user_misery()'];
+    const thisReleaseUserMisery = thisReleaseTableData?.data?.[0]?.['user_misery()'];
     return (
       <StyledPanelItem>
         {renderChange(
@@ -100,16 +102,16 @@ function PerformanceCardTable({
 
   function renderFrontendPerformance() {
     const webVitals = [
-      {title: WebVital.FCP, field: 'p75_measurements_fcp'},
-      {title: WebVital.FID, field: 'p75_measurements_fid'},
-      {title: WebVital.LCP, field: 'p75_measurements_lcp'},
-      {title: WebVital.CLS, field: 'p75_measurements_cls'},
+      {title: WebVital.FCP, field: 'p75(measurements.fcp)'},
+      {title: WebVital.FID, field: 'p75(measurements.fid)'},
+      {title: WebVital.LCP, field: 'p75(measurements.lcp)'},
+      {title: WebVital.CLS, field: 'p75(measurements.cls)'},
     ];
 
     const spans = [
-      {title: 'HTTP', column: 'p75(spans.http)', field: 'p75_spans_http'},
-      {title: 'Browser', column: 'p75(spans.browser)', field: 'p75_spans_browser'},
-      {title: 'Resource', column: 'p75(spans.resource)', field: 'p75_spans_resource'},
+      {title: 'HTTP', column: 'p75(spans.http)', field: 'p75(spans.http)'},
+      {title: 'Browser', column: 'p75(spans.browser)', field: 'p75(spans.browser)'},
+      {title: 'Resource', column: 'p75(spans.resource)', field: 'p75(spans.resource)'},
     ];
 
     const webVitalTitles = webVitals.map((vital, idx) => {
@@ -118,7 +120,15 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization.slug,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
             {WEB_VITAL_DETAILS[vital.title].name} (
             {WEB_VITAL_DETAILS[vital.title].acronym})
           </Link>
@@ -132,8 +142,16 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
-            {t(span.title)}
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization.slug,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
+            {span.title}
           </Link>
         </SubTitle>
       );
@@ -142,13 +160,13 @@ function PerformanceCardTable({
     const webVitalsRenderer = webVitals.map(
       vital =>
         allReleasesTableData?.meta &&
-        getFieldRenderer(vital.field, allReleasesTableData?.meta)
+        getFieldRenderer(vital.field, allReleasesTableData?.meta, false)
     );
 
     const spansRenderer = spans.map(
       span =>
         allReleasesTableData?.meta &&
-        getFieldRenderer(span.field, allReleasesTableData?.meta)
+        getFieldRenderer(span.field, allReleasesTableData?.meta, false)
     );
 
     const webReleaseTrend = webVitals.map(vital => {
@@ -185,7 +203,7 @@ function PerformanceCardTable({
           <TitleSpace />
           {webVitals.map((vital, index) => (
             <MultipleEmptySubText key={vital[index]}>
-              {<StyledNotAvailable tooltip={t('No results found')} />}
+              <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
           ))}
         </StyledPanelItem>
@@ -193,7 +211,7 @@ function PerformanceCardTable({
           <TitleSpace />
           {spans.map((span, index) => (
             <MultipleEmptySubText key={span[index]}>
-              {<StyledNotAvailable tooltip={t('No results found')} />}
+              <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
           ))}
         </StyledPanelItem>
@@ -310,20 +328,29 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
-            {t(span.title)}
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization.slug,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
+            {span.title}
           </Link>
         </SubTitle>
       );
     });
 
     const apdexRenderer =
-      allReleasesTableData?.meta && getFieldRenderer('apdex', allReleasesTableData.meta);
+      allReleasesTableData?.meta &&
+      getFieldRenderer('apdex', allReleasesTableData.meta, false);
 
     const spansRenderer = spans.map(
       span =>
         allReleasesTableData?.meta &&
-        getFieldRenderer(span.field, allReleasesTableData?.meta)
+        getFieldRenderer(span.field, allReleasesTableData?.meta, false)
     );
 
     const spansReleaseTrend = spans.map(span => {
@@ -365,7 +392,7 @@ function PerformanceCardTable({
           <TitleSpace />
           {spans.map((span, index) => (
             <MultipleEmptySubText key={span[index]}>
-              {<StyledNotAvailable tooltip={t('No results found')} />}
+              <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
           ))}
         </StyledPanelItem>
@@ -452,10 +479,10 @@ function PerformanceCardTable({
 
   function renderMobilePerformance() {
     const mobileVitals = [
-      MobileVital.AppStartCold,
-      MobileVital.AppStartWarm,
-      MobileVital.FramesSlow,
-      MobileVital.FramesFrozen,
+      MobileVital.APP_START_COLD,
+      MobileVital.APP_START_WARM,
+      MobileVital.FRAMES_SLOW,
+      MobileVital.FRAMES_FROZEN,
     ];
     const mobileVitalTitles = mobileVitals.map(mobileVital => {
       return (
@@ -464,14 +491,15 @@ function PerformanceCardTable({
     });
 
     const mobileVitalFields = [
-      'p75_measurements_app_start_cold',
-      'p75_measurements_app_start_warm',
-      'p75_measurements_frames_slow',
-      'p75_measurements_frames_frozen',
+      'p75(measurements.app_start_cold)',
+      'p75(measurements.app_start_warm)',
+      'p75(measurements.frames_slow)',
+      'p75(measurements.frames_frozen)',
     ];
     const mobileVitalsRenderer = mobileVitalFields.map(
       field =>
-        allReleasesTableData?.meta && getFieldRenderer(field, allReleasesTableData?.meta)
+        allReleasesTableData?.meta &&
+        getFieldRenderer(field, allReleasesTableData?.meta, false)
     );
 
     const mobileReleaseTrend = mobileVitalFields.map(field => {
@@ -612,25 +640,25 @@ function PerformanceCardTable({
   const loader = <StyledLoadingIndicator />;
 
   const platformPerformanceRender = {
-    [PROJECT_PERFORMANCE_TYPE.FRONTEND]: {
+    [ProjectPerformanceType.FRONTEND]: {
       title: t('Frontend Performance'),
       section: renderFrontendPerformance(),
     },
-    [PROJECT_PERFORMANCE_TYPE.BACKEND]: {
+    [ProjectPerformanceType.BACKEND]: {
       title: t('Backend Performance'),
       section: renderBackendPerformance(),
     },
-    [PROJECT_PERFORMANCE_TYPE.MOBILE]: {
+    [ProjectPerformanceType.MOBILE]: {
       title: t('Mobile Performance'),
       section: renderMobilePerformance(),
     },
-    [PROJECT_PERFORMANCE_TYPE.ANY]: {
+    [ProjectPerformanceType.ANY]: {
       title: t('[Unknown] Performance'),
       section: renderUnknownPerformance(),
     },
   };
 
-  const isUnknownPlatform = performanceType === PROJECT_PERFORMANCE_TYPE.ANY;
+  const isUnknownPlatform = performanceType === ProjectPerformanceType.ANY;
 
   return (
     <Fragment>
@@ -677,7 +705,7 @@ function PerformanceCardTable({
   );
 }
 
-interface Props extends AsyncComponentProps {
+interface Props {
   allReleasesEventView: EventView;
   location: Location;
   organization: Organization;
@@ -750,7 +778,7 @@ const StyledPanelTable = styled(PanelTable)<{disableTopBorder: boolean}>`
   border-top-left-radius: 0;
   border-top-right-radius: 0;
   border-top: ${p => (p.disableTopBorder ? 'none' : `1px solid ${p.theme.border}`)};
-  @media (max-width: ${p => p.theme.breakpoints[2]}) {
+  @media (max-width: ${p => p.theme.breakpoints.large}) {
     grid-template-columns: min-content 1fr 1fr 1fr;
   }
 `;
@@ -790,7 +818,7 @@ const Cell = styled('div')<{align: 'left' | 'right'}>`
   text-align: ${p => p.align};
   margin-left: ${p => p.align === 'left' && space(2)};
   padding-right: ${p => p.align === 'right' && space(2)};
-  ${overflowEllipsis}
+  ${p => p.theme.overflowEllipsis}
 `;
 
 const StyledAlert = styled(Alert)`

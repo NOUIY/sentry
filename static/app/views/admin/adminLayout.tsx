@@ -1,12 +1,13 @@
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import {BreadcrumbProvider} from 'sentry/views/settings/components/settingsBreadcrumb/context';
 import SettingsLayout from 'sentry/views/settings/components/settingsLayout';
 import SettingsNavigation from 'sentry/views/settings/components/settingsNavigation';
 
-const AdminNavigation = () => (
+const renderAdminNavigation = () => (
   <SettingsNavigation
     stickyTop="0"
     navigationObjects={[
@@ -44,9 +45,11 @@ function AdminLayout({children, ...props}: Props) {
   return (
     <SentryDocumentTitle noSuffix title={t('Sentry Admin')}>
       <Page>
-        <SettingsLayout renderNavigation={AdminNavigation} {...props}>
-          {children}
-        </SettingsLayout>
+        <BreadcrumbProvider>
+          <SettingsLayout renderNavigation={renderAdminNavigation} {...props}>
+            {children}
+          </SettingsLayout>
+        </BreadcrumbProvider>
       </Page>
     </SentryDocumentTitle>
   );

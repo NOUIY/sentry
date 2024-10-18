@@ -8,7 +8,6 @@ from sentry.utils.strings import (
     oxfordize_list,
     soft_break,
     soft_hyphenate,
-    tokens_from_name,
     truncatechars,
     unescape_string,
 )
@@ -48,21 +47,11 @@ def test_unescape_string(s, expected):
 
 
 def test_codec_lookup():
-    def assert_match(enc, ref=None):
-        if ref is None:
-            ref = enc
-        rv = codec_lookup(enc)
-        if rv is None:
-            assert ref is rv is None
-        else:
-            assert rv.name == ref
-
     assert codec_lookup("utf-8").name == "utf-8"
     assert codec_lookup("utf8").name == "utf-8"
     assert codec_lookup("zlib").name == "utf-8"
     assert codec_lookup("utf16").name == "utf-16"
     assert codec_lookup("undefined").name == "utf-8"
-    assert codec_lookup("undefined", default=None) is None
     assert codec_lookup("undefined", default="latin1").name == "iso8859-1"
     assert codec_lookup("zlib", default="latin1").name == "iso8859-1"
     assert codec_lookup("unknowable", default="latin1").name == "iso8859-1"
@@ -81,30 +70,6 @@ def test_soft_break_and_hyphenate():
     assert soft_break("com.reallyreallyreally.long.path", 6, hyphenate) == ZWSP.join(
         ["com.", SHY.join(["really"] * 3) + ".", "long.", "path"]
     )
-
-
-def test_tokens_from_name():
-    assert list(tokens_from_name("MyHTTPProject42")) == ["my", "http", "project42"]
-    assert list(tokens_from_name("MyHTTPProject42", remove_digits=True)) == [
-        "my",
-        "http",
-        "project",
-    ]
-    assert list(tokens_from_name("MyHTTPProject Awesome 42 Stuff")) == [
-        "my",
-        "http",
-        "project",
-        "awesome",
-        "42",
-        "stuff",
-    ]
-    assert list(tokens_from_name("MyHTTPProject Awesome 42 Stuff", remove_digits=True)) == [
-        "my",
-        "http",
-        "project",
-        "awesome",
-        "stuff",
-    ]
 
 
 def test_is_valid_dot_atom():

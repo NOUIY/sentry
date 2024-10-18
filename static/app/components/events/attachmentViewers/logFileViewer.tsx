@@ -1,80 +1,78 @@
 import styled from '@emotion/styled';
-import ansicolor from 'ansicolor';
+import Ansi from 'ansi-to-react';
 
-import AsyncComponent from 'sentry/components/asyncComponent';
 import PreviewPanelItem from 'sentry/components/events/attachmentViewers/previewPanelItem';
-import {
-  getAttachmentUrl,
-  ViewerProps,
-} from 'sentry/components/events/attachmentViewers/utils';
-import space from 'sentry/styles/space';
-import theme from 'sentry/utils/theme';
+import type {ViewerProps} from 'sentry/components/events/attachmentViewers/utils';
+import {getAttachmentUrl} from 'sentry/components/events/attachmentViewers/utils';
+import LoadingError from 'sentry/components/loadingError';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import {t} from 'sentry/locale';
+import {space} from 'sentry/styles/space';
+import {useApiQuery} from 'sentry/utils/queryClient';
 
-type Props = ViewerProps & AsyncComponent['props'];
+function LogFileViewer(props: ViewerProps) {
+  const {data, isPending, isError} = useApiQuery<string>(
+    [getAttachmentUrl(props), {headers: {Accept: '*/*; charset=utf-8'}}],
+    {
+      staleTime: Infinity,
+    }
+  );
 
-type State = AsyncComponent['state'];
+  if (isError) {
+    return <LoadingError message={t('Failed to download attachment.')} />;
+  }
 
-const COLORS = {
-  black: theme.black,
-  white: theme.white,
-  redDim: theme.red200,
-  red: theme.red300,
-  greenDim: theme.green200,
-  green: theme.green300,
-  yellowDim: theme.pink200,
-  yellow: theme.pink300,
-  blueDim: theme.blue200,
-  blue: theme.blue300,
-  magentaDim: theme.pink200,
-  magenta: theme.pink300,
-  cyanDim: theme.blue200,
-  cyan: theme.blue300,
+  if (isPending) {
+    return <LoadingIndicator />;
+  }
+
+  return data ? (
+    <PreviewPanelItem>
+      <CodeWrapper>
+        <SentryStyleAnsi useClasses>{data}</SentryStyleAnsi>
+      </CodeWrapper>
+    </PreviewPanelItem>
+  ) : null;
+}
+
+export default LogFileViewer;
+
+/**
+ * Maps ANSI color names -> theme.tsx color names
+ */
+const COLOR_MAP = {
+  red: 'red',
+  green: 'green',
+  blue: 'blue',
+  yellow: 'yellow',
+  magenta: 'pink',
+  cyan: 'purple',
 };
 
-export default class LogFileViewer extends AsyncComponent<Props, State> {
-  getEndpoints(): [string, string][] {
-    return [['attachmentText', getAttachmentUrl(this.props)]];
+const SentryStyleAnsi = styled(Ansi)`
+  ${p =>
+    Object.entries(COLOR_MAP).map(
+      ([ansiColor, themeColor]) => `
+      .ansi-${ansiColor}-bg {
+        background-color: ${p.theme[`${themeColor}400`]};
+      }
+      .ansi-${ansiColor}-fg {
+        color: ${p.theme[`${themeColor}400`]};
+      }
+      .ansi-bright-${ansiColor}-fg {
+        color: ${p.theme[`${themeColor}200`]};
+      }`
+    )}
+
+  .ansi-black-fg,
+  .ansi-bright-black-fg {
+    color: ${p => p.theme.black};
   }
-
-  renderBody() {
-    const {attachmentText} = this.state;
-    if (!attachmentText) {
-      return null;
-    }
-
-    const spans = ansicolor
-      .parse(attachmentText)
-      .spans.map(({color, bgColor, text}, idx) => {
-        const style = {} as React.CSSProperties;
-        if (color) {
-          if (color.name) {
-            style.color =
-              COLORS[color.name + (color.dim ? 'Dim' : '')] || COLORS[color.name] || '';
-          }
-          if (color.bright) {
-            style.fontWeight = 500;
-          }
-        }
-        if (bgColor && bgColor.name) {
-          style.background =
-            COLORS[bgColor.name + (bgColor.dim ? 'Dim' : '')] ||
-            COLORS[bgColor.name] ||
-            '';
-        }
-        return (
-          <span style={style} key={idx}>
-            {text}
-          </span>
-        );
-      });
-
-    return (
-      <PreviewPanelItem>
-        <CodeWrapper>{spans}</CodeWrapper>
-      </PreviewPanelItem>
-    );
+  .ansi-white-fg,
+  .ansi-bright-white-fg {
+    color: ${p => p.theme.white};
   }
-}
+`;
 
 const CodeWrapper = styled('pre')`
   padding: ${space(1)} ${space(2)};

@@ -1,27 +1,28 @@
 from datetime import timedelta
+from functools import cached_property
 
 from django.utils import timezone
-from exam import fixture
 
 from sentry.api.serializers import serialize
 from sentry.incidents.logic import update_incident_status
-from sentry.incidents.models import IncidentStatus
-from sentry.snuba.models import QueryDatasets
-from sentry.testutils import APITestCase
+from sentry.incidents.models.incident import IncidentStatus
+from sentry.snuba.dataset import Dataset
+from sentry.testutils.cases import APITestCase
+from sentry.types.actor import Actor
 
 
 class IncidentListEndpointTest(APITestCase):
     endpoint = "sentry-api-0-organization-incident-index"
 
-    @fixture
+    @cached_property
     def organization(self):
         return self.create_organization()
 
-    @fixture
+    @cached_property
     def project(self):
         return self.create_project(organization=self.organization)
 
-    @fixture
+    @cached_property
     def user(self):
         return self.create_user()
 
@@ -83,7 +84,7 @@ class IncidentListEndpointTest(APITestCase):
     def test_no_perf_alerts(self):
         self.create_team(organization=self.organization, members=[self.user])
         # alert_rule = self.create_alert_rule()
-        perf_alert_rule = self.create_alert_rule(query="p95", dataset=QueryDatasets.TRANSACTIONS)
+        perf_alert_rule = self.create_alert_rule(query="p95", dataset=Dataset.Transactions)
 
         perf_incident = self.create_incident(alert_rule=perf_alert_rule)
         incident = self.create_incident()
@@ -148,14 +149,14 @@ class IncidentListEndpointTest(APITestCase):
             name="alert rule",
             organization=self.organization,
             projects=[self.project],
-            owner=team.actor.get_actor_tuple(),
+            owner=Actor.from_id(user_id=None, team_id=team.id),
         )
         other_team = self.create_team(organization=self.organization, members=[self.user])
         other_alert_rule = self.create_alert_rule(
             name="rule 2",
             organization=self.organization,
             projects=[self.project],
-            owner=other_team.actor.get_actor_tuple(),
+            owner=Actor.from_id(user_id=None, team_id=other_team.id),
         )
         unassigned_alert_rule = self.create_alert_rule(
             name="rule 66",

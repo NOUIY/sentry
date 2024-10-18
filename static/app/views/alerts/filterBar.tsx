@@ -2,11 +2,11 @@ import styled from '@emotion/styled';
 import type {Location} from 'history';
 
 import ButtonBar from 'sentry/components/buttonBar';
-import CompactSelect from 'sentry/components/forms/compactSelect';
-import ProjectPageFilter from 'sentry/components/projectPageFilter';
+import {CompactSelect} from 'sentry/components/compactSelect';
+import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilter';
 import SearchBar from 'sentry/components/searchBar';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 import TeamFilter from './list/rules/teamFilter';
 import {getQueryStatus, getTeamParams} from './utils';
@@ -74,20 +74,21 @@ const Wrapper = styled('div')`
   gap: ${space(1.5)};
   margin-bottom: ${space(2)};
 
-  @media (min-width: ${p => p.theme.breakpoints[0]}) {
+  @media (min-width: ${p => p.theme.breakpoints.large}) {
     grid-template-columns: min-content 1fr;
   }
 `;
 
 const FilterButtons = styled(ButtonBar)`
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
+  @media (max-width: ${p => p.theme.breakpoints.large}) {
     display: flex;
     align-items: flex-start;
+    flex-wrap: wrap;
     gap: ${space(1.5)};
   }
 
-  @media (min-width: ${p => p.theme.breakpoints[0]}) {
+  @media (min-width: ${p => p.theme.breakpoints.large}) {
     display: grid;
-    grid-auto-columns: minmax(auto, 300px);
+    grid-auto-columns: max-content;
   }
 `;

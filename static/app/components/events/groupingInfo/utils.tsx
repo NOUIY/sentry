@@ -1,13 +1,16 @@
-import isObject from 'lodash/isObject';
-
-import {EventGroupComponent} from 'sentry/types';
+import type {EventGroupComponent} from 'sentry/types/event';
 
 export function hasNonContributingComponent(component: EventGroupComponent | undefined) {
-  if (!component?.contributes) {
+  if (component === undefined) {
+    return false;
+  }
+
+  if (!component.contributes) {
     return true;
   }
+
   for (const value of component.values) {
-    if (isObject(value) && hasNonContributingComponent(value)) {
+    if (value && typeof value === 'object' && hasNonContributingComponent(value)) {
       return true;
     }
   }
@@ -15,19 +18,21 @@ export function hasNonContributingComponent(component: EventGroupComponent | und
 }
 
 export function shouldInlineComponentValue(component: EventGroupComponent) {
-  return (component.values as EventGroupComponent[]).every(value => !isObject(value));
+  return (component.values as EventGroupComponent[]).every(
+    value => !value || typeof value !== 'object'
+  );
 }
 
 export function groupingComponentFilter(
   value: EventGroupComponent | string,
   showNonContributing: boolean
 ) {
-  if (isObject(value)) {
+  if (value && typeof value === 'object') {
     // no point rendering such nodes at all, we never show them
     if (!value.contributes && !value.hint && value.values.length === 0) {
       return false;
     }
-    // non contributing values are otherwise optional
+    // non-contributing values are otherwise optional
     if (!showNonContributing && !value.contributes) {
       return false;
     }

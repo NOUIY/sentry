@@ -1,156 +1,25 @@
 import {createStore} from 'reflux';
 
-import {Tag, TagCollection} from 'sentry/types';
-import {SEMVER_TAGS} from 'sentry/utils/discover/fields';
-import {makeSafeRefluxStore} from 'sentry/utils/makeSafeRefluxStore';
+import type {Tag, TagCollection} from 'sentry/types/group';
 
-import {CommonStoreDefinition} from './types';
+import type {StrictStoreDefinition} from './types';
 
-// This list is only used on issues. Events/discover
-// have their own field list that exists elsewhere.
-// contexts.key and contexts.value omitted on purpose.
-const BUILTIN_TAGS = [
-  'event.type',
-  'platform',
-  'message',
-  'title',
-  'location',
-  'timestamp',
-  'release',
-  'user.id',
-  'user.username',
-  'user.email',
-  'user.ip',
-  'sdk.name',
-  'sdk.version',
-  'http.method',
-  'http.url',
-  'os.build',
-  'os.kernel_version',
-  'device.brand',
-  'device.locale',
-  'device.uuid',
-  'device.model_id',
-  'device.arch',
-  'device.orientation',
-  'geo.country_code',
-  'geo.region',
-  'geo.city',
-  'error.type',
-  'error.handled',
-  'error.unhandled',
-  'error.value',
-  'error.mechanism',
-  'stack.abs_path',
-  'stack.filename',
-  'stack.package',
-  'stack.module',
-  'stack.function',
-  'stack.stack_level',
-].reduce<TagCollection>((acc, tag) => {
-  acc[tag] = {key: tag, name: tag};
-  return acc;
-}, {});
-
-interface TagStoreDefinition extends CommonStoreDefinition<TagCollection> {
-  getAllTags(): TagCollection;
-  getBuiltInTags(): TagCollection;
-  getIssueAttributes(): TagCollection;
+interface TagStoreDefinition extends StrictStoreDefinition<TagCollection> {
   loadTagsSuccess(data: Tag[]): void;
   reset(): void;
-  state: TagCollection;
 }
 
 const storeConfig: TagStoreDefinition = {
   state: {},
-  unsubscribeListeners: [],
 
   init() {
+    // XXX: Do not use `this.listenTo` in this store. We avoid usage of reflux
+    // listeners due to their leaky nature in tests.
     this.state = {};
   },
 
-  getBuiltInTags() {
-    return {...BUILTIN_TAGS, ...SEMVER_TAGS};
-  },
-
-  getIssueAttributes() {
-    // TODO(mitsuhiko): what do we do with translations here?
-    const isSuggestions = [
-      'resolved',
-      'unresolved',
-      'ignored',
-      'assigned',
-      'for_review',
-      'unassigned',
-      'linked',
-      'unlinked',
-    ];
-    return {
-      is: {
-        key: 'is',
-        name: 'Status',
-        values: isSuggestions,
-        maxSuggestedValues: isSuggestions.length,
-        predefined: true,
-      },
-      has: {
-        key: 'has',
-        name: 'Has Tag',
-        values: Object.keys(this.state),
-        predefined: true,
-      },
-      assigned: {
-        key: 'assigned',
-        name: 'Assigned To',
-        values: [],
-        predefined: true,
-      },
-      bookmarks: {
-        key: 'bookmarks',
-        name: 'Bookmarked By',
-        values: [],
-        predefined: true,
-      },
-      lastSeen: {
-        key: 'lastSeen',
-        name: 'Last Seen',
-        values: ['-1h', '+1d', '-1w'],
-        predefined: true,
-      },
-      firstSeen: {
-        key: 'firstSeen',
-        name: 'First Seen',
-        values: ['-1h', '+1d', '-1w'],
-        predefined: true,
-      },
-      firstRelease: {
-        key: 'firstRelease',
-        name: 'First Release',
-        values: ['latest'],
-        predefined: true,
-      },
-      'event.timestamp': {
-        key: 'event.timestamp',
-        name: 'Event Timestamp',
-        values: ['2017-01-02', '>=2017-01-02T01:00:00', '<2017-01-02T02:00:00'],
-        predefined: true,
-      },
-      timesSeen: {
-        key: 'timesSeen',
-        name: 'Times Seen',
-        isInput: true,
-        // Below values are required or else SearchBar will attempt to get values // This is required or else SearchBar will attempt to get values
-        values: [],
-        predefined: true,
-      },
-      assigned_or_suggested: {
-        key: 'assigned_or_suggested',
-        name: 'Assigned or Suggested',
-        isInput: true,
-        values: [],
-        predefined: true,
-      },
-    };
+  getState() {
+    return this.state;
   },
 
   reset() {
@@ -158,28 +27,51 @@ const storeConfig: TagStoreDefinition = {
     this.trigger(this.state);
   },
 
-  getAllTags() {
-    return this.state;
-  },
-
-  getState() {
-    return this.getAllTags();
-  },
-
   loadTagsSuccess(data) {
-    const newTags = data.reduce<TagCollection>((acc, tag) => {
-      acc[tag.key] = {
+    // Note: We could probably stop cloning the data here and just
+    // assign to this.state directly, but there is a change someone may
+    // be relying on referential equality somewhere in the codebase and
+    // we dont want to risk breaking that.
+    const newState: TagCollection = {};
+
+    for (let i = 0; i < data.length; i++) {
+      const tag = data[i];
+      newState[tag.key] = {
         values: [],
         ...tag,
       };
+    }
 
-      return acc;
-    }, {});
+    // We will iterate through the previous tags in reverse so that previously
+    // added tags are carried over first. We rely on browser implementation
+    // of Object.keys() to return keys in insertion order.
+    const previousTagKeys = Object.keys(this.state);
 
-    this.state = {...this.state, ...newTags};
-    this.trigger(this.state);
+    const MAX_STORE_SIZE = 2000;
+    // We will carry over the previous tags until we reach the max store size
+    const toCarryOver = Math.max(0, MAX_STORE_SIZE - data.length);
+
+    let carriedOver = 0;
+    while (previousTagKeys.length > 0 && carriedOver < toCarryOver) {
+      const tagKey = previousTagKeys.pop();
+      if (tagKey === undefined) {
+        // Should be unreachable, but just in case
+        break;
+      }
+      // If the new state already has a previous tag then we will not carry it over
+      // and use the latest tag in the store instead.
+      if (newState[tagKey]) {
+        continue;
+      }
+      // Else override the tag with the previous tag
+      newState[tagKey] = this.state[tagKey];
+      carriedOver++;
+    }
+
+    this.state = newState;
+    this.trigger(newState);
   },
 };
 
-const TagStore = createStore(makeSafeRefluxStore(storeConfig));
+const TagStore = createStore(storeConfig);
 export default TagStore;

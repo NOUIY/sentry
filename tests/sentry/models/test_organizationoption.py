@@ -1,5 +1,5 @@
-from sentry.models import OrganizationOption
-from sentry.testutils import TestCase
+from sentry.models.options.organization_option import OrganizationOption
+from sentry.testutils.cases import TestCase
 
 
 class OrganizationOptionManagerTest(TestCase):

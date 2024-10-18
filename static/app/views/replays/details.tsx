@@ -1,118 +1,212 @@
-import React from 'react';
-import styled from '@emotion/styled';
+import {Fragment, useEffect} from 'react';
 
+import Alert from 'sentry/components/alert';
+import {Flex} from 'sentry/components/container/flex';
 import DetailedError from 'sentry/components/errors/detailedError';
 import NotFound from 'sentry/components/errors/notFound';
 import * as Layout from 'sentry/components/layouts/thirds';
-import ReplayTimeline from 'sentry/components/replays/breadcrumbs/replayTimeline';
+import List from 'sentry/components/list';
+import ListItem from 'sentry/components/list/listItem';
+import {LocalStorageReplayPreferences} from 'sentry/components/replays/preferences/replayPreferences';
 import {Provider as ReplayContextProvider} from 'sentry/components/replays/replayContext';
-import ReplayView from 'sentry/components/replays/replayView';
+import {IconDelete} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {PageContent} from 'sentry/styles/organization';
-import space from 'sentry/styles/space';
-import useFullscreen from 'sentry/utils/replays/hooks/useFullscreen';
-import useReplayData from 'sentry/utils/replays/hooks/useReplayData';
-import {useRouteContext} from 'sentry/utils/useRouteContext';
+import {space} from 'sentry/styles/space';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import {decodeScalar} from 'sentry/utils/queryString';
+import type {TimeOffsetLocationQueryParams} from 'sentry/utils/replays/hooks/useInitialTimeOffsetMs';
+import useInitialTimeOffsetMs from 'sentry/utils/replays/hooks/useInitialTimeOffsetMs';
+import useLogReplayDataLoaded from 'sentry/utils/replays/hooks/useLogReplayDataLoaded';
+import useMarkReplayViewed from 'sentry/utils/replays/hooks/useMarkReplayViewed';
+import useReplayPageview from 'sentry/utils/replays/hooks/useReplayPageview';
+import useReplayReader from 'sentry/utils/replays/hooks/useReplayReader';
+import {ReplayPreferencesContextProvider} from 'sentry/utils/replays/playback/providers/replayPreferencesContext';
+import useRouteAnalyticsEventNames from 'sentry/utils/routeAnalytics/useRouteAnalyticsEventNames';
+import useRouteAnalyticsParams from 'sentry/utils/routeAnalytics/useRouteAnalyticsParams';
+import {useLocation} from 'sentry/utils/useLocation';
+import useOrganization from 'sentry/utils/useOrganization';
+import {useUser} from 'sentry/utils/useUser';
+import ReplaysLayout from 'sentry/views/replays/detail/layout';
+import Page from 'sentry/views/replays/detail/page';
+import ReplayTransactionContext from 'sentry/views/replays/detail/trace/replayTransactionContext';
 
-import DetailLayout from './detail/detailLayout';
-import FocusArea from './detail/focusArea';
-import FocusTabs from './detail/focusTabs';
-import UserActionsNavigator from './detail/userActionsNavigator';
+type Props = RouteComponentProps<
+  {replaySlug: string},
+  {},
+  any,
+  TimeOffsetLocationQueryParams
+>;
 
-function ReplayDetails() {
+function ReplayDetails({params: {replaySlug}}: Props) {
+  const user = useUser();
+  const location = useLocation();
+  const organization = useOrganization();
+
+  const {slug: orgSlug} = organization;
+
+  // TODO: replayId is known ahead of time and useReplayData is parsing it from the replaySlug
+  // once we fix the route params and links we should fix this to accept replayId and stop returning it
   const {
-    location,
-    params: {eventSlug, orgId},
-  } = useRouteContext();
-
-  const {
-    t: initialTimeOffset, // Time, in seconds, where the video should start
-  } = location.query;
-
-  const {fetchError, fetching, onRetry, replay} = useReplayData({
-    eventSlug,
-    orgId,
+    errors,
+    fetchError,
+    fetching,
+    onRetry,
+    projectSlug,
+    replay,
+    replayId,
+    replayRecord,
+  } = useReplayReader({
+    replaySlug,
+    orgSlug,
   });
 
-  const {ref: fullscreenRef, isFullscreen, toggle: toggleFullscreen} = useFullscreen();
+  const replayErrors = errors.filter(e => e.title !== 'User Feedback');
+  const isVideoReplay = replay?.isVideoReplay();
 
-  if (!fetching && !replay) {
-    // TODO(replay): Give the user more details when errors happen
-    console.log({fetching, fetchError}); // eslint-disable-line no-console
+  useReplayPageview('replay.details-time-spent');
+  useRouteAnalyticsEventNames('replay_details.viewed', 'Replay Details: Viewed');
+  useRouteAnalyticsParams({
+    organization,
+    referrer: decodeScalar(location.query.referrer),
+    user_email: user.email,
+    tab: location.query.t_main,
+    mobile: isVideoReplay,
+  });
+
+  useLogReplayDataLoaded({fetchError, fetching, projectSlug, replay});
+
+  const {mutate: markAsViewed} = useMarkReplayViewed();
+  useEffect(() => {
+    if (
+      !fetchError &&
+      replayRecord &&
+      !replayRecord.has_viewed &&
+      projectSlug &&
+      !fetching &&
+      replayId
+    ) {
+      markAsViewed({projectSlug, replayId});
+    }
+  }, [
+    fetchError,
+    fetching,
+    markAsViewed,
+    organization,
+    projectSlug,
+    replayId,
+    replayRecord,
+  ]);
+
+  const initialTimeOffsetMs = useInitialTimeOffsetMs({
+    orgSlug,
+    projectSlug,
+    replayId,
+    replayStartTimestampMs: replayRecord?.started_at?.getTime(),
+  });
+
+  const rrwebFrames = replay?.getRRWebFrames();
+  // The replay data takes a while to load in, which causes `isVideoReplay`
+  // to return an early `false`, which used to cause UI jumping.
+  // One way to check whether it's finished loading is by checking the length
+  // of the rrweb frames, which should always be > 1 for any given replay.
+  // By default, the 1 frame is replay.end
+  const isLoading = !rrwebFrames || (rrwebFrames && rrwebFrames.length <= 1);
+
+  if (replayRecord?.is_archived) {
     return (
-      <DetailLayout orgId={orgId}>
-        <PageContent>
-          <NotFound />
-        </PageContent>
-      </DetailLayout>
+      <Page
+        orgSlug={orgSlug}
+        replayRecord={replayRecord}
+        projectSlug={projectSlug}
+        replayErrors={replayErrors}
+      >
+        <Layout.Page>
+          <Alert system type="warning" data-test-id="replay-deleted">
+            <Flex gap={space(0.5)}>
+              <IconDelete color="gray500" size="sm" />
+              {t('This replay has been deleted.')}
+            </Flex>
+          </Alert>
+        </Layout.Page>
+      </Page>
     );
   }
+  if (fetchError) {
+    if (fetchError.status === 404) {
+      return (
+        <Page
+          orgSlug={orgSlug}
+          replayRecord={replayRecord}
+          projectSlug={projectSlug}
+          replayErrors={replayErrors}
+        >
+          <Layout.Page withPadding>
+            <NotFound />
+          </Layout.Page>
+        </Page>
+      );
+    }
 
-  if (!fetching && replay && replay.getRRWebEvents().length < 2) {
+    const reasons = [
+      t('The replay is still processing'),
+      t('The replay has been deleted by a member in your organization'),
+      t('There is an internal systems error'),
+    ];
     return (
-      <DetailLayout event={replay.getEvent()} orgId={orgId}>
-        <DetailedError
-          onRetry={onRetry}
-          hideSupportLinks
-          heading={t('Expected two or more replay events')}
-          message={
-            <React.Fragment>
-              <p>{t('This Replay may not have captured any user actions.')}</p>
-              <p>
-                {t(
-                  'Or there may be an issue loading the actions from the server, click to try loading the Replay again.'
-                )}
-              </p>
-            </React.Fragment>
-          }
-        />
-      </DetailLayout>
+      <Page
+        orgSlug={orgSlug}
+        replayRecord={replayRecord}
+        projectSlug={projectSlug}
+        replayErrors={replayErrors}
+      >
+        <Layout.Page>
+          <DetailedError
+            onRetry={onRetry}
+            hideSupportLinks
+            heading={t('There was an error while fetching this Replay')}
+            message={
+              <Fragment>
+                <p>{t('This could be due to these reasons:')}</p>
+                <List symbol="bullet">
+                  {reasons.map((reason, i) => (
+                    <ListItem key={i}>{reason}</ListItem>
+                  ))}
+                </List>
+              </Fragment>
+            }
+          />
+        </Layout.Page>
+      </Page>
     );
   }
 
   return (
-    <ReplayContextProvider replay={replay} initialTimeOffset={initialTimeOffset}>
-      <DetailLayout
-        event={replay?.getEvent()}
-        orgId={orgId}
-        crumbs={replay?.getRawCrumbs()}
+    <ReplayPreferencesContextProvider prefsStrategy={LocalStorageReplayPreferences}>
+      <ReplayContextProvider
+        analyticsContext="replay_details"
+        initialTimeOffsetMs={initialTimeOffsetMs}
+        isFetching={fetching}
+        replay={replay}
       >
-        <Layout.Body>
-          <Layout.Main ref={fullscreenRef}>
-            <ReplayView toggleFullscreen={toggleFullscreen} isFullscreen={isFullscreen} />
-          </Layout.Main>
-
-          <Layout.Side>
-            <UserActionsNavigator
-              crumbs={replay?.getRawCrumbs()}
-              event={replay?.getEvent()}
+        <ReplayTransactionContext replayRecord={replayRecord}>
+          <Page
+            isVideoReplay={isVideoReplay}
+            orgSlug={orgSlug}
+            replayRecord={replayRecord}
+            projectSlug={projectSlug}
+            replayErrors={replayErrors}
+            isLoading={isLoading}
+          >
+            <ReplaysLayout
+              isVideoReplay={isVideoReplay}
+              replayRecord={replayRecord}
+              isLoading={isLoading}
             />
-          </Layout.Side>
-
-          <StickyMain fullWidth>
-            <ReplayTimeline />
-            <FocusTabs />
-          </StickyMain>
-
-          <Layout.Main fullWidth>
-            <FocusArea replay={replay} />
-          </Layout.Main>
-        </Layout.Body>
-      </DetailLayout>
-    </ReplayContextProvider>
+          </Page>
+        </ReplayTransactionContext>
+      </ReplayContextProvider>
+    </ReplayPreferencesContextProvider>
   );
 }
-
-const StickyMain = styled(Layout.Main)`
-  position: sticky;
-  top: 0;
-  z-index: ${p => p.theme.zIndex.header};
-
-  /* Make this component full-bleed, so the background covers everything underneath it */
-  margin: -${space(1.5)} -${space(4)} -${space(3)};
-  padding: ${space(1.5)} ${space(4)} 0;
-  max-width: none;
-  background: ${p => p.theme.background};
-`;
 
 export default ReplayDetails;

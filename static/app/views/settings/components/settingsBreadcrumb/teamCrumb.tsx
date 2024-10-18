@@ -1,23 +1,22 @@
-import {browserHistory, RouteComponentProps} from 'react-router';
 import debounce from 'lodash/debounce';
 
 import IdBadge from 'sentry/components/idBadge';
 import {DEFAULT_DEBOUNCE_DURATION} from 'sentry/constants';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import recreateRoute from 'sentry/utils/recreateRoute';
-import useTeams from 'sentry/utils/useTeams';
-import BreadcrumbDropdown from 'sentry/views/settings/components/settingsBreadcrumb/breadcrumbDropdown';
-import MenuItem from 'sentry/views/settings/components/settingsBreadcrumb/menuItem';
+import {useParams} from 'sentry/utils/useParams';
+import {useTeams} from 'sentry/utils/useTeams';
 
-import {RouteWithName} from './types';
+import BreadcrumbDropdown from './breadcrumbDropdown';
+import MenuItem from './menuItem';
 import {CrumbLink} from '.';
 
-type Props = RouteComponentProps<{teamId: string}, {}> & {
-  routes: RouteWithName[];
-  route?: RouteWithName;
-};
+type Props = RouteComponentProps<{teamId: string}, {}>;
 
-const TeamCrumb = ({params, routes, route, ...props}: Props) => {
+function TeamCrumb({routes, route, ...props}: Props) {
   const {teams, onSearch, fetching} = useTeams();
+  const params = useParams();
 
   const team = teams.find(({slug}) => slug === params.teamId);
   const hasMenu = teams.length > 1;
@@ -30,16 +29,12 @@ const TeamCrumb = ({params, routes, route, ...props}: Props) => {
   if (!team) {
     return null;
   }
+  const teamUrl = `/settings/${params.orgId}/teams/${team.slug}/`;
 
   return (
     <BreadcrumbDropdown
       name={
-        <CrumbLink
-          to={recreateRoute(route, {
-            routes,
-            params: {...params, teamId: team.slug},
-          })}
-        >
+        <CrumbLink to={teamUrl}>
           <IdBadge avatarSize={18} team={team} />
         </CrumbLink>
       }
@@ -67,6 +62,6 @@ const TeamCrumb = ({params, routes, route, ...props}: Props) => {
       {...props}
     />
   );
-};
+}
 
 export default TeamCrumb;

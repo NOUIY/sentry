@@ -2,9 +2,13 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from sentry.models import Activity, Group, GroupResolution, GroupStatus, Release
+from sentry.models.activity import Activity
+from sentry.models.group import Group, GroupStatus
+from sentry.models.groupresolution import GroupResolution
+from sentry.models.release import Release
 from sentry.tasks.clear_expired_resolutions import clear_expired_resolutions
-from sentry.testutils import TestCase
+from sentry.testutils.cases import TestCase
+from sentry.types.activity import ActivityType
 
 
 class ClearExpiredResolutionsTest(TestCase):
@@ -26,7 +30,7 @@ class ClearExpiredResolutionsTest(TestCase):
         activity1 = Activity.objects.create(
             group=group1,
             project=project,
-            type=Activity.SET_RESOLVED_IN_RELEASE,
+            type=ActivityType.SET_RESOLVED_IN_RELEASE.value,
             ident=resolution1.id,
             data={"version": ""},
         )
@@ -45,7 +49,7 @@ class ClearExpiredResolutionsTest(TestCase):
         activity2 = Activity.objects.create(
             group=group2,
             project=project,
-            type=Activity.SET_RESOLVED_IN_RELEASE,
+            type=ActivityType.SET_RESOLVED_IN_RELEASE.value,
             ident=resolution2.id,
             data={"version": ""},
         )

@@ -2,8 +2,10 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from sentry.models import Environment, GroupRelease, Release
-from sentry.testutils import TestCase
+from sentry.models.environment import Environment
+from sentry.models.grouprelease import GroupRelease
+from sentry.models.release import Release
+from sentry.testutils.cases import TestCase
 
 
 class GetOrCreateTest(TestCase):
@@ -12,9 +14,7 @@ class GetOrCreateTest(TestCase):
         group = self.create_group(project=project)
         release = Release.objects.create(version="abc", organization_id=project.organization_id)
         release.add_project(project)
-        env = Environment.objects.create(
-            project_id=project.id, organization_id=project.organization_id, name="prod"
-        )
+        env = Environment.objects.create(organization_id=project.organization_id, name="prod")
         datetime = timezone.now()
 
         grouprelease = GroupRelease.get_or_create(

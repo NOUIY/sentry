@@ -1,58 +1,51 @@
-import ContextData from 'sentry/components/contextData';
-import EventDataSection from 'sentry/components/events/eventDataSection';
 import {t} from 'sentry/locale';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
+
+import KeyValueList from './interfaces/keyValueList';
 
 type Props = {
   event: Event;
 };
 
-const DeviceInterface = ({event}: Props) => {
-  const data = event.device || {};
-  const extras = Object.entries<any>(data.data || {}).map(([key, value]) => {
-    return (
-      <tr key={key}>
-        <td className="key">{key}</td>
-        <td className="value">
-          <ContextData data={value} />
-        </td>
-      </tr>
-    );
-  });
+export function EventDevice({event}: Props) {
+  const data = event.device ?? {};
+  const extras = Object.entries<any>(data.data ?? {}).map(([key, value]) => ({
+    key,
+    value,
+    subject: key,
+    isContextData: true,
+  }));
+
+  if (isEmptyObject(event.device)) {
+    return null;
+  }
 
   return (
-    <EventDataSection type="device" title={t('Device')} wrapTitle>
-      <table className="table key-value">
-        <tbody>
-          {data.name && (
-            <tr>
-              <td className="key">Name</td>
-              <td className="value">
-                <pre>{data.name}</pre>
-              </td>
-            </tr>
-          )}
-          {data.version && (
-            <tr>
-              <td className="key">Version</td>
-              <td className="value">
-                <pre>{data.version}</pre>
-              </td>
-            </tr>
-          )}
-          {data.build && (
-            <tr>
-              <td className="key">Build</td>
-              <td className="value">
-                <pre>{data.build}</pre>
-              </td>
-            </tr>
-          )}
-          {extras}
-        </tbody>
-      </table>
-    </EventDataSection>
+    <InterimSection type={SectionKey.DEVICE} title={t('Device')}>
+      <KeyValueList
+        shouldSort={false}
+        data={[
+          {
+            key: 'name',
+            subject: t('Name'),
+            value: data.name,
+          },
+          {
+            key: 'version',
+            subject: t('Version'),
+            value: data.version,
+          },
+          {
+            key: 'build',
+            subject: t('Build'),
+            value: data.build,
+          },
+          ...extras,
+        ]}
+      />
+    </InterimSection>
   );
-};
-
-export default DeviceInterface;
+}

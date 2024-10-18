@@ -1,14 +1,14 @@
-from sentry.models import OrganizationMemberTeam
+from sentry.models.organizationmemberteam import OrganizationMemberTeam
 from sentry.roles import team_roles
-from sentry.testutils import TestCase
+from sentry.testutils.cases import TestCase
 from sentry.testutils.helpers import with_feature
 
 
 class OrganizationMemberTest(TestCase):
     def setUp(self):
-        organization = self.create_organization()
-        self.team = self.create_team(organization=organization)
-        self.member = self.create_member(organization=organization, user=self.create_user())
+        self.organization = self.create_organization()
+        self.team = self.create_team(organization=self.organization)
+        self.member = self.create_member(organization=self.organization, user=self.create_user())
 
     @with_feature("organizations:team-roles")
     def test_get_team_role(self):

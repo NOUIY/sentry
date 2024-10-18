@@ -3,8 +3,13 @@ from unittest.mock import MagicMock, patch
 from django.utils import timezone
 
 from sentry.rules.actions.notify_event_service import NotifyEventServiceAction
-from sentry.tasks.sentry_apps import notify_sentry_app
+from sentry.sentry_apps.tasks.sentry_apps import notify_sentry_app
+from sentry.silo.base import SiloMode
 from sentry.testutils.cases import RuleTestCase
+from sentry.testutils.silo import assume_test_silo_mode
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class NotifyEventServiceActionTest(RuleTestCase):
@@ -22,7 +27,7 @@ class NotifyEventServiceActionTest(RuleTestCase):
         with patch("sentry.plugins.base.plugins.get") as get_plugin:
             get_plugin.return_value = plugin
 
-            results = list(rule.after(event=event, state=self.get_state()))
+            results = list(rule.after(event=event))
 
         assert len(results) == 1
         assert plugin.should_notify.call_count == 1
@@ -37,7 +42,7 @@ class NotifyEventServiceActionTest(RuleTestCase):
 
         rule = self.get_rule(data={"service": "test-application"})
 
-        results = list(rule.after(event=event, state=self.get_state()))
+        results = list(rule.after(event=event))
 
         assert len(results) == 1
         assert results[0].callback is notify_sentry_app
@@ -56,7 +61,7 @@ class NotifyEventServiceActionTest(RuleTestCase):
         with patch("sentry.plugins.base.plugins.get") as get_plugin:
             get_plugin.return_value = plugin
 
-            results = list(rule.after(event=event, state=self.get_state()))
+            results = list(rule.after(event=event))
 
         assert len(results) == 2
         assert plugin.should_notify.call_count == 1
@@ -80,7 +85,8 @@ class NotifyEventServiceActionTest(RuleTestCase):
         assert len(results) == 1
 
         self.install.date_deleted = timezone.now()
-        self.install.save()
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            self.install.save()
 
         results = rule.get_services()
         assert len(results) == 0

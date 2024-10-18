@@ -11,7 +11,7 @@ function createMarkerFrame(marker: JSSelfProfiling.Marker): JSSelfProfiling.Fram
 }
 /**
  * Utility fn to resolve stack frames starting from the top most frame.
- * Each frame points to it's parent, with the initial stackId pointer pointing to the top of the frame.
+ * Each frame points to its parent, with the initial stackId pointer pointing to the top of the frame.
  * We walk down the stack until no more frames are found, appending the parent frame to the list.
  * As a result we end up with a list of frames starting from the root most frame.
  *
@@ -25,7 +25,6 @@ export function resolveJSSelfProfilingStack(
   marker?: JSSelfProfiling.Marker
 ): Frame[] {
   // If there is no stack associated with a sample, it means the thread was idle
-
   const callStack: Frame[] = [];
 
   // There can only be one marker per callStack, so prepend it to the start of the stack
@@ -48,7 +47,7 @@ export function resolveJSSelfProfilingStack(
   while (stack !== undefined) {
     // If the frameId pointer cannot be resolved, it means the format is corrupt or partial (possibly due to termination reasons).
     // This should never happen, but in the offchance that it somehow does, it should be handled.
-    if (!trace.frames[stack.frameId]) {
+    if (trace.frames[stack.frameId] === undefined) {
       return callStack;
     }
 

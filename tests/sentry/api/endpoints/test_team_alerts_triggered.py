@@ -1,15 +1,13 @@
-from django.utils import timezone
-from freezegun import freeze_time
-
-from sentry.incidents.models import (
-    AlertRuleThresholdType,
+from sentry.incidents.models.alert_rule import AlertRuleThresholdType
+from sentry.incidents.models.incident import (
+    INCIDENT_STATUS,
     IncidentActivity,
     IncidentActivityType,
     IncidentStatus,
 )
-from sentry.models import ActorTuple
-from sentry.testutils import APITestCase
-from sentry.testutils.helpers.datetime import before_now
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.helpers.datetime import before_now, freeze_time
+from sentry.types.actor import Actor
 
 
 @freeze_time()
@@ -30,7 +28,7 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
             threshold_type=AlertRuleThresholdType.ABOVE,
             resolve_threshold=10,
             threshold_period=1,
-            owner=ActorTuple.from_actor_identifier(self.user.id),
+            owner=Actor.from_identifier(self.user.id),
         )
         user_owned_incident = self.create_incident(status=20, alert_rule=user_owned_rule)
         activities = []
@@ -39,7 +37,7 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
                 IncidentActivity(
                     incident=user_owned_incident,
                     type=IncidentActivityType.CREATED.value,
-                    value=IncidentStatus.OPEN,
+                    value=INCIDENT_STATUS[IncidentStatus.OPEN],
                     date_added=before_now(days=i),
                 )
             )
@@ -51,11 +49,9 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
         for i in range(1, 9):
             assert (
                 response.data[
-                    str(
-                        before_now(days=i)
-                        .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-                        .isoformat()
-                    )
+                    before_now(days=i)
+                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                    .isoformat()
                 ]
                 == 1
             )
@@ -63,11 +59,9 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
         for i in range(10, 90):
             assert (
                 response.data[
-                    str(
-                        before_now(days=i)
-                        .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-                        .isoformat()
-                    )
+                    before_now(days=i)
+                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                    .isoformat()
                 ]
                 == 0
             )
@@ -78,22 +72,16 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
         assert len(response.data) == 7
         assert (
             response.data[
-                str(
-                    before_now(days=0)
-                    .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-                    .isoformat()
-                )
+                before_now(days=0).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
             ]
             == 0
         )
         for i in range(1, 6):
             assert (
                 response.data[
-                    str(
-                        before_now(days=i)
-                        .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-                        .isoformat()
-                    )
+                    before_now(days=i)
+                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                    .isoformat()
                 ]
                 == 1
             )
@@ -122,7 +110,7 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
             threshold_type=AlertRuleThresholdType.ABOVE,
             resolve_threshold=10,
             threshold_period=1,
-            owner=ActorTuple.from_actor_identifier(self.user.id),
+            owner=Actor.from_identifier(self.user.id),
         )
         user_owned_incident = self.create_incident(
             projects=[project2], status=20, alert_rule=user_owned_rule
@@ -137,7 +125,7 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
             threshold_type=AlertRuleThresholdType.ABOVE,
             resolve_threshold=10,
             threshold_period=1,
-            owner=ActorTuple.from_actor_identifier(f"team:{self.team.id}"),
+            owner=Actor.from_identifier(f"team:{self.team.id}"),
         )
         team_owned_incident = self.create_incident(
             projects=[project1], status=20, alert_rule=team_owned_rule
@@ -145,12 +133,12 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
         IncidentActivity.objects.create(
             incident=user_owned_incident,
             type=IncidentActivityType.CREATED.value,
-            value=IncidentStatus.OPEN,
+            value=INCIDENT_STATUS[IncidentStatus.OPEN],
         )
         IncidentActivity.objects.create(
             incident=team_owned_incident,
             type=IncidentActivityType.CREATED.value,
-            value=IncidentStatus.OPEN,
+            value=INCIDENT_STATUS[IncidentStatus.OPEN],
             date_added=before_now(days=2),
         )
 
@@ -159,11 +147,7 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
         assert len(response.data) == 90
         assert (
             response.data[
-                str(
-                    before_now(days=2)
-                    .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-                    .isoformat()
-                )
+                before_now(days=2).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
             ]
             == 1
         )
@@ -172,11 +156,9 @@ class TeamAlertsTriggeredTotalsEndpointTest(APITestCase):
             if i != 2:
                 assert (
                     response.data[
-                        str(
-                            before_now(days=i)
-                            .replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-                            .isoformat()
-                        )
+                        before_now(days=i)
+                        .replace(hour=0, minute=0, second=0, microsecond=0)
+                        .isoformat()
                     ]
                     == 0
                 )
@@ -192,7 +174,7 @@ class TeamAlertsTriggeredIndexEndpointTest(APITestCase):
             organization=self.organization,
             projects=[project1],
             name="user owned rule",
-            owner=ActorTuple.from_actor_identifier(self.user.id),
+            owner=Actor.from_identifier(self.user.id),
         )
 
         user_owned_incident = self.create_incident(status=20, alert_rule=user_owned_rule)
@@ -202,7 +184,7 @@ class TeamAlertsTriggeredIndexEndpointTest(APITestCase):
                 IncidentActivity(
                     incident=user_owned_incident,
                     type=IncidentActivityType.CREATED.value,
-                    value=IncidentStatus.OPEN,
+                    value=INCIDENT_STATUS[IncidentStatus.OPEN],
                     date_added=before_now(weeks=i),
                 )
             )
@@ -210,14 +192,14 @@ class TeamAlertsTriggeredIndexEndpointTest(APITestCase):
             organization=self.organization,
             projects=[project1],
             name="team owned rule",
-            owner=ActorTuple.from_actor_identifier(f"team:{self.team.id}"),
+            owner=Actor.from_identifier(f"team:{self.team.id}"),
         )
         team_owned_incident = self.create_incident(status=20, alert_rule=team_owned_rule)
         activities.append(
             IncidentActivity(
                 incident=team_owned_incident,
                 type=IncidentActivityType.CREATED.value,
-                value=IncidentStatus.OPEN,
+                value=INCIDENT_STATUS[IncidentStatus.OPEN],
                 date_added=before_now(weeks=0),
             )
         )
@@ -227,7 +209,7 @@ class TeamAlertsTriggeredIndexEndpointTest(APITestCase):
                 IncidentActivity(
                     incident=team_owned_incident,
                     type=IncidentActivityType.CREATED.value,
-                    value=IncidentStatus.OPEN,
+                    value=INCIDENT_STATUS[IncidentStatus.OPEN],
                     date_added=before_now(weeks=i),
                 )
             )

@@ -1,24 +1,22 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import Any
 
 from django import forms
 from django.core.exceptions import ValidationError
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
-from sentry.integrations.slack.utils import (
-    SLACK_RATE_LIMITED_MESSAGE,
-    strip_channel_name,
-    validate_channel_id,
-)
-from sentry.models import Integration
+from sentry.integrations.services.integration import integration_service
+from sentry.integrations.slack.utils.channel import strip_channel_name, validate_channel_id
+from sentry.integrations.slack.utils.constants import SLACK_RATE_LIMITED_MESSAGE
 from sentry.shared_integrations.exceptions import ApiRateLimitedError, DuplicateDisplayNameError
 
 logger = logging.getLogger("sentry.rules")
 
 
-class SlackNotifyServiceForm(forms.Form):  # type: ignore
+class SlackNotifyServiceForm(forms.Form):
     workspace = forms.ChoiceField(choices=(), widget=forms.Select())
     channel = forms.CharField(widget=forms.TextInput())
     channel_id = forms.CharField(required=False, widget=forms.TextInput())
@@ -68,13 +66,18 @@ class SlackNotifyServiceForm(forms.Form):  # type: ignore
             channel_prefix = self.data["channel"][0] if self.data["channel"][0] == "@" else "#"
 
         cleaned_data: dict[str, Any] = super().clean()
+        assert cleaned_data is not None
 
-        workspace: int | None = cleaned_data.get("workspace")
+        workspace = cleaned_data.get("workspace")
+        if not workspace:
+            raise forms.ValidationError(
+                self._format_slack_error_message("Workspace is a required field."), code="invalid"
+            )
 
         if channel_id:
             try:
                 validate_channel_id(
-                    self.data.get("channel"),
+                    self.data["channel"],
                     integration_id=workspace,
                     input_channel_id=channel_id,
                 )
@@ -86,9 +89,8 @@ class SlackNotifyServiceForm(forms.Form):  # type: ignore
                     code="invalid",
                     params=params,
                 )
-        try:
-            integration = Integration.objects.get(id=workspace)
-        except Integration.DoesNotExist:
+        integration = integration_service.get_integration(integration_id=workspace)
+        if not integration:
             raise forms.ValidationError(
                 self._format_slack_error_message("Workspace is a required field."),
                 code="invalid",
@@ -103,9 +105,8 @@ class SlackNotifyServiceForm(forms.Form):  # type: ignore
         # are assuming that they passed in the correct channel_id for the channel
         if not channel_id:
             try:
-                channel_prefix, channel_id, timed_out = self.channel_transformer(
-                    integration, channel
-                )
+                channel_data = self.channel_transformer(integration, channel)
+                channel_prefix, channel_id, timed_out = asdict(channel_data).values()
             except DuplicateDisplayNameError:
                 domain = integration.metadata["domain_name"]
 

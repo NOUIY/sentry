@@ -1,16 +1,15 @@
+import type {KnownDataDetails} from 'sentry/components/events/contexts/utils';
 import {t} from 'sentry/locale';
 
-import {RuntimeData, RuntimeKnownDataType} from './types';
+import type {RuntimeData} from './types';
+import {RuntimeKnownDataType} from './types';
 
-type Output = {
-  subject: string;
-  value?: React.ReactNode;
+type Props = {
+  data: RuntimeData;
+  type: RuntimeKnownDataType;
 };
 
-function getRuntimeKnownDataDetails(
-  data: RuntimeData,
-  type: RuntimeKnownDataType
-): Output {
+export function getRuntimeKnownDataDetails({type, data}: Props): KnownDataDetails {
   switch (type) {
     case RuntimeKnownDataType.NAME:
       return {
@@ -23,11 +22,6 @@ function getRuntimeKnownDataDetails(
         value: `${data.version}${data.build ? `(${data.build})` : ''}`,
       };
     default:
-      return {
-        subject: type,
-        value: data[type],
-      };
+      return undefined;
   }
 }
-
-export default getRuntimeKnownDataDetails;

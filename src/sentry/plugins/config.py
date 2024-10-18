@@ -1,8 +1,6 @@
 __all__ = ["PluginConfigMixin"]
 
 
-from collections import OrderedDict
-
 from django import forms
 from rest_framework import serializers
 
@@ -25,7 +23,7 @@ class ConfigValidator:
         self.result = {}
         self.context = context or {}
 
-        self.config = OrderedDict((f["name"], f) for f in config)
+        self.config = {f["name"]: f for f in config}
 
         self._data = data or {}
         self._initial = initial or {}
@@ -99,7 +97,7 @@ class PluginConfigMixin(ProviderMixin):
         """
         return {}
 
-    def get_config(self, project, **kwargs):
+    def get_config(self, project, user=None, initial=None, add_additional_fields: bool = False):
         form = self.project_conf_form
         if not form:
             return []
@@ -155,9 +153,6 @@ class PluginConfigMixin(ProviderMixin):
         return config
 
     def get_group_urls(self):
-        return []
-
-    def get_project_urls(self):
         return []
 
     def setup(self, bindings):

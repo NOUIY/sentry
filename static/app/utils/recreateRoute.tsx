@@ -1,15 +1,14 @@
-import {Location} from 'history';
-import findLastIndex from 'lodash/findLastIndex';
+import type {Location} from 'history';
 
+import type {PlainRoute} from 'sentry/types/legacyReactRouter';
 import replaceRouterParams from 'sentry/utils/replaceRouterParams';
-import {RouteWithName} from 'sentry/views/settings/components/settingsBreadcrumb/types';
 
 type Options = {
   // parameters to replace any route string parameters (e.g. if route is `:orgId`,
   // params should have `{orgId: slug}`
   params: {[key: string]: string | undefined};
 
-  routes: RouteWithName[];
+  routes: PlainRoute[];
 
   location?: Location;
   /**
@@ -27,21 +26,24 @@ type Options = {
  *
  * See tests for examples
  */
-export default function recreateRoute(
-  to: string | RouteWithName,
-  options: Options
-): string {
+export default function recreateRoute(to: string | PlainRoute, options: Options): string {
   const {routes, params, location, stepBack} = options;
-  const paths = routes.map(({path}) => path || '');
+  const paths = routes.map(({path}) => {
+    path = path || '';
+    if (path.length > 0 && !path.endsWith('/')) {
+      path = `${path}/`;
+    }
+    return path;
+  });
   let lastRootIndex: number;
   let routeIndex: number | undefined;
 
   // TODO(ts): typescript things
   if (typeof to !== 'string') {
     routeIndex = routes.indexOf(to) + 1;
-    lastRootIndex = findLastIndex(paths.slice(0, routeIndex), path => path[0] === '/');
+    lastRootIndex = paths.slice(0, routeIndex).findLastIndex(path => path[0] === '/');
   } else {
-    lastRootIndex = findLastIndex(paths, path => path[0] === '/');
+    lastRootIndex = paths.findLastIndex(path => path[0] === '/');
   }
 
   let baseRoute = paths.slice(lastRootIndex, routeIndex);

@@ -3,16 +3,18 @@ from unittest import mock
 import pytest
 
 from sentry.integrations.example.integration import ExampleIntegration
-from sentry.integrations.utils import sync_group_assignee_inbound
-from sentry.models import (
-    Activity,
-    ExternalIssue,
-    GroupAssignee,
-    GroupLink,
-    Integration,
-    OrganizationIntegration,
-)
-from sentry.testutils import TestCase
+from sentry.integrations.models.external_issue import ExternalIssue
+from sentry.integrations.services.assignment_source import AssignmentSource
+from sentry.integrations.utils.sync import sync_group_assignee_inbound
+from sentry.models.activity import Activity
+from sentry.models.groupassignee import GroupAssignee
+from sentry.models.grouplink import GroupLink
+from sentry.testutils.cases import TestCase
+from sentry.testutils.skips import requires_snuba
+from sentry.types.activity import ActivityType
+from sentry.users.services.user.service import user_service
+
+pytestmark = requires_snuba
 
 
 class GroupAssigneeTestCase(TestCase):
@@ -20,24 +22,24 @@ class GroupAssigneeTestCase(TestCase):
         # Can't both be assigned
         with pytest.raises(AssertionError):
             GroupAssignee.objects.create(
-                group=self.group, project=self.group.project, user=self.user, team=self.team
+                group=self.group, project=self.group.project, user_id=self.user.id, team=self.team
             )
 
         # Can't have nobody assigned
         with pytest.raises(AssertionError):
             GroupAssignee.objects.create(
-                group=self.group, project=self.group.project, user=None, team=None
+                group=self.group, project=self.group.project, user_id=None, team=None
             )
 
     def test_assign_user(self):
         GroupAssignee.objects.assign(self.group, self.user)
 
         assert GroupAssignee.objects.filter(
-            project=self.group.project, group=self.group, user=self.user, team__isnull=True
+            project=self.group.project, group=self.group, user_id=self.user.id, team__isnull=True
         ).exists()
 
         activity = Activity.objects.get(
-            project=self.group.project, group=self.group, type=Activity.ASSIGNED
+            project=self.group.project, group=self.group, type=ActivityType.ASSIGNED.value
         )
 
         assert activity.data["assignee"] == str(self.user.id)
@@ -48,11 +50,11 @@ class GroupAssigneeTestCase(TestCase):
         GroupAssignee.objects.assign(self.group, self.team)
 
         assert GroupAssignee.objects.filter(
-            project=self.group.project, group=self.group, team=self.team, user__isnull=True
+            project=self.group.project, group=self.group, team=self.team, user_id__isnull=True
         ).exists()
 
         activity = Activity.objects.get(
-            project=self.group.project, group=self.group, type=Activity.ASSIGNED
+            project=self.group.project, group=self.group, type=ActivityType.ASSIGNED.value
         )
 
         assert activity.data["assignee"] == str(self.team.id)
@@ -64,10 +66,10 @@ class GroupAssigneeTestCase(TestCase):
         assert result == {"new_assignment": True, "updated_assignment": False}
 
         assert GroupAssignee.objects.filter(
-            project=self.group.project, group=self.group, user=self.user, team__isnull=True
+            project=self.group.project, group=self.group, user_id=self.user.id, team__isnull=True
         ).exists()
         activity = Activity.objects.get(
-            project=self.group.project, group=self.group, type=Activity.ASSIGNED
+            project=self.group.project, group=self.group, type=ActivityType.ASSIGNED.value
         )
         assert activity.data["assignee"] == str(self.user.id)
         assert activity.data["assigneeEmail"] == self.user.email
@@ -78,11 +80,11 @@ class GroupAssigneeTestCase(TestCase):
         assert result == {"new_assignment": False, "updated_assignment": False}
         # Assignee should not have changed
         assert GroupAssignee.objects.filter(
-            project=self.group.project, group=self.group, user=self.user, team__isnull=True
+            project=self.group.project, group=self.group, user_id=self.user.id, team__isnull=True
         ).exists()
         # Should be no new activity rows
         activity = Activity.objects.get(
-            project=self.group.project, group=self.group, type=Activity.ASSIGNED
+            project=self.group.project, group=self.group, type=ActivityType.ASSIGNED.value
         )
         assert activity.data["assignee"] == str(self.user.id)
         assert activity.data["assigneeEmail"] == self.user.email
@@ -92,18 +94,18 @@ class GroupAssigneeTestCase(TestCase):
         GroupAssignee.objects.assign(self.group, self.user)
 
         assert GroupAssignee.objects.filter(
-            project=self.group.project, group=self.group, user=self.user, team__isnull=True
+            project=self.group.project, group=self.group, user_id=self.user.id, team__isnull=True
         ).exists()
 
         GroupAssignee.objects.assign(self.group, self.team)
 
         assert GroupAssignee.objects.filter(
-            project=self.group.project, group=self.group, team=self.team, user__isnull=True
+            project=self.group.project, group=self.group, team=self.team, user_id__isnull=True
         ).exists()
 
         activity = list(
             Activity.objects.filter(
-                project=self.group.project, group=self.group, type=Activity.ASSIGNED
+                project=self.group.project, group=self.group, type=ActivityType.ASSIGNED.value
             ).order_by("id")
         )
 
@@ -118,19 +120,19 @@ class GroupAssigneeTestCase(TestCase):
     @mock.patch.object(ExampleIntegration, "sync_assignee_outbound")
     def test_assignee_sync_outbound_assign(self, mock_sync_assignee_outbound):
         group = self.group
-        integration = Integration.objects.create(provider="example", external_id="123456")
-        integration.add_organization(group.organization, self.user)
-
-        OrganizationIntegration.objects.filter(
-            integration_id=integration.id, organization_id=group.organization.id
-        ).update(
-            config={
-                "sync_comments": True,
-                "sync_status_outbound": True,
-                "sync_status_inbound": True,
-                "sync_assignee_outbound": True,
-                "sync_assignee_inbound": True,
-            }
+        integration = self.create_integration(
+            organization=group.organization,
+            external_id="123456",
+            provider="example",
+            oi_params={
+                "config": {
+                    "sync_comments": True,
+                    "sync_status_outbound": True,
+                    "sync_status_inbound": True,
+                    "sync_assignee_outbound": True,
+                    "sync_assignee_inbound": True,
+                }
+            },
         )
 
         external_issue = ExternalIssue.objects.create(
@@ -147,18 +149,86 @@ class GroupAssigneeTestCase(TestCase):
 
         with self.feature({"organizations:integrations-issue-sync": True}):
             with self.tasks():
-                GroupAssignee.objects.assign(self.group, self.user)
+                GroupAssignee.objects.assign(
+                    self.group,
+                    self.user,
+                )
 
                 mock_sync_assignee_outbound.assert_called_with(
-                    external_issue, self.user, assign=True
+                    external_issue,
+                    user_service.get_user(self.user.id),
+                    assign=True,
+                    assignment_source=None,
                 )
 
                 assert GroupAssignee.objects.filter(
-                    project=self.group.project, group=self.group, user=self.user, team__isnull=True
+                    project=self.group.project,
+                    group=self.group,
+                    user_id=self.user.id,
+                    team__isnull=True,
                 ).exists()
 
                 activity = Activity.objects.get(
-                    project=self.group.project, group=self.group, type=Activity.ASSIGNED
+                    project=self.group.project, group=self.group, type=ActivityType.ASSIGNED.value
+                )
+
+                assert activity.data["assignee"] == str(self.user.id)
+                assert activity.data["assigneeEmail"] == self.user.email
+                assert activity.data["assigneeType"] == "user"
+
+    @mock.patch.object(ExampleIntegration, "sync_assignee_outbound")
+    def test_assignee_sync_outbound_assign_with_matching_source_integration(
+        self, mock_sync_assignee_outbound
+    ):
+        group = self.group
+        integration = self.create_integration(
+            organization=group.organization,
+            external_id="123456",
+            provider="example",
+            oi_params={
+                "config": {
+                    "sync_comments": True,
+                    "sync_status_outbound": True,
+                    "sync_status_inbound": True,
+                    "sync_assignee_outbound": True,
+                    "sync_assignee_inbound": True,
+                }
+            },
+        )
+
+        external_issue = ExternalIssue.objects.create(
+            organization_id=group.organization.id, integration_id=integration.id, key="APP-123"
+        )
+
+        GroupLink.objects.create(
+            group_id=group.id,
+            project_id=group.project_id,
+            linked_type=GroupLink.LinkedType.issue,
+            linked_id=external_issue.id,
+            relationship=GroupLink.Relationship.references,
+        )
+
+        with self.feature({"organizations:integrations-issue-sync": True}):
+            with self.tasks():
+                # Assert that we don't perform an outbound assignment if
+                # the source of the assignment is the same target integration
+                GroupAssignee.objects.assign(
+                    self.group,
+                    self.user,
+                    assignment_source=AssignmentSource.from_integration(integration),
+                )
+
+                mock_sync_assignee_outbound.assert_not_called()
+
+                assert GroupAssignee.objects.filter(
+                    project=self.group.project,
+                    group=self.group,
+                    user_id=self.user.id,
+                    team__isnull=True,
+                ).exists()
+
+                activity = Activity.objects.get(
+                    project=self.group.project, group=self.group, type=ActivityType.ASSIGNED.value
                 )
 
                 assert activity.data["assignee"] == str(self.user.id)
@@ -168,19 +238,20 @@ class GroupAssigneeTestCase(TestCase):
     @mock.patch.object(ExampleIntegration, "sync_assignee_outbound")
     def test_assignee_sync_outbound_unassign(self, mock_sync_assignee_outbound):
         group = self.group
-        integration = Integration.objects.create(provider="example", external_id="123456")
-        integration.add_organization(group.organization, self.user)
 
-        OrganizationIntegration.objects.filter(
-            integration_id=integration.id, organization_id=group.organization.id
-        ).update(
-            config={
-                "sync_comments": True,
-                "sync_status_outbound": True,
-                "sync_status_inbound": True,
-                "sync_assignee_outbound": True,
-                "sync_assignee_inbound": True,
-            }
+        integration = self.create_integration(
+            organization=group.organization,
+            external_id="123456",
+            provider="example",
+            oi_params={
+                "config": {
+                    "sync_comments": True,
+                    "sync_status_outbound": True,
+                    "sync_status_inbound": True,
+                    "sync_assignee_outbound": True,
+                    "sync_assignee_inbound": True,
+                }
+            },
         )
 
         external_issue = ExternalIssue.objects.create(
@@ -200,33 +271,39 @@ class GroupAssigneeTestCase(TestCase):
         with self.feature({"organizations:integrations-issue-sync": True}):
             with self.tasks():
                 GroupAssignee.objects.deassign(self.group)
-                mock_sync_assignee_outbound.assert_called_with(external_issue, None, assign=False)
+                mock_sync_assignee_outbound.assert_called_with(
+                    external_issue, None, assign=False, assignment_source=None
+                )
 
                 assert not GroupAssignee.objects.filter(
-                    project=self.group.project, group=self.group, user=self.user, team__isnull=True
+                    project=self.group.project,
+                    group=self.group,
+                    user_id=self.user.id,
+                    team__isnull=True,
                 ).exists()
 
                 assert Activity.objects.filter(
-                    project=self.group.project, group=self.group, type=Activity.UNASSIGNED
+                    project=self.group.project, group=self.group, type=ActivityType.UNASSIGNED.value
                 ).exists()
 
     def test_assignee_sync_inbound_assign(self):
         group = self.group
         user_no_access = self.create_user()
         user_w_access = self.user
-        integration = Integration.objects.create(provider="example", external_id="123456")
-        integration.add_organization(group.organization, user_no_access)
 
-        OrganizationIntegration.objects.filter(
-            integration_id=integration.id, organization_id=group.organization.id
-        ).update(
-            config={
-                "sync_comments": True,
-                "sync_status_outbound": True,
-                "sync_status_inbound": True,
-                "sync_assignee_outbound": True,
-                "sync_assignee_inbound": True,
-            }
+        integration = self.create_integration(
+            organization=group.organization,
+            external_id="123456",
+            provider="example",
+            oi_params={
+                "config": {
+                    "sync_comments": True,
+                    "sync_status_outbound": True,
+                    "sync_status_inbound": True,
+                    "sync_assignee_outbound": True,
+                    "sync_assignee_inbound": True,
+                }
+            },
         )
 
         external_issue = ExternalIssue.objects.create(
@@ -256,7 +333,7 @@ class GroupAssigneeTestCase(TestCase):
 
             assert groups_updated[0] == group
             assert GroupAssignee.objects.filter(
-                project=group.project, group=group, user=user_w_access, team__isnull=True
+                project=group.project, group=group, user_id=user_w_access.id, team__isnull=True
             ).exists()
 
             # confirm capitalization doesn't affect syncing
@@ -266,24 +343,24 @@ class GroupAssigneeTestCase(TestCase):
 
             assert groups_updated[0] == group
             assert GroupAssignee.objects.filter(
-                project=group.project, group=group, user=user_w_access, team__isnull=True
+                project=group.project, group=group, user_id=user_w_access.id, team__isnull=True
             ).exists()
 
     def test_assignee_sync_inbound_deassign(self):
         group = self.group
-        integration = Integration.objects.create(provider="example", external_id="123456")
-        integration.add_organization(group.organization, self.user)
-
-        OrganizationIntegration.objects.filter(
-            integration_id=integration.id, organization_id=group.organization.id
-        ).update(
-            config={
-                "sync_comments": True,
-                "sync_status_outbound": True,
-                "sync_status_inbound": True,
-                "sync_assignee_outbound": True,
-                "sync_assignee_inbound": True,
-            }
+        integration = self.create_integration(
+            organization=group.organization,
+            external_id="123456",
+            provider="example",
+            oi_params={
+                "config": {
+                    "sync_comments": True,
+                    "sync_status_outbound": True,
+                    "sync_status_inbound": True,
+                    "sync_assignee_outbound": True,
+                    "sync_assignee_inbound": True,
+                }
+            },
         )
 
         external_issue = ExternalIssue.objects.create(
@@ -307,5 +384,5 @@ class GroupAssigneeTestCase(TestCase):
 
             assert groups_updated[0] == group
             assert not GroupAssignee.objects.filter(
-                project=group.project, group=group, user=self.user, team__isnull=True
+                project=group.project, group=group, user_id=self.user.id, team__isnull=True
             ).exists()

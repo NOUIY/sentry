@@ -1,5 +1,5 @@
-from sentry.eventtypes import DefaultEvent
-from sentry.testutils import TestCase
+from sentry.eventtypes.base import DefaultEvent
+from sentry.testutils.cases import TestCase
 
 
 class DefaultEventTest(TestCase):

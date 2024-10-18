@@ -5,14 +5,17 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test.client import RequestFactory
 from django.urls import reverse
 
-from tests.apidocs.util import APIDocsTestCase
+from fixtures.apidocs_test_case import APIDocsTestCase
 
 
 class ProjectDsymsDocs(APIDocsTestCase):
     def setUp(self):
         self.url = reverse(
             "sentry-api-0-dsym-files",
-            kwargs={"organization_slug": self.organization.slug, "project_slug": self.project.slug},
+            kwargs={
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
+            },
         )
         self.create_dif_file(project=self.project)
 

@@ -2,16 +2,16 @@ import {Component} from 'react';
 import styled from '@emotion/styled';
 
 import Feature from 'sentry/components/acl/feature';
-import Input from 'sentry/components/forms/controls/input';
-import SelectControl from 'sentry/components/forms/selectControl';
+import SelectControl from 'sentry/components/forms/controls/selectControl';
+import Input from 'sentry/components/input';
 import NumberDragControl from 'sentry/components/numberDragControl';
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {t, tct, tn} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import type {ThresholdControlValue} from 'sentry/views/alerts/rules/metric/types';
 import {
   AlertRuleComparisonType,
   AlertRuleThresholdType,
-  ThresholdControlValue,
 } from 'sentry/views/alerts/rules/metric/types';
 
 type Props = ThresholdControlValue & {
@@ -127,8 +127,8 @@ class ThresholdControl extends Component<Props, State> {
                         ? t('When below Critical or Warning')
                         : t('Below')
                       : hideControl
-                      ? t('When lower than Critical or Warning')
-                      : t('Lower than'),
+                        ? t('When lower than Critical or Warning')
+                        : t('Lower than'),
                 },
                 {
                   value: AlertRuleThresholdType.ABOVE,
@@ -138,8 +138,8 @@ class ThresholdControl extends Component<Props, State> {
                         ? t('When above Critical or Warning')
                         : t('Above')
                       : hideControl
-                      ? t('When higher than Critical or Warning')
-                      : t('Higher than'),
+                        ? t('When higher than Critical or Warning')
+                        : t('Higher than'),
                 },
               ]}
               components={disableThresholdType ? {DropdownIndicator: null} : undefined}
@@ -160,7 +160,8 @@ class ThresholdControl extends Component<Props, State> {
           {!hideControl && (
             <ThresholdContainer comparisonType={comparisonType}>
               <ThresholdInput>
-                <StyledInput
+                <Input
+                  size="md"
                   disabled={disabled}
                   name={`${type}Threshold`}
                   data-test-id={`${type}-threshold`}
@@ -195,7 +196,7 @@ class ThresholdControl extends Component<Props, State> {
           )}
         </Container>
         {!hideControl && (
-          <Feature features={['metric-alert-threshold-period']}>
+          <Feature features="metric-alert-threshold-period">
             <SelectContainer>
               <SelectControl
                 isDisabled={disabled}
@@ -239,11 +240,6 @@ const ThresholdContainer = styled('div')<{comparisonType: AlertRuleComparisonTyp
   display: flex;
   flex-direction: row;
   align-items: center;
-`;
-
-const StyledInput = styled(Input)`
-  /* Match the height of the select controls */
-  height: 40px;
 `;
 
 const ThresholdInput = styled('div')`

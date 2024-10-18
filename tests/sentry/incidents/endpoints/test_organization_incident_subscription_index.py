@@ -1,22 +1,25 @@
-from exam import fixture
+from functools import cached_property
 
 from sentry.incidents.logic import subscribe_to_incident
-from sentry.incidents.models import IncidentSubscription
-from sentry.testutils import APITestCase
+from sentry.incidents.models.incident import IncidentSubscription
+from sentry.testutils.abstract import Abstract
+from sentry.testutils.cases import APITestCase
 
 
-class BaseOrganizationSubscriptionEndpointTest:
+class BaseOrganizationSubscriptionEndpointTest(APITestCase):
+    __test__ = Abstract(__module__, __qualname__)
+
     endpoint = "sentry-api-0-organization-incident-subscription-index"
 
-    @fixture
+    @cached_property
     def organization(self):
         return self.create_organization()
 
-    @fixture
+    @cached_property
     def project(self):
         return self.create_project(organization=self.organization)
 
-    @fixture
+    @cached_property
     def user(self):
         return self.create_user()
 
@@ -34,9 +37,7 @@ class BaseOrganizationSubscriptionEndpointTest:
             assert resp.status_code == 403
 
 
-class OrganizationIncidentSubscribeEndpointTest(
-    BaseOrganizationSubscriptionEndpointTest, APITestCase
-):
+class OrganizationIncidentSubscribeEndpointTest(BaseOrganizationSubscriptionEndpointTest):
     method = "post"
 
     def test_simple(self):
@@ -47,14 +48,12 @@ class OrganizationIncidentSubscribeEndpointTest(
         incident = self.create_incident()
         with self.feature("organizations:incidents"):
             self.get_success_response(self.organization.slug, incident.identifier, status_code=201)
-        sub = IncidentSubscription.objects.filter(incident=incident, user=self.user).get()
+        sub = IncidentSubscription.objects.filter(incident=incident, user_id=self.user.id).get()
         assert sub.incident == incident
-        assert sub.user == self.user
+        assert sub.user_id == self.user.id
 
 
-class OrganizationIncidentUnsubscribeEndpointTest(
-    BaseOrganizationSubscriptionEndpointTest, APITestCase
-):
+class OrganizationIncidentUnsubscribeEndpointTest(BaseOrganizationSubscriptionEndpointTest):
     method = "delete"
 
     def test_simple(self):
@@ -63,7 +62,9 @@ class OrganizationIncidentUnsubscribeEndpointTest(
         )
         self.login_as(self.user)
         incident = self.create_incident()
-        subscribe_to_incident(incident, self.user)
+        subscribe_to_incident(incident, self.user.id)
         with self.feature("organizations:incidents"):
             self.get_success_response(self.organization.slug, incident.identifier, status_code=200)
-        assert not IncidentSubscription.objects.filter(incident=incident, user=self.user).exists()
+        assert not IncidentSubscription.objects.filter(
+            incident=incident, user_id=self.user.id
+        ).exists()

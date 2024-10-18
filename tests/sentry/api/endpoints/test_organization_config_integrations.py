@@ -1,4 +1,4 @@
-from sentry.testutils import APITestCase
+from sentry.testutils.cases import APITestCase
 
 
 class OrganizationConfigIntegrationsTest(APITestCase):
@@ -11,9 +11,9 @@ class OrganizationConfigIntegrationsTest(APITestCase):
     def test_simple(self):
         response = self.get_success_response(self.organization.slug)
         assert len(response.data["providers"]) > 0
-        provider = [r for r in response.data["providers"] if r["key"] == "example"]
-        assert len(provider) == 1
-        provider = provider[0]
+        providers = [r for r in response.data["providers"] if r["key"] == "example"]
+        assert len(providers) == 1
+        provider = providers[0]
         assert provider["name"] == "Example"
         assert provider["setupDialog"]["url"]
 

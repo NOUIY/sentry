@@ -1,17 +1,9 @@
 import TagStore from 'sentry/stores/tagStore';
 import {useLegacyStore} from 'sentry/stores/useLegacyStore';
-import {TagCollection} from 'sentry/types';
+import type {TagCollection} from 'sentry/types/group';
 
-type Result = {
-  tags: TagCollection;
-};
-
-function useTags(): Result {
-  const tags = useLegacyStore(TagStore);
-
-  return {
-    tags,
-  };
+function useTags(): TagCollection {
+  return useLegacyStore(TagStore);
 }
 
 export default useTags;

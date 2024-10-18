@@ -1,7 +1,8 @@
 import styled from '@emotion/styled';
 
 import AutoSelectText from 'sentry/components/autoSelectText';
-import Link, {LinkProps} from 'sentry/components/links/link';
+import type {LinkProps} from 'sentry/components/links/link';
+import Link from 'sentry/components/links/link';
 
 interface Props {
   shortId: string;
@@ -40,7 +41,7 @@ const StyledShortId = styled('div')`
   justify-content: flex-end;
 `;
 
-const StyledAutoSelectText = styled(AutoSelectText)`
+export const StyledAutoSelectText = styled(AutoSelectText)`
   min-width: 0;
 
   a & {

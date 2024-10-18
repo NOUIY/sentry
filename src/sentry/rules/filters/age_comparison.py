@@ -1,19 +1,18 @@
-import operator
-from datetime import timedelta
-from typing import Sequence, Tuple
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime, timedelta
+from typing import Any
 
 from django import forms
 from django.utils import timezone
 
-from sentry.eventstore.models import Event
+from sentry.eventstore.models import GroupEvent
+from sentry.models.group import Group
 from sentry.rules import EventState
+from sentry.rules.age import AgeComparisonType, age_comparison_choices, age_comparison_map
 from sentry.rules.filters.base import EventFilter
-
-
-class AgeComparisonType:
-    OLDER = "older"
-    NEWER = "newer"
-
+from sentry.types.condition_activity import ConditionActivity
 
 timeranges = {
     "minute": ("minute(s)", timedelta(minutes=1)),
@@ -22,12 +21,8 @@ timeranges = {
     "week": ("week(s)", timedelta(days=7)),
 }
 
-age_comparison_choices = [(AgeComparisonType.OLDER, "older"), (AgeComparisonType.NEWER, "newer")]
 
-age_comparison_map = {AgeComparisonType.OLDER: operator.lt, AgeComparisonType.NEWER: operator.gt}
-
-
-def get_timerange_choices() -> Sequence[Tuple[str, str]]:
+def get_timerange_choices() -> Sequence[tuple[str, str]]:
     return [
         (key, label)
         for key, (label, duration) in sorted(
@@ -36,7 +31,7 @@ def get_timerange_choices() -> Sequence[Tuple[str, str]]:
     ]
 
 
-class AgeComparisonForm(forms.Form):  # type: ignore
+class AgeComparisonForm(forms.Form):
     comparison_type = forms.ChoiceField(choices=age_comparison_choices)
     value = forms.IntegerField()
     time = forms.ChoiceField(choices=get_timerange_choices)
@@ -55,9 +50,10 @@ class AgeComparisonFilter(EventFilter):
     label = "The issue is {comparison_type} than {value} {time}"
     prompt = "The issue is older or newer than..."
 
-    def passes(self, event: Event, state: EventState) -> bool:
+    def _passes(self, first_seen: datetime, current_time: datetime) -> bool:
         comparison_type = self.get_option("comparison_type")
         time = self.get_option("time")
+
         try:
             value = int(self.get_option("value"))
         except (TypeError, ValueError):
@@ -76,8 +72,20 @@ class AgeComparisonFilter(EventFilter):
 
         _, delta_time = timeranges[time]
 
-        first_seen = event.group.first_seen
         passes_: bool = age_comparison_map[comparison_type](
-            first_seen + (value * delta_time), timezone.now()
+            first_seen + (value * delta_time), current_time
         )
         return passes_
+
+    def passes(self, event: GroupEvent, state: EventState) -> bool:
+        return self._passes(event.group.first_seen, timezone.now())
+
+    def passes_activity(
+        self, condition_activity: ConditionActivity, event_map: dict[str, Any]
+    ) -> bool:
+        try:
+            group = Group.objects.get_from_cache(id=condition_activity.group_id)
+        except Group.DoesNotExist:
+            return False
+
+        return self._passes(group.first_seen, condition_activity.timestamp)

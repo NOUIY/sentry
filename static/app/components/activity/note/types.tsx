@@ -1,6 +1,6 @@
-import {OnChangeHandlerFunc} from 'react-mentions';
+import type {OnChangeHandlerFunc} from 'react-mentions';
 
-import {DEFAULT_ERROR_JSON} from 'sentry/constants';
+import type {DEFAULT_ERROR_JSON} from 'sentry/constants';
 
 /**
  * Represents a mentionable user or team.
@@ -14,7 +14,7 @@ export type Mentionable = {
 /**
  * List of id, display name
  */
-export type Mentioned = [string, string];
+export type Mentioned = [id: string, display: string];
 
 /**
  * The typings for the react-mentionables library use this type

@@ -1,5 +1,8 @@
-import {Field} from 'sentry/components/forms/type';
+import {Fragment} from 'react';
+
+import type {Field} from 'sentry/components/forms/types';
 import ExternalLink from 'sentry/components/links/externalLink';
+import QuestionTooltip from 'sentry/components/questionTooltip';
 import {t, tct} from 'sentry/locale';
 import {getDocsLinkForEventType} from 'sentry/views/settings/account/notifications/utils';
 
@@ -31,7 +34,7 @@ export const NOTIFICATION_SETTING_FIELDS: Record<string, Field> = {
     label: t('Deploys'),
     choices: [
       ['always', t('On')],
-      ['committed_only', t('Only Committed Issues')],
+      ['committed_only', t('Releases with My Commits')],
       ['never', t('Off')],
     ],
     help: t('Release, environment, and commit overviews.'),
@@ -41,20 +44,29 @@ export const NOTIFICATION_SETTING_FIELDS: Record<string, Field> = {
     type: 'select',
     label: t('Delivery Method'),
     choices: [
-      ['email', t('Send to Email')],
-      ['slack', t('Send to Slack')],
-      ['email+slack', t('Send to Email and Slack')],
+      ['email', t('Email')],
+      ['slack', t('Slack')],
+      ['msteams', t('Microsoft Teams')],
     ],
+    help: t('Where personal notifications will be sent.'),
+    multiple: true,
+    onChange: val => {
+      // This is a little hack to prevent this field from being empty.
+      // TODO(nisanthan): need to prevent showing the clearable on. the multi-select when its only 1 value.
+      if (!val || val.length === 0) {
+        throw Error('Invalid selection. Field cannot be empty.');
+      }
+    },
   },
   approval: {
     name: 'approval',
     type: 'select',
-    label: t('Approvals'),
+    label: t('Nudges'),
     choices: [
       ['always', t('On')],
       ['never', t('Off')],
     ],
-    help: t('Notifications from teammates that require review or approval.'),
+    help: t('Notifications that require review or approval.'),
   },
   quota: {
     name: 'quota',
@@ -64,13 +76,17 @@ export const NOTIFICATION_SETTING_FIELDS: Record<string, Field> = {
       ['always', t('On')],
       ['never', t('Off')],
     ],
-    help: t('Error, transaction, and attachment quota limits.'),
+    help: t('Error, transaction, replay, attachment, and cron monitor quota limits.'),
   },
   reports: {
-    name: 'weekly reports',
-    type: 'blank',
+    name: 'reports',
+    type: 'select',
     label: t('Weekly Reports'),
     help: t('A summary of the past week for an organization.'),
+    choices: [
+      ['always', t('On')],
+      ['never', t('Off')],
+    ],
   },
   email: {
     name: 'email routing',
@@ -78,6 +94,29 @@ export const NOTIFICATION_SETTING_FIELDS: Record<string, Field> = {
     label: t('Email Routing'),
     help: t('Change the email address that receives notifications.'),
   },
+  spikeProtection: {
+    name: 'spikeProtection',
+    type: 'select',
+    label: t('Spike Protection'),
+    choices: [
+      ['always', t('On')],
+      ['never', t('Off')],
+    ],
+    help: t('Notifications about spikes on a per project basis.'),
+  },
+  brokenMonitors: {
+    name: 'brokenMonitors',
+    type: 'select',
+    label: t('Broken Monitors'),
+    choices: [
+      ['always', t('On')],
+      ['never', t('Off')],
+    ],
+    help: t(
+      'Notifications for monitors that have been in a failing state for a prolonged period of time'
+    ),
+  },
+  // legacy options
   personalActivityNotifications: {
     name: 'personalActivityNotifications',
     type: 'select',
@@ -91,23 +130,22 @@ export const NOTIFICATION_SETTING_FIELDS: Record<string, Field> = {
   selfAssignOnResolve: {
     name: 'selfAssignOnResolve',
     type: 'select',
-    label: t('Claim Unassigned Issues I’ve Resolved'),
+    label: t('Resolve and Auto-Assign'),
     choices: [
       [true as any, t('On')],
       [false as any, t('Off')],
     ],
-    help: t('You’ll receive notifications about any changes that happen afterwards.'),
+    help: t("When you resolve an unassigned issue, we'll auto-assign it to you."),
   },
 };
 
+// TODO(isabella): Once spend vis notifs are GA, remove this
 // partial field definition for quota sub-categories
 export const QUOTA_FIELDS = [
   {
     name: 'quotaWarnings',
     label: t('Set Quota Limit'),
-    help: t(
-      'Receive notifications when your organization exceeeds the following limits.'
-    ),
+    help: t('Receive notifications when your organization exceeds the following limits.'),
     choices: [
       ['always', t('100% and 80%')],
       ['never', t('100%')],
@@ -139,6 +177,28 @@ export const QUOTA_FIELDS = [
     ] as const,
   },
   {
+    name: 'quotaSpans',
+    label: t('Spans'),
+    help: tct('Receive notifications about your spans quotas. [learnMore:Learn more]', {
+      learnMore: <ExternalLink href={getDocsLinkForEventType('span')} />,
+    }),
+    choices: [
+      ['always', t('On')],
+      ['never', t('Off')],
+    ] as const,
+  },
+  {
+    name: 'quotaReplays',
+    label: t('Replays'),
+    help: tct('Receive notifications about your replay quotas. [learnMore:Learn more]', {
+      learnMore: <ExternalLink href={getDocsLinkForEventType('replay')} />,
+    }),
+    choices: [
+      ['always', t('On')],
+      ['never', t('Off')],
+    ] as const,
+  },
+  {
     name: 'quotaAttachments',
     label: t('Attachments'),
     help: tct(
@@ -152,4 +212,56 @@ export const QUOTA_FIELDS = [
       ['never', t('Off')],
     ] as const,
   },
+  {
+    name: 'quotaMonitorSeats',
+    label: t('Cron Monitors'),
+    help: tct(
+      'Receive notifications about your cron monitor quotas. [learnMore:Learn more]',
+      {
+        learnMore: <ExternalLink href={getDocsLinkForEventType('monitorSeat')} />,
+      }
+    ),
+    choices: [
+      ['always', t('On')],
+      ['never', t('Off')],
+    ] as const,
+  },
+  {
+    name: 'quotaSpendAllocations',
+    label: (
+      <Fragment>
+        {t('Spend Allocations')}{' '}
+        <QuestionTooltip position="top" title="Business plan only" size="xs" />
+      </Fragment>
+    ),
+    help: t('Receive notifications about your spend allocations.'),
+    choices: [
+      ['always', t('On')],
+      ['never', t('Off')],
+    ] as const,
+  },
+];
+
+export const SPEND_FIELDS = [
+  {
+    name: 'quota',
+    label: t('Spend Notifications'),
+    help: tct(
+      'Receive notifications when your spend crosses predefined or custom thresholds. [learnMore:Learn more]',
+      {
+        learnMore: (
+          <ExternalLink
+            href={
+              'https://docs.sentry.io/product/alerts/notifications/#spend-notifications'
+            }
+          />
+        ),
+      }
+    ),
+    choices: [
+      ['always', t('On')],
+      ['never', t('Off')],
+    ] as const,
+  },
+  ...QUOTA_FIELDS.slice(1),
 ];

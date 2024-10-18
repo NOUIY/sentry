@@ -5,19 +5,20 @@ import cloneDeep from 'lodash/cloneDeep';
 import set from 'lodash/set';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import {Client} from 'sentry/api';
-import Button from 'sentry/components/button';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {Client} from 'sentry/api';
+import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
-import Input from 'sentry/components/forms/controls/input';
-import Field from 'sentry/components/forms/field';
-import SelectControl from 'sentry/components/forms/selectControl';
+import SelectControl from 'sentry/components/forms/controls/selectControl';
+import FieldGroup from 'sentry/components/forms/fieldGroup';
+import Input from 'sentry/components/input';
 import Link from 'sentry/components/links/link';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import withApi from 'sentry/utils/withApi';
 import withProjects from 'sentry/utils/withProjects';
 
@@ -68,7 +69,7 @@ class TransactionThresholdModal extends Component<Props, State> {
     return projects.find(proj => proj.id === projectId);
   }
 
-  handleApply = async (event: React.FormEvent) => {
+  handleApply = (event: React.FormEvent) => {
     event.preventDefault();
 
     const {api, closeModal, organization, transactionName, onApply} = this.props;
@@ -118,7 +119,7 @@ class TransactionThresholdModal extends Component<Props, State> {
     });
   };
 
-  handleReset = async (event: React.FormEvent) => {
+  handleReset = (event: React.FormEvent) => {
     event.preventDefault();
 
     const {api, closeModal, organization, transactionName, onApply} = this.props;
@@ -176,7 +177,7 @@ class TransactionThresholdModal extends Component<Props, State> {
   renderModalFields() {
     return (
       <Fragment>
-        <Field
+        <FieldGroup
           data-test-id="response-metric"
           label={t('Calculation Method')}
           inline={false}
@@ -198,8 +199,8 @@ class TransactionThresholdModal extends Component<Props, State> {
               this.handleFieldChange('metric')(option.value);
             }}
           />
-        </Field>
-        <Field
+        </FieldGroup>
+        <FieldGroup
           data-test-id="response-time-threshold"
           label={t('Response Time Threshold (ms)')}
           inline={false}
@@ -223,7 +224,7 @@ class TransactionThresholdModal extends Component<Props, State> {
             step={100}
             min={100}
           />
-        </Field>
+        </FieldGroup>
       </Fragment>
     );
   }
@@ -294,7 +295,6 @@ const Instruction = styled('div')`
 export const modalCss = css`
   width: 100%;
   max-width: 650px;
-  margin: 70px auto;
 `;
 
 export default withApi(withProjects(TransactionThresholdModal));

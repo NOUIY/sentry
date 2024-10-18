@@ -1,10 +1,10 @@
-import {Component} from 'react';
-import {Location, LocationDescriptor} from 'history';
+import type {Location, LocationDescriptor} from 'history';
 
-import Breadcrumbs, {Crumb} from 'sentry/components/breadcrumbs';
+import type {Crumb} from 'sentry/components/breadcrumbs';
+import Breadcrumbs from 'sentry/components/breadcrumbs';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type {Organization} from 'sentry/types/organization';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import {decodeScalar} from 'sentry/utils/queryString';
 
 import Tab from './transactionSummary/tabs';
@@ -30,8 +30,8 @@ type Props = {
   vitalName?: string;
 };
 
-class Breadcrumb extends Component<Props> {
-  getCrumbs() {
+function Breadcrumb(props: Props) {
+  function getCrumbs() {
     const crumbs: Crumb[] = [];
     const {
       organization,
@@ -42,7 +42,7 @@ class Breadcrumb extends Component<Props> {
       eventSlug,
       traceSlug,
       tab,
-    } = this.props;
+    } = props;
 
     const performanceTarget: LocationDescriptor = {
       pathname: getPerformanceLandingUrl(organization),
@@ -80,7 +80,7 @@ class Breadcrumb extends Component<Props> {
       };
 
       switch (tab) {
-        case Tab.Tags: {
+        case Tab.TAGS: {
           const tagsTarget = tagsRouteWithQuery(routeQuery);
           crumbs.push({
             to: tagsTarget,
@@ -89,7 +89,7 @@ class Breadcrumb extends Component<Props> {
           });
           break;
         }
-        case Tab.Events: {
+        case Tab.EVENTS: {
           const eventsTarget = eventsRouteWithQuery(routeQuery);
           crumbs.push({
             to: eventsTarget,
@@ -98,7 +98,7 @@ class Breadcrumb extends Component<Props> {
           });
           break;
         }
-        case Tab.WebVitals: {
+        case Tab.WEB_VITALS: {
           const webVitalsTarget = vitalsRouteWithQuery(routeQuery);
           crumbs.push({
             to: webVitalsTarget,
@@ -107,7 +107,7 @@ class Breadcrumb extends Component<Props> {
           });
           break;
         }
-        case Tab.Spans: {
+        case Tab.SPANS: {
           const spansTarget = spansRouteWithQuery(routeQuery);
           crumbs.push({
             to: spansTarget,
@@ -116,7 +116,7 @@ class Breadcrumb extends Component<Props> {
           });
           break;
         }
-        case Tab.TransactionSummary:
+        case Tab.TRANSACTION_SUMMARY:
         default: {
           const summaryTarget = transactionSummaryRouteWithQuery(routeQuery);
           crumbs.push({
@@ -141,16 +141,14 @@ class Breadcrumb extends Component<Props> {
     } else if (traceSlug) {
       crumbs.push({
         to: '',
-        label: t('Trace View'),
+        label: t('Trace Details'),
       });
     }
 
     return crumbs;
   }
 
-  render() {
-    return <Breadcrumbs crumbs={this.getCrumbs()} />;
-  }
+  return <Breadcrumbs crumbs={getCrumbs()} />;
 }
 
 export default Breadcrumb;

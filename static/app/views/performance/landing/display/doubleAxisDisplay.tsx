@@ -1,18 +1,18 @@
 import {useState} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {Panel} from 'sentry/components/panels';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {trackAnalyticsEvent} from 'sentry/utils/analytics';
-import EventView from 'sentry/utils/discover/eventView';
+import Panel from 'sentry/components/panels/panel';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import type EventView from 'sentry/utils/discover/eventView';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import withApi from 'sentry/utils/withApi';
 
 import _Footer from '../../charts/footer';
-import {AxisOption} from '../../data';
+import type {AxisOption} from '../../data';
 import {getTransactionSearchQuery} from '../../utils';
 
 import {SingleAxisChart} from './singleAxisChart';
@@ -41,11 +41,9 @@ function DoubleAxisDisplay(props: Props) {
       `<${Math.round(maxValue)}`,
     ]);
     const query = conditions.formatString();
+    trackAnalytics('performance_views.landingv2.display.filter_change', {
+      organization,
 
-    trackAnalyticsEvent({
-      eventKey: 'performance_views.landingv2.display.filter_change',
-      eventName: 'Performance Views: Landing v2 Display Filter Change',
-      organization_id: parseInt(organization.id, 10),
       field,
       min_value: parseInt(minValue, 10),
       max_value: parseInt(maxValue, 10),

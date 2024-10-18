@@ -1,7 +1,4 @@
-import type SvgIcon from 'sentry/icons/svgIcon';
 import type {Color} from 'sentry/utils/theme';
-
-export type IconProps = React.ComponentProps<typeof SvgIcon>;
 
 export enum BreadcrumbLevelType {
   FATAL = 'fatal',
@@ -10,6 +7,7 @@ export enum BreadcrumbLevelType {
   INFO = 'info',
   DEBUG = 'debug',
   UNDEFINED = 'undefined',
+  LOG = 'log',
 }
 
 export enum BreadcrumbType {
@@ -29,57 +27,78 @@ export enum BreadcrumbType {
   SESSION = 'session',
   TRANSACTION = 'transaction',
   INIT = 'init',
+  NETWORK = 'network',
+  DEVICE = 'device',
 }
 
-type BreadcrumbTypeBase = {
+export enum BreadcrumbMessageFormat {
+  SQL = 'sql',
+}
+
+interface BreadcrumbTypeBase {
   level: BreadcrumbLevelType;
   // it's recommended
   category?: string | null;
   event_id?: string | null;
   message?: string;
+  messageFormat?: BreadcrumbMessageFormat.SQL;
+  messageRaw?: string;
   timestamp?: string;
-};
+}
 
-export type BreadcrumbTypeSystem = {
+export interface BreadcrumbTypeSystem extends BreadcrumbTypeBase {
   action: string;
   extras: Record<string, any>;
   type: BreadcrumbType.SYSTEM;
-} & BreadcrumbTypeBase;
+}
 
-export type BreadcrumbTypeSession = {
+export interface BreadcrumbTypeSession extends BreadcrumbTypeBase {
   action: string;
   extras: Record<string, any>;
   type: BreadcrumbType.SESSION;
-} & BreadcrumbTypeBase;
+}
 
-export type BreadcrumbTypeNavigation = {
+export interface BreadcrumbTypeNavigation extends BreadcrumbTypeBase {
   type: BreadcrumbType.NAVIGATION;
-  data?: {
+  data?: null | {
     from?: string;
     to?: string;
   };
-} & BreadcrumbTypeBase;
+}
 
-export type BreadcrumbTypeHTTP = {
-  type: BreadcrumbType.HTTP;
-  data?: {
-    method?:
-      | 'POST'
-      | 'PUT'
-      | 'GET'
-      | 'HEAD'
-      | 'DELETE'
-      | 'CONNECT'
-      | 'OPTIONS'
-      | 'TRACE'
-      | 'PATCH';
-    reason?: string;
-    status_code?: number;
-    url?: string;
+export interface BreadcrumbTypeInit extends BreadcrumbTypeBase {
+  data: {
+    action: 'replay-init';
+    label: string;
+    url: string;
   };
-} & BreadcrumbTypeBase;
+  type: BreadcrumbType.INIT;
+}
 
-export type BreadcrumbTypeDefault = {
+export interface BreadcrumbTypeHTTP extends BreadcrumbTypeBase {
+  type: BreadcrumbType.HTTP;
+  data?:
+    | null
+    | Record<string, any>
+    // Though this is the expected type, more data can be attached to these crumbs
+    | {
+        method?:
+          | 'POST'
+          | 'PUT'
+          | 'GET'
+          | 'HEAD'
+          | 'DELETE'
+          | 'CONNECT'
+          | 'OPTIONS'
+          | 'TRACE'
+          | 'PATCH';
+        reason?: string;
+        status_code?: number;
+        url?: string;
+      };
+}
+
+export interface BreadcrumbTypeDefault extends BreadcrumbTypeBase {
   type:
     | BreadcrumbType.INFO
     | BreadcrumbType.DEBUG
@@ -93,24 +112,33 @@ export type BreadcrumbTypeDefault = {
     | BreadcrumbType.INIT
     | BreadcrumbType.SESSION
     | BreadcrumbType.SYSTEM
-    | BreadcrumbType.SESSION
     | BreadcrumbType.TRANSACTION;
-  data?: Record<string, any>;
-} & BreadcrumbTypeBase;
+  data?: Record<string, any> | null;
+}
 
 export type RawCrumb =
   | BreadcrumbTypeNavigation
   | BreadcrumbTypeHTTP
   | BreadcrumbTypeDefault;
 
-export type Crumb = RawCrumb & {
+interface BaseCrumb {
   color: Color;
   description: string;
   id: number;
-};
+}
+
+interface NavigationCrumb extends BaseCrumb, BreadcrumbTypeNavigation {}
+interface HTTPCrumb extends BaseCrumb, BreadcrumbTypeHTTP {}
+interface DefaultCrumb extends BaseCrumb, BreadcrumbTypeDefault {}
+
+export type Crumb = NavigationCrumb | HTTPCrumb | DefaultCrumb;
+
+export function isBreadcrumbLogLevel(logLevel: string): logLevel is BreadcrumbLevelType {
+  return Object.values(BreadcrumbLevelType).includes(logLevel as any);
+}
 
 export function isBreadcrumbTypeDefault(
-  breadcrumb: RawCrumb
-): breadcrumb is BreadcrumbTypeDefault {
+  breadcrumb: Crumb
+): breadcrumb is Extract<Crumb, BreadcrumbTypeDefault> {
   return ![BreadcrumbType.HTTP, BreadcrumbType.NAVIGATION].includes(breadcrumb.type);
 }

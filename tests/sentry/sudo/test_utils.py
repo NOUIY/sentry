@@ -1,10 +1,9 @@
+import pytest
 from django.core.signing import BadSignature
-from django.utils.http import is_safe_url
 
+from fixtures.sudo_testutils import BaseTestCase
 from sudo.settings import COOKIE_AGE, COOKIE_NAME
 from sudo.utils import grant_sudo_privileges, has_sudo_privileges, revoke_sudo_privileges
-
-from .base import BaseTestCase
 
 
 class GrantSudoPrivilegesTestCase(BaseTestCase):
@@ -17,7 +16,7 @@ class GrantSudoPrivilegesTestCase(BaseTestCase):
         self.assertEqual(request._sudo_max_age, max_age)
 
     def test_grant_token_not_logged_in(self):
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             grant_sudo_privileges(self.request)
 
     def test_grant_token_default_max_age(self):
@@ -86,6 +85,7 @@ class HasSudoPrivilegesTestCase(BaseTestCase):
             return "nope"
 
         self.request.session[COOKIE_NAME] = "abc123"
+        self.request.get_signed_cookie = get_signed_cookie
         self.assertFalse(has_sudo_privileges(self.request))
 
     def test_cookie_bad_signature(self):
@@ -95,28 +95,9 @@ class HasSudoPrivilegesTestCase(BaseTestCase):
             raise BadSignature
 
         self.request.session[COOKIE_NAME] = "abc123"
+        self.request.get_signed_cookie = get_signed_cookie
         self.assertFalse(has_sudo_privileges(self.request))
 
     def test_missing_keys(self):
         self.login()
         self.assertFalse(has_sudo_privileges(self.request))
-
-
-class IsSafeUrlTestCase(BaseTestCase):
-    def test_success(self):
-        self.assertTrue(is_safe_url("/", allowed_hosts=None))
-        self.assertTrue(is_safe_url("/foo/", allowed_hosts=None))
-        self.assertTrue(is_safe_url("/", allowed_hosts={"example.com"}))
-        self.assertTrue(is_safe_url("http://example.com/foo", allowed_hosts={"example.com"}))
-
-    def test_failure(self):
-        self.assertFalse(is_safe_url(None, allowed_hosts=None))
-        self.assertFalse(is_safe_url("", allowed_hosts={""}))
-        self.assertFalse(is_safe_url("http://mattrobenolt.com/", allowed_hosts={"example.com"}))
-        self.assertFalse(is_safe_url("///example.com/", allowed_hosts=None))
-        self.assertFalse(is_safe_url("ftp://example.com", allowed_hosts={"example.com"}))
-        self.assertFalse(
-            is_safe_url("http://example.com\\@mattrobenolt.com", allowed_hosts={"example.com"})
-        )
-        self.assertFalse(is_safe_url("http:///example.com", allowed_hosts={"example.com"}))
-        self.assertFalse(is_safe_url("\x08//example.com", allowed_hosts={"example.com"}))

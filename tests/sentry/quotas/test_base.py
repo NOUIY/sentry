@@ -1,9 +1,13 @@
 import pytest
 
-from sentry.constants import DataCategory
-from sentry.models import OrganizationOption, ProjectKey
-from sentry.quotas.base import Quota, QuotaConfig, QuotaScope
-from sentry.testutils import TestCase
+from sentry.constants import DataCategory, ObjectStatus
+from sentry.models.options.organization_option import OrganizationOption
+from sentry.models.projectkey import ProjectKey
+from sentry.monitors.constants import PermitCheckInStatus
+from sentry.monitors.models import Monitor, MonitorType
+from sentry.quotas.base import Quota, QuotaConfig, QuotaScope, SeatAssignmentResult
+from sentry.testutils.cases import TestCase
+from sentry.utils.outcomes import Outcome
 
 
 class QuotaTest(TestCase):
@@ -84,34 +88,36 @@ class QuotaTest(TestCase):
         ), self.options({"system.rate-limit": 10}):
             assert self.backend.get_organization_quota(org) == (10, 60)
 
+    def test_get_blended_sample_rate(self):
+        org = self.create_organization()
+        assert self.backend.get_blended_sample_rate(organization_id=org.id) is None
 
-@pytest.mark.parametrize(
-    "obj,json",
-    [
-        (
-            QuotaConfig(id="o", limit=4711, window=42, reason_code="not_so_fast"),
-            {"prefix": "o", "limit": 4711, "window": 42, "reasonCode": "not_so_fast"},
-        ),
-        (
-            QuotaConfig(
-                id="p",
-                scope=QuotaScope.PROJECT,
-                scope_id=1,
-                limit=None,
-                window=1,
-                reason_code="go_away",
-            ),
-            {"prefix": "p", "subscope": "1", "window": 1, "reasonCode": "go_away"},
-        ),
-        (QuotaConfig(limit=0, reason_code="go_away"), {"limit": 0, "reasonCode": "go_away"}),
-        (
-            QuotaConfig(limit=0, categories=[DataCategory.TRANSACTION], reason_code="not_yet"),
-            {"limit": 0, "reasonCode": "not_yet"},
-        ),
-    ],
-)
-def test_quotas_to_json_legacy(obj, json):
-    assert obj.to_json_legacy() == json
+    def test_assign_monitor_seat(self):
+        monitor = Monitor.objects.create(
+            slug="test-monitor",
+            organization_id=self.organization.id,
+            project_id=self.project.id,
+            name="test monitor",
+            status=ObjectStatus.ACTIVE,
+            type=MonitorType.CRON_JOB,
+        )
+        assert self.backend.assign_monitor_seat(monitor) == Outcome.ACCEPTED
+
+    def test_check_accept_monitor_checkin(self):
+        monitor = Monitor.objects.create(
+            slug="test-monitor",
+            organization_id=self.organization.id,
+            project_id=self.project.id,
+            name="test monitor",
+            status=ObjectStatus.ACTIVE,
+            type=MonitorType.CRON_JOB,
+        )
+        assert (
+            self.backend.check_accept_monitor_checkin(
+                monitor_slug=monitor.slug, project_id=monitor.project_id
+            )
+            == PermitCheckInStatus.ACCEPT
+        )
 
 
 @pytest.mark.parametrize(
@@ -151,7 +157,22 @@ def test_quotas_to_json_legacy(obj, json):
                 "reasonCode": "go_away",
             },
         ),
+        (
+            QuotaConfig(limit=0, scope=QuotaScope.GLOBAL, reason_code="come back!"),
+            {
+                "limit": 0,
+                "scope": "global",
+                "reasonCode": "come back!",
+            },
+        ),
     ],
 )
 def test_quotas_to_json(obj, json):
     assert obj.to_json() == json
+
+
+def test_seat_assignable_must_have_reason():
+    with pytest.raises(ValueError):
+        SeatAssignmentResult(assignable=False)
+    SeatAssignmentResult(assignable=False, reason="because I said so")
+    SeatAssignmentResult(assignable=True)

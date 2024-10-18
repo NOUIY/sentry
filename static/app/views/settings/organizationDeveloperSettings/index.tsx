@@ -1,35 +1,44 @@
 import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
+import styled from '@emotion/styled';
 
-import {openCreateNewIntegrationModal} from 'sentry/actionCreators/modal';
 import {removeSentryApp} from 'sentry/actionCreators/sentryApps';
-import Access from 'sentry/components/acl/access';
-import Alert from 'sentry/components/alert';
-import Button from 'sentry/components/button';
+import EmptyMessage from 'sentry/components/emptyMessage';
 import ExternalLink from 'sentry/components/links/externalLink';
 import NavTabs from 'sentry/components/navTabs';
-import {Panel, PanelBody, PanelHeader} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, SentryApp} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {SentryApp} from 'sentry/types/integrations';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import {
+  platformEventLinkMap,
+  PlatformEvents,
+} from 'sentry/utils/analytics/integrations/platformAnalyticsEvents';
+import {trackIntegrationAnalytics} from 'sentry/utils/integrationUtil';
 import routeTitleGen from 'sentry/utils/routeTitle';
 import withOrganization from 'sentry/utils/withOrganization';
-import AsyncView from 'sentry/views/asyncView';
-import EmptyMessage from 'sentry/views/settings/components/emptyMessage';
+import DeprecatedAsyncView from 'sentry/views/deprecatedAsyncView';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import SentryApplicationRow from 'sentry/views/settings/organizationDeveloperSettings/sentryApplicationRow';
+import CreateIntegrationButton from 'sentry/views/settings/organizationIntegrations/createIntegrationButton';
+import ExampleIntegrationButton from 'sentry/views/settings/organizationIntegrations/exampleIntegrationButton';
 
-type Props = Omit<AsyncView['props'], 'params'> & {
+type Props = Omit<DeprecatedAsyncView['props'], 'params'> & {
   organization: Organization;
-} & RouteComponentProps<{orgId: string}, {}>;
+} & RouteComponentProps<{}, {}>;
 
 type Tab = 'public' | 'internal';
-type State = AsyncView['state'] & {
+type State = DeprecatedAsyncView['state'] & {
   applications: SentryApp[];
   tab: Tab;
 };
 
-class OrganizationDeveloperSettings extends AsyncView<Props, State> {
+class OrganizationDeveloperSettings extends DeprecatedAsyncView<Props, State> {
+  analyticsView = 'developer_settings' as const;
+
   getDefaultState(): State {
     const {location} = this.props;
     const value =
@@ -39,6 +48,7 @@ class OrganizationDeveloperSettings extends AsyncView<Props, State> {
     return {
       ...super.getDefaultState(),
       applications: [],
+      sentryFunctions: [],
       tab: value,
     };
   }
@@ -48,14 +58,16 @@ class OrganizationDeveloperSettings extends AsyncView<Props, State> {
   }
 
   getTitle() {
-    const {orgId} = this.props.params;
-    return routeTitleGen(t('Developer Settings'), orgId, false);
+    const {organization} = this.props;
+    return routeTitleGen(t('Custom Integrations'), organization.slug, false);
   }
 
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    const {orgId} = this.props.params;
-
-    return [['applications', `/organizations/${orgId}/sentry-apps/`]];
+  getEndpoints(): ReturnType<DeprecatedAsyncView['getEndpoints']> {
+    const {organization} = this.props;
+    const returnValue: [string, string, any?, any?][] = [
+      ['applications', `/organizations/${organization.slug}/sentry-apps/`],
+    ];
+    return returnValue;
   }
 
   removeApp = (app: SentryApp) => {
@@ -137,68 +149,46 @@ class OrganizationDeveloperSettings extends AsyncView<Props, State> {
   }
   renderBody() {
     const {organization} = this.props;
-
-    const permissionTooltipText = t(
-      'Manager or Owner permissions are required to create a new integration'
-    );
-
-    const tabs = [
+    const tabs: [id: Tab, label: string][] = [
       ['internal', t('Internal Integration')],
       ['public', t('Public Integration')],
-    ] as [id: Tab, label: string][];
-
-    const action = (
-      <Access organization={organization} access={['org:write']}>
-        {({hasAccess}) => (
-          <Button
-            priority="primary"
-            disabled={!hasAccess}
-            title={!hasAccess ? permissionTooltipText : undefined}
-            size="small"
-            onClick={() =>
-              openCreateNewIntegrationModal({
-                orgSlug: organization.slug,
-              })
-            }
-          >
-            {t('Create New Integration')}
-          </Button>
-        )}
-      </Access>
-    );
+    ];
 
     return (
       <div>
         <SettingsPageHeader
-          title={t('Developer Settings')}
-          body={t(
-            `Create integrations that interact with Sentry using the REST API and webhooks.`
-          )}
-          action={
+          title={t('Custom Integrations')}
+          body={
             <Fragment>
-              <Button
-                size="small"
-                external
-                href="https://docs.sentry.io/product/integrations/integration-platform/"
-                style={{marginRight: space(1)}}
-              >
-                {t('View Docs')}
-              </Button>
-              {action}
+              {t(
+                'Create integrations that interact with Sentry using the REST API and webhooks. '
+              )}
+              <br />
+              {tct('For more information [link: see our docs].', {
+                link: (
+                  <ExternalLink
+                    href={platformEventLinkMap[PlatformEvents.DOCS]}
+                    onClick={() => {
+                      trackIntegrationAnalytics(PlatformEvents.DOCS, {
+                        organization,
+                        view: this.analyticsView,
+                      });
+                    }}
+                  />
+                ),
+              })}
             </Fragment>
           }
+          action={
+            <ActionContainer>
+              <ExampleIntegrationButton
+                analyticsView={this.analyticsView}
+                style={{marginRight: space(1)}}
+              />
+              <CreateIntegrationButton analyticsView={this.analyticsView} />
+            </ActionContainer>
+          }
         />
-        <Alert type="info">
-          {tct(
-            'Integrations can now detect when a comment on an issue is added or changes.  [link:Learn more].',
-            {
-              link: (
-                <ExternalLink href="https://docs.sentry.io/product/integrations/integration-platform/webhooks/#comments" />
-              ),
-            }
-          )}
-        </Alert>
-
         <NavTabs underlined>
           {tabs.map(([type, label]) => (
             <li
@@ -215,5 +205,9 @@ class OrganizationDeveloperSettings extends AsyncView<Props, State> {
     );
   }
 }
+
+const ActionContainer = styled('div')`
+  display: flex;
+`;
 
 export default withOrganization(OrganizationDeveloperSettings);

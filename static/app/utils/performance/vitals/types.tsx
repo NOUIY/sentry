@@ -1,4 +1,5 @@
-import {ColumnType, WebVital} from 'sentry/utils/discover/fields';
+import type {ColumnType} from 'sentry/utils/discover/fields';
+import type {WebVital} from 'sentry/utils/fields';
 
 export type Vital = {
   description: string;

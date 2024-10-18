@@ -2,23 +2,29 @@ from __future__ import annotations
 
 import abc
 import logging
+from collections.abc import Mapping, Sequence
 from types import LambdaType
-from typing import Any, Mapping, Sequence, Type
+from typing import Any
 
+from django.http.request import HttpRequest
 from django.http.response import HttpResponseBase
 from django.views import View
 from rest_framework.request import Request
 
 from sentry import analytics
 from sentry.db.models import Model
-from sentry.models import Organization
+from sentry.organizations.services.organization import RpcOrganization, organization_service
+from sentry.organizations.services.organization.serial import serialize_rpc_organization
 from sentry.utils.hashlib import md5_text
+from sentry.utils.sdk import bind_organization_context
 from sentry.web.helpers import render_to_response
 
+from ..models import Organization
 from . import PipelineProvider
-from .constants import INTEGRATION_EXPIRATION_TTL
+from .constants import PIPELINE_STATE_TTL
 from .store import PipelineSessionStore
 from .types import PipelineAnalyticsEntry, PipelineRequestState
+from .views.nested import NestedPipelineView
 
 
 class Pipeline(abc.ABC):
@@ -49,11 +55,11 @@ class Pipeline(abc.ABC):
 
     pipeline_name: str
     provider_manager: Any
-    provider_model_cls: Type[Model]
+    provider_model_cls: type[Model]
     session_store_cls = PipelineSessionStore
 
     @classmethod
-    def get_for_request(cls, request: Request) -> Pipeline | None:
+    def get_for_request(cls, request: HttpRequest) -> Pipeline | None:
         req_state = cls.unpack_state(request)
         if not req_state:
             return None
@@ -68,8 +74,8 @@ class Pipeline(abc.ABC):
         )
 
     @classmethod
-    def unpack_state(cls, request: Request) -> PipelineRequestState | None:
-        state = cls.session_store_cls(request, cls.pipeline_name, ttl=INTEGRATION_EXPIRATION_TTL)
+    def unpack_state(cls, request: HttpRequest) -> PipelineRequestState | None:
+        state = cls.session_store_cls(request, cls.pipeline_name, ttl=PIPELINE_STATE_TTL)
         if not state.is_valid():
             return None
 
@@ -77,33 +83,42 @@ class Pipeline(abc.ABC):
         if state.provider_model_id:
             provider_model = cls.provider_model_cls.objects.get(id=state.provider_model_id)
 
-        organization = None
+        organization: RpcOrganization | None = None
         if state.org_id:
-            organization = Organization.objects.get(id=state.org_id)
+            org_context = organization_service.get_organization_by_id(
+                id=state.org_id, include_teams=False
+            )
+            if org_context:
+                organization = org_context.organization
 
         provider_key = state.provider_key
 
         return PipelineRequestState(state, provider_model, organization, provider_key)
 
-    def get_provider(self, provider_key: str) -> PipelineProvider:
+    def get_provider(self, provider_key: str, **kwargs) -> PipelineProvider:
         provider: PipelineProvider = self.provider_manager.get(provider_key)
         return provider
 
     def __init__(
         self,
-        request: Request,
+        request: Request | HttpRequest,
         provider_key: str,
-        organization: Organization | None = None,
+        organization: Organization | RpcOrganization | None = None,
         provider_model: Model | None = None,
         config: Mapping[str, Any] | None = None,
     ) -> None:
+        if organization:
+            bind_organization_context(organization)
+
         self.request = request
-        self.organization = organization
-        self.state = self.session_store_cls(
-            request, self.pipeline_name, ttl=INTEGRATION_EXPIRATION_TTL
+        self.organization: RpcOrganization | None = (
+            serialize_rpc_organization(organization)
+            if isinstance(organization, Organization)
+            else organization
         )
+        self.state = self.session_store_cls(request, self.pipeline_name, ttl=PIPELINE_STATE_TTL)
         self.provider_model = provider_model
-        self.provider = self.get_provider(provider_key)
+        self.provider = self.get_provider(provider_key, organization=organization)
 
         self.config = config or {}
         self.provider.set_pipeline(self)
@@ -129,7 +144,11 @@ class Pipeline(abc.ABC):
         return views
 
     def is_valid(self) -> bool:
-        _is_valid: bool = self.state.is_valid() and self.state.signature == self.signature
+        _is_valid: bool = (
+            self.state.is_valid()
+            and self.state.signature == self.signature
+            and self.state.step_index is not None
+        )
         return _is_valid
 
     def initialize(self) -> None:
@@ -155,7 +174,7 @@ class Pipeline(abc.ABC):
         """
         Render the current step.
         """
-        step_index = self.state.step_index
+        step_index = self.step_index
 
         if step_index == len(self.pipeline_views):
             return self.finish_pipeline()
@@ -199,7 +218,7 @@ class Pipeline(abc.ABC):
 
     def next_step(self, step_size: int = 1) -> HttpResponseBase:
         """Render the next step."""
-        self.state.step_index += step_size
+        self.state.step_index = self.step_index + step_size
 
         analytics_entry = self.get_analytics_entry()
         if analytics_entry and self.organization:
@@ -209,7 +228,7 @@ class Pipeline(abc.ABC):
                 user_id=user.id,
                 organization_id=self.organization.id,
                 integration=self.provider.key,
-                step_index=self.state.step_index,
+                step_index=self.step_index,
                 pipeline_type=analytics_entry.pipeline_type,
             )
 
@@ -222,7 +241,6 @@ class Pipeline(abc.ABC):
     @abc.abstractmethod
     def finish_pipeline(self) -> HttpResponseBase:
         """Called when the pipeline completes the final step."""
-        pass
 
     def bind_state(self, key: str, value: Any) -> None:
         data = self.state.data or {}
@@ -230,11 +248,31 @@ class Pipeline(abc.ABC):
 
         self.state.data = data
 
-    def fetch_state(self, key: str | None = None) -> Any | None:
+    @property
+    def step_index(self) -> int:
+        return self.state.step_index or 0
+
+    def _fetch_state(self, key: str | None = None) -> Any | None:
         data = self.state.data
         if not data:
             return None
         return data if key is None else data.get(key)
+
+    def fetch_state(self, key: str | None = None) -> Any | None:
+        step_index = self.step_index
+        if step_index >= len(self.pipeline_views):
+            return self._fetch_state(key)
+        view = self.pipeline_views[step_index]
+        if isinstance(view, NestedPipelineView):
+            # Attempt to surface state from a nested pipeline
+            nested_pipeline = view.pipeline_cls(
+                organization=self.organization,
+                request=self.request,
+                provider_key=view.provider_key,
+                config=view.config,
+            )
+            return nested_pipeline.fetch_state(key)
+        return self._fetch_state(key)
 
     def get_logger(self) -> logging.Logger:
         return logging.getLogger(f"sentry.integration.{self.provider.key}")

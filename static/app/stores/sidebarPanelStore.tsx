@@ -1,44 +1,51 @@
 import {createStore} from 'reflux';
 
-import {SidebarPanelKey} from 'sentry/components/sidebar/types';
-import {makeSafeRefluxStore} from 'sentry/utils/makeSafeRefluxStore';
+import type {SidebarPanelKey} from 'sentry/components/sidebar/types';
 
-import {CommonStoreDefinition} from './types';
+import type {StrictStoreDefinition} from './types';
 
-type ActivePanelType = SidebarPanelKey | '';
+type ActivePanelType = Readonly<SidebarPanelKey | ''>;
 
-interface SidebarPanelStoreDefinition extends CommonStoreDefinition<ActivePanelType> {
+interface SidebarPanelStoreDefinition extends StrictStoreDefinition<ActivePanelType> {
   activatePanel(panel: SidebarPanelKey): void;
 
-  activePanel: ActivePanelType;
-  hidePanel(): void;
+  hidePanel(hash?: string): void;
   togglePanel(panel: SidebarPanelKey): void;
 }
 
 const storeConfig: SidebarPanelStoreDefinition = {
-  activePanel: '',
-  unsubscribeListeners: [],
+  state: '',
+
+  init() {
+    // XXX: Do not use `this.listenTo` in this store. We avoid usage of reflux
+    // listeners due to their leaky nature in tests.
+  },
 
   activatePanel(panel: SidebarPanelKey) {
-    this.activePanel = panel;
-    this.trigger(this.activePanel);
+    this.state = panel;
+    this.trigger(this.state);
   },
 
   togglePanel(panel: SidebarPanelKey) {
-    if (this.activePanel === panel) {
+    if (this.state === panel) {
       this.hidePanel();
     } else {
       this.activatePanel(panel);
     }
   },
 
-  hidePanel() {
-    this.activePanel = '';
-    this.trigger(this.activePanel);
+  hidePanel(hash?: string) {
+    this.state = '';
+
+    if (hash) {
+      window.location.hash = window.location.hash.replace(`#${hash}`, '');
+    }
+
+    this.trigger(this.state);
   },
 
   getState() {
-    return this.activePanel;
+    return this.state;
   },
 };
 
@@ -46,5 +53,5 @@ const storeConfig: SidebarPanelStoreDefinition = {
  * This store is used to hold local user preferences
  * Side-effects (like reading/writing to cookies) are done in associated actionCreators
  */
-const SidebarPanelStore = createStore(makeSafeRefluxStore(storeConfig));
+const SidebarPanelStore = createStore(storeConfig);
 export default SidebarPanelStore;

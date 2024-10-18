@@ -4,14 +4,14 @@ import memoize from 'lodash/memoize';
 
 import AutoComplete from 'sentry/components/autoComplete';
 import DropdownBubble from 'sentry/components/dropdownBubble';
-import Input from 'sentry/components/forms/controls/input';
+import Input from 'sentry/components/input';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
-import autoCompleteFilter from './autoCompleteFilter';
+import defaultAutoCompleteFilter from './autoCompleteFilter';
 import List from './list';
-import {Item, ItemsBeforeFilter} from './types';
+import type {Item, ItemsBeforeFilter} from './types';
 
 type AutoCompleteChildrenArgs = Parameters<AutoComplete<Item>['props']['children']>[0];
 type Actions = AutoCompleteChildrenArgs['actions'];
@@ -22,7 +22,31 @@ export type MenuFooterChildProps = {
 
 type ListProps = React.ComponentProps<typeof List>;
 
-type Props = {
+// autoFocus react attribute is sync called on render, this causes
+// layout thrashing and is bad for performance. This thin wrapper function
+// will defer the focus call until the next frame, after the browser and react
+// have had a chance to update the DOM, splitting the perf cost across frames.
+function focusElement(targetRef: HTMLElement | null) {
+  if (!targetRef) {
+    return;
+  }
+
+  if ('requestAnimationFrame' in window) {
+    window.requestAnimationFrame(() => {
+      targetRef.focus();
+    });
+  } else {
+    setTimeout(() => {
+      targetRef.focus();
+    }, 1);
+  }
+}
+
+export interface MenuProps
+  extends Pick<
+    ListProps,
+    'virtualizedHeight' | 'virtualizedLabelHeight' | 'itemSize' | 'onScroll'
+  > {
   children: (
     args: Pick<
       AutoCompleteChildrenArgs,
@@ -36,6 +60,11 @@ type Props = {
    * Dropdown menu alignment.
    */
   alignMenu?: 'left' | 'right';
+  /**
+   * Optionally provide a custom implementation for filtering result items
+   * Useful if you want to show items that don't strictly match the input value
+   */
+  autoCompleteFilter?: typeof defaultAutoCompleteFilter;
   /**
    * Should menu visually lock to a direction (so we don't display a rounded corner)
    */
@@ -112,7 +141,12 @@ type Props = {
   /**
    * Props to pass to input/filter component
    */
-  inputProps?: {style: React.CSSProperties};
+  inputProps?: React.HTMLAttributes<HTMLInputElement>;
+
+  /**
+   * Used to control the input value (optional)
+   */
+  inputValue?: string;
 
   /**
    * Used to control dropdown state (optional)
@@ -156,6 +190,11 @@ type Props = {
   onClose?: () => void;
 
   /**
+   * Callback for when the input value changes
+   */
+  onInputValueChange?: (value: string) => void;
+
+  /**
    * Callback for when dropdown menu opens
    */
   onOpen?: (event?: React.MouseEvent) => void;
@@ -185,12 +224,10 @@ type Props = {
    * Optional element to be rendered on the right side of the dropdown menu
    */
   subPanel?: React.ReactNode;
-} & Pick<
-  ListProps,
-  'virtualizedHeight' | 'virtualizedLabelHeight' | 'itemSize' | 'onScroll'
->;
+}
 
 function Menu({
+  autoCompleteFilter = defaultAutoCompleteFilter,
   maxHeight = 300,
   emptyMessage = t('No items'),
   searchPlaceholder = t('Filter search'),
@@ -229,7 +266,7 @@ function Menu({
   closeOnSelect,
   'data-test-id': dataTestId,
   ...props
-}: Props) {
+}: MenuProps) {
   // Can't search if there are no items
   const hasItems = !!items?.length;
 
@@ -240,11 +277,11 @@ function Menu({
   // emptyHidesInput is set to true.
   const showInput = !hideInput && (hasItems || !emptyHidesInput);
 
-  // Only redefine the autocomplete function if our items list has chagned.
+  // Only redefine the autocomplete function if our items list has changed.
   // This avoids producing a new array on every call.
   const stableItemFilter = useCallback(
     (filterValueOrInput: string) => autoCompleteFilter(items, filterValueOrInput),
-    [items]
+    [autoCompleteFilter, items]
   );
 
   // Memoize the filterValueOrInput to the stableItemFilter so that we get the
@@ -295,7 +332,7 @@ function Menu({
           !busy && !busyItemsStillVisible && filterValueOrInput && !hasResults;
 
         // When virtualization is turned on, we need to pass in the number of
-        // selecteable items for arrow-key limits
+        // selectable items for arrow-key limits
         const itemCount = virtualizedHeight
           ? autoCompleteResults.filter(i => !i.groupLabel).length
           : undefined;
@@ -326,14 +363,18 @@ function Menu({
               <StyledDropdownBubble
                 className={className}
                 {...getMenuProps(menuProps)}
-                {...{style, css, blendCorner, detached, alignMenu, minWidth}}
+                style={style}
+                css={css}
+                blendCorner={blendCorner}
+                detached={detached}
+                alignMenu={alignMenu}
+                minWidth={minWidth}
               >
                 <DropdownMainContent minWidth={minWidth}>
-                  {itemsLoading && <LoadingIndicator mini />}
                   {showInput && (
                     <InputWrapper>
                       <StyledInput
-                        autoFocus
+                        ref={focusElement}
                         placeholder={searchPlaceholder}
                         {...getInputProps({...inputProps, onChange})}
                       />
@@ -358,25 +399,23 @@ function Menu({
                           {noResultsMessage ?? `${emptyMessage} ${t('found')}`}
                         </EmptyMessage>
                       )}
-                      {busy && (
+                      {(itemsLoading || busy) && (
                         <BusyMessage>
-                          <EmptyMessage>{t('Searching\u2026')}</EmptyMessage>
+                          {itemsLoading && <LoadingIndicator mini />}
+                          {busy && <EmptyMessage>{t('Searching\u2026')}</EmptyMessage>}
                         </BusyMessage>
                       )}
                       {!busy && (
                         <List
                           items={autoCompleteResults}
-                          {...{
-                            maxHeight,
-                            highlightedIndex,
-                            inputValue,
-                            onScroll,
-                            getItemProps,
-                            registerVisibleItem,
-                            virtualizedLabelHeight,
-                            virtualizedHeight,
-                            itemSize,
-                          }}
+                          maxHeight={maxHeight}
+                          highlightedIndex={highlightedIndex}
+                          onScroll={onScroll}
+                          getItemProps={getItemProps}
+                          registerVisibleItem={registerVisibleItem}
+                          virtualizedLabelHeight={virtualizedLabelHeight}
+                          virtualizedHeight={virtualizedHeight}
+                          itemSize={itemSize}
                         />
                       )}
                     </ItemList>
@@ -402,6 +441,7 @@ export default Menu;
 const StyledInput = styled(Input)`
   flex: 1;
   border: 1px solid transparent;
+  border-radius: calc(${p => p.theme.panelBorderRadius} - 1px);
   &,
   &:focus,
   &:active,
@@ -410,7 +450,7 @@ const StyledInput = styled(Input)`
     box-shadow: none;
     font-size: 13px;
     padding: ${space(1)};
-    font-weight: normal;
+    font-weight: ${p => p.theme.fontWeightNormal};
     color: ${p => p.theme.gray300};
   }
 `;
@@ -456,7 +496,8 @@ const DropdownMainContent = styled('div')<{minWidth: number}>`
 const InputWrapper = styled('div')`
   display: flex;
   border-bottom: 1px solid ${p => p.theme.innerBorder};
-  border-radius: ${p => `${p.theme.borderRadius} ${p.theme.borderRadius} 0 0`};
+  border-radius: ${p =>
+    `calc(${p.theme.panelBorderRadius} - 1px) calc(${p.theme.panelBorderRadius} - 1px) 0 0`};
   align-items: center;
 `;
 
@@ -475,7 +516,7 @@ const LabelWithPadding = styled('div')<{disableLabelPadding: boolean}>`
   padding: ${p => !p.disableLabelPadding && `${space(0.25)} ${space(1)}`};
 `;
 
-const ItemList = styled('div')<{maxHeight: NonNullable<Props['maxHeight']>}>`
+const ItemList = styled('div')<{maxHeight: NonNullable<MenuProps['maxHeight']>}>`
   max-height: ${p => `${p.maxHeight}px`};
   overflow-y: auto;
 `;
@@ -483,5 +524,6 @@ const ItemList = styled('div')<{maxHeight: NonNullable<Props['maxHeight']>}>`
 const BusyMessage = styled('div')`
   display: flex;
   justify-content: center;
-  padding: ${space(1)};
+  align-items: center;
+  padding: ${space(3)} ${space(1)};
 `;

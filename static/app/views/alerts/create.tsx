@@ -1,73 +1,74 @@
-import {Component, Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
-import styled from '@emotion/styled';
+import {Fragment, useEffect, useRef} from 'react';
 
 import * as Layout from 'sentry/components/layouts/thirds';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Member, Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import EventView from 'sentry/utils/discover/eventView';
 import {uniqueId} from 'sentry/utils/guid';
-import Teams from 'sentry/utils/teams';
+import useRouteAnalyticsEventNames from 'sentry/utils/routeAnalytics/useRouteAnalyticsEventNames';
+import useRouteAnalyticsParams from 'sentry/utils/routeAnalytics/useRouteAnalyticsParams';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {useUserTeams} from 'sentry/utils/useUserTeams';
 import BuilderBreadCrumbs from 'sentry/views/alerts/builder/builderBreadCrumbs';
 import IssueRuleEditor from 'sentry/views/alerts/rules/issue';
 import MetricRulesCreate from 'sentry/views/alerts/rules/metric/create';
-import MetricRulesDuplicate from 'sentry/views/alerts/rules/metric/duplicate';
+import MetricRuleDuplicate from 'sentry/views/alerts/rules/metric/duplicate';
+import {UptimeAlertForm} from 'sentry/views/alerts/rules/uptime/uptimeAlertForm';
 import {AlertRuleType} from 'sentry/views/alerts/types';
-import {
+import type {
   AlertType as WizardAlertType,
+  WizardRuleTemplate,
+} from 'sentry/views/alerts/wizard/options';
+import {
   AlertWizardAlertNames,
   DEFAULT_WIZARD_TEMPLATE,
-  WizardRuleTemplate,
 } from 'sentry/views/alerts/wizard/options';
 import {getAlertTypeFromAggregateDataset} from 'sentry/views/alerts/wizard/utils';
 
 type RouteParams = {
-  orgId: string;
   alertType?: AlertRuleType;
   projectId?: string;
 };
 
 type Props = RouteComponentProps<RouteParams, {}> & {
   hasMetricAlerts: boolean;
+  members: Member[] | undefined;
   organization: Organization;
   project: Project;
 };
 
-type State = {
-  alertType: AlertRuleType;
-};
+function Create(props: Props) {
+  const {hasMetricAlerts, organization, project, location, members, params, router} =
+    props;
+  const {
+    aggregate,
+    dataset,
+    eventTypes,
+    createFromDuplicate,
+    duplicateRuleId,
+    createFromDiscover,
+    query,
+    createFromWizard,
+  } = location?.query ?? {};
+  const alertType = params.alertType || AlertRuleType.METRIC;
 
-class Create extends Component<Props, State> {
-  state = this.getInitialState();
+  const sessionId = useRef(uniqueId());
 
-  getInitialState(): State {
-    const {organization, location, project, params, router} = this.props;
-    const {
-      createFromDiscover,
-      createFromWizard,
-      aggregate,
-      dataset,
-      eventTypes,
-      createFromDuplicate,
-    } = location?.query ?? {};
-    let alertType = AlertRuleType.ISSUE;
+  const isDuplicateRule = createFromDuplicate === 'true' && duplicateRuleId;
 
-    const hasAlertWizardV3 = organization.features.includes('alert-wizard-v3');
-
-    // Alerts can only be created via create from discover or alert wizard, until alert-wizard-v3 is fully implemented
-    if (hasAlertWizardV3) {
-      alertType = params.alertType || AlertRuleType.METRIC;
-
-      // TODO(taylangocmen): Remove redirect with aggregate && dataset && eventTypes, init from template
-      if (
-        alertType === AlertRuleType.METRIC &&
-        !(aggregate && dataset && eventTypes) &&
-        !createFromDuplicate
-      ) {
-        router.replace({
+  useEffect(() => {
+    // TODO(taylangocmen): Remove redirect with aggregate && dataset && eventTypes, init from template
+    if (
+      alertType === AlertRuleType.METRIC &&
+      !(aggregate && dataset && eventTypes) &&
+      !createFromDuplicate
+    ) {
+      router.replace(
+        normalizeUrl({
           ...location,
           pathname: `/organizations/${organization.slug}/alerts/new/${alertType}`,
           query: {
@@ -75,149 +76,106 @@ class Create extends Component<Props, State> {
             ...DEFAULT_WIZARD_TEMPLATE,
             project: project.slug,
           },
-        });
-      }
-    } else if (createFromDiscover) {
-      alertType = AlertRuleType.METRIC;
-    } else if (createFromWizard) {
-      if (aggregate && dataset && eventTypes) {
-        alertType = AlertRuleType.METRIC;
-      } else {
-        // Just to be explicit
-        alertType = AlertRuleType.ISSUE;
-      }
-    } else {
-      router.replace(`/organizations/${organization.slug}/alerts/${project.slug}/wizard`);
+        })
+      );
     }
+  }, [
+    alertType,
+    aggregate,
+    dataset,
+    eventTypes,
+    createFromDuplicate,
+    router,
+    location,
+    organization.slug,
+    project.slug,
+  ]);
 
-    return {alertType};
+  const {teams, isLoading} = useUserTeams();
+
+  useRouteAnalyticsParams({
+    project_id: project.id,
+    session_id: sessionId.current,
+    alert_type: alertType,
+    duplicate_rule: isDuplicateRule ? 'true' : 'false',
+    wizard_v3: 'true',
+  });
+  useRouteAnalyticsEventNames('new_alert_rule.viewed', 'New Alert Rule: Viewed');
+
+  const wizardTemplate: WizardRuleTemplate = {
+    aggregate: aggregate ?? DEFAULT_WIZARD_TEMPLATE.aggregate,
+    dataset: dataset ?? DEFAULT_WIZARD_TEMPLATE.dataset,
+    eventTypes: eventTypes ?? DEFAULT_WIZARD_TEMPLATE.eventTypes,
+    query: query ?? DEFAULT_WIZARD_TEMPLATE.query,
+  };
+  const eventView = createFromDiscover ? EventView.fromLocation(location) : undefined;
+
+  let wizardAlertType: undefined | WizardAlertType;
+  if (createFromWizard && alertType === AlertRuleType.METRIC) {
+    wizardAlertType = wizardTemplate
+      ? getAlertTypeFromAggregateDataset(wizardTemplate)
+      : 'issues';
   }
 
-  componentDidMount() {
-    const {organization, project} = this.props;
+  const title = t('New Alert Rule');
 
-    const hasAlertWizardV3 = organization.features.includes('alert-wizard-v3');
-
-    trackAdvancedAnalyticsEvent('new_alert_rule.viewed', {
-      organization,
-      project_id: project.id,
-      session_id: this.sessionId,
-      alert_type: this.state.alertType,
-      duplicate_rule: this.isDuplicateRule ? 'true' : 'false',
-      wizard_v3: hasAlertWizardV3 ? 'true' : 'false',
-    });
-  }
-
-  /** Used to track analytics within one visit to the creation page */
-  sessionId = uniqueId();
-
-  get isDuplicateRule(): boolean {
-    const {location, organization} = this.props;
-    const createFromDuplicate = location?.query.createFromDuplicate === 'true';
-    const hasDuplicateAlertRules = organization.features.includes('duplicate-alert-rule');
-    return (
-      hasDuplicateAlertRules && createFromDuplicate && location?.query.duplicateRuleId
-    );
-  }
-
-  render() {
-    const {hasMetricAlerts, organization, project, location, routes} = this.props;
-    const {alertType} = this.state;
-    const {aggregate, dataset, eventTypes, createFromWizard, createFromDiscover} =
-      location?.query ?? {};
-    const wizardTemplate: WizardRuleTemplate = {
-      aggregate: aggregate ?? DEFAULT_WIZARD_TEMPLATE.aggregate,
-      dataset: dataset ?? DEFAULT_WIZARD_TEMPLATE.dataset,
-      eventTypes: eventTypes ?? DEFAULT_WIZARD_TEMPLATE.eventTypes,
-    };
-    const eventView = createFromDiscover ? EventView.fromLocation(location) : undefined;
-
-    let wizardAlertType: undefined | WizardAlertType;
-    if (createFromWizard && alertType === AlertRuleType.METRIC) {
-      wizardAlertType = wizardTemplate
-        ? getAlertTypeFromAggregateDataset(wizardTemplate)
-        : 'issues';
-    }
-
-    const title = t('New Alert Rule');
-
-    return (
-      <Fragment>
-        <SentryDocumentTitle title={title} projectSlug={project.slug} />
-
-        <Layout.Header>
-          <StyledHeaderContent>
-            <BuilderBreadCrumbs
-              organization={organization}
-              alertName={t('Set Conditions')}
-              title={wizardAlertType ? t('Select Alert') : title}
-              projectSlug={project.slug}
-              alertType={alertType}
-              routes={routes}
-              location={location}
-              canChangeProject
-            />
-            <Layout.Title>
-              {wizardAlertType
-                ? `${t('Set Conditions for')} ${AlertWizardAlertNames[wizardAlertType]}`
-                : title}
-            </Layout.Title>
-          </StyledHeaderContent>
-        </Layout.Header>
-        <Layout.Body>
-          <StyledLayoutMain fullWidth>
-            <Teams provideUserTeams>
-              {({teams, initiallyLoaded}) =>
-                initiallyLoaded ? (
-                  <Fragment>
-                    {(!hasMetricAlerts || alertType === 'issue') && (
-                      <IssueRuleEditor
-                        {...this.props}
-                        project={project}
-                        userTeamIds={teams.map(({id}) => id)}
-                      />
-                    )}
-
-                    {hasMetricAlerts &&
-                      alertType === AlertRuleType.METRIC &&
-                      (this.isDuplicateRule ? (
-                        <MetricRulesDuplicate
-                          {...this.props}
-                          eventView={eventView}
-                          wizardTemplate={wizardTemplate}
-                          sessionId={this.sessionId}
-                          project={project}
-                          userTeamIds={teams.map(({id}) => id)}
-                        />
-                      ) : (
-                        <MetricRulesCreate
-                          {...this.props}
-                          eventView={eventView}
-                          wizardTemplate={wizardTemplate}
-                          sessionId={this.sessionId}
-                          project={project}
-                          userTeamIds={teams.map(({id}) => id)}
-                        />
-                      ))}
-                  </Fragment>
-                ) : (
-                  <LoadingIndicator />
-                )
-              }
-            </Teams>
-          </StyledLayoutMain>
-        </Layout.Body>
-      </Fragment>
-    );
-  }
+  return (
+    <Fragment>
+      <SentryDocumentTitle title={title} projectSlug={project.slug} />
+      <Layout.Header>
+        <Layout.HeaderContent>
+          <BuilderBreadCrumbs
+            organization={organization}
+            alertName={t('Set Conditions')}
+            title={wizardAlertType ? t('Select Alert') : title}
+            projectSlug={project.slug}
+          />
+          <Layout.Title>
+            {wizardAlertType
+              ? `${t('Set Conditions for')} ${AlertWizardAlertNames[wizardAlertType]}`
+              : title}
+          </Layout.Title>
+        </Layout.HeaderContent>
+      </Layout.Header>
+      <Layout.Body>
+        {isLoading ? (
+          <LoadingIndicator />
+        ) : (
+          <Fragment>
+            {alertType === AlertRuleType.UPTIME ? (
+              <UptimeAlertForm {...props} />
+            ) : !hasMetricAlerts || alertType === AlertRuleType.ISSUE ? (
+              <IssueRuleEditor
+                {...props}
+                userTeamIds={teams.map(({id}) => id)}
+                members={members}
+              />
+            ) : (
+              hasMetricAlerts &&
+              alertType === AlertRuleType.METRIC &&
+              (isDuplicateRule ? (
+                <MetricRuleDuplicate
+                  {...props}
+                  eventView={eventView}
+                  wizardTemplate={wizardTemplate}
+                  sessionId={sessionId.current}
+                  userTeamIds={teams.map(({id}) => id)}
+                />
+              ) : (
+                <MetricRulesCreate
+                  {...props}
+                  eventView={eventView}
+                  wizardTemplate={wizardTemplate}
+                  sessionId={sessionId.current}
+                  userTeamIds={teams.map(({id}) => id)}
+                />
+              ))
+            )}
+          </Fragment>
+        )}
+      </Layout.Body>
+    </Fragment>
+  );
 }
-
-const StyledLayoutMain = styled(Layout.Main)`
-  max-width: 1000px;
-`;
-
-const StyledHeaderContent = styled(Layout.HeaderContent)`
-  overflow: visible;
-`;
 
 export default Create;

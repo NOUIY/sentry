@@ -1,7 +1,7 @@
 from django.test.client import RequestFactory
 from django.urls import reverse
 
-from tests.apidocs.util import APIDocsTestCase
+from fixtures.apidocs_test_case import APIDocsTestCase
 
 
 class ProjectServiceHooksDocs(APIDocsTestCase):
@@ -11,7 +11,10 @@ class ProjectServiceHooksDocs(APIDocsTestCase):
 
         self.url = reverse(
             "sentry-api-0-service-hooks",
-            kwargs={"organization_slug": self.organization.slug, "project_slug": self.project.slug},
+            kwargs={
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
+            },
         )
 
         self.login_as(user=self.user)

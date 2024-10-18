@@ -1,7 +1,7 @@
 import jwt as pyjwt
 import pytest
 
-from sentry.utils import json  # type: ignore
+from sentry.utils import json
 from sentry.utils import jwt as jwt_utils
 
 RS256_KEY = """
@@ -94,7 +94,7 @@ RSA_PUB_JWK = {
 }
 
 
-@pytest.fixture  # type: ignore
+@pytest.fixture
 def token() -> str:
     """A JWT token, signed with symmetric key."""
     headers = {
@@ -110,7 +110,7 @@ def token() -> str:
     return token
 
 
-@pytest.fixture  # type: ignore
+@pytest.fixture
 def rsa_token() -> str:
     """A JWT token, signed with RSA key."""
     headers = {
@@ -213,7 +213,7 @@ def test_encode_rs256() -> None:
     claims = {
         "iss": "me",
     }
-    encoded_hs256 = jwt_utils.encode(claims, "secret", headers=headers)
+    encoded_hs256 = jwt_utils.encode(claims, "secret", headers={**headers, "alg": "HS256"})
     encoded_rs256 = jwt_utils.encode(claims, RS256_KEY, headers=headers, algorithm="RS256")
 
     assert encoded_rs256.count(".") == 2

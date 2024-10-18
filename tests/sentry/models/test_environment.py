@@ -1,7 +1,7 @@
 import pytest
 
-from sentry.models import Environment
-from sentry.testutils import TestCase
+from sentry.models.environment import Environment
+from sentry.testutils.cases import TestCase
 
 
 class GetOrCreateTest(TestCase):

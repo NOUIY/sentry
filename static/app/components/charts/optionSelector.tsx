@@ -1,28 +1,45 @@
 import {Fragment, useMemo} from 'react';
 import styled from '@emotion/styled';
 
-import FeatureBadge from 'sentry/components/featureBadge';
-import CompactSelect from 'sentry/components/forms/compactSelect';
+import FeatureBadge from 'sentry/components/badge/featureBadge';
+import type {
+  MultipleSelectProps,
+  SelectOption,
+  SingleSelectProps,
+} from 'sentry/components/compactSelect';
+import {CompactSelect} from 'sentry/components/compactSelect';
+import type {SelectOptionWithKey} from 'sentry/components/compactSelect/types';
 import Truncate from 'sentry/components/truncate';
-import {SelectValue} from 'sentry/types';
 import {defined} from 'sentry/utils';
 
-type BaseProps = React.ComponentProps<typeof CompactSelect> & {
-  options: SelectValue<string>[];
+type BaseProps = {
   title: string;
   featureType?: 'alpha' | 'beta' | 'new';
 };
 
-type SingleProps = BaseProps & {
+interface SingleProps
+  extends Omit<
+      SingleSelectProps<string>,
+      'onChange' | 'defaultValue' | 'multiple' | 'title'
+    >,
+    BaseProps {
   onChange: (value: string) => void;
   selected: string;
+  defaultValue?: string;
   multiple?: false;
-};
-type MultipleProps = BaseProps & {
+}
+
+interface MultipleProps
+  extends Omit<
+      MultipleSelectProps<string>,
+      'onChange' | 'defaultValue' | 'multiple' | 'title'
+    >,
+    BaseProps {
   multiple: true;
   onChange: (value: string[]) => void;
   selected: string[];
-};
+  defaultValue?: string[];
+}
 
 function OptionSelector({
   options,
@@ -31,39 +48,61 @@ function OptionSelector({
   title,
   featureType,
   multiple,
+  defaultValue,
+  closeOnSelect,
   ...rest
 }: SingleProps | MultipleProps) {
   const mappedOptions = useMemo(() => {
     return options.map(opt => ({
       ...opt,
+      textValue: String(opt.label),
       label: <Truncate value={String(opt.label)} maxLength={60} expandDirection="left" />,
     }));
   }, [options]);
 
-  function onValueChange(option) {
-    onChange(multiple ? option.map(o => o.value) : option.value);
-  }
+  const selectProps = useMemo(() => {
+    // Use an if statement to help TS separate MultipleProps and SingleProps
+    if (multiple) {
+      return {
+        multiple,
+        value: selected,
+        defaultValue,
+        onChange: (sel: SelectOption<string>[]) => {
+          onChange?.(sel.map(o => o.value));
+        },
+        closeOnSelect,
+      };
+    }
 
-  function isOptionDisabled(option) {
-    return (
+    return {
+      multiple,
+      value: selected,
+      defaultValue,
+      onChange: opt => onChange?.(opt.value),
+      closeOnSelect,
+    };
+  }, [multiple, selected, defaultValue, onChange, closeOnSelect]);
+
+  function isOptionDisabled(option: SelectOptionWithKey<string>) {
+    return Boolean(
       // Option is explicitly marked as disabled
-      option.disabled ||
       // The user has reached the maximum number of selections (3), and the option hasn't
       // yet been selected. These options should be disabled to visually indicate that the
       // user has reached the max.
-      (multiple && selected.length === 3 && !selected.includes(option.value))
+      option.disabled ||
+        (multiple && selected.length === 3 && !selected.includes(option.value))
     );
   }
 
   return (
     <CompactSelect
+      {...rest}
+      {...selectProps}
+      size="sm"
       options={mappedOptions}
-      value={selected}
-      onChange={onValueChange}
       isOptionDisabled={isOptionDisabled}
-      multiple={multiple}
+      position="bottom-end"
       triggerProps={{
-        size: 'small',
         borderless: true,
         prefix: (
           <Fragment>
@@ -72,8 +111,6 @@ function OptionSelector({
           </Fragment>
         ),
       }}
-      placement="bottom right"
-      {...rest}
     />
   );
 }

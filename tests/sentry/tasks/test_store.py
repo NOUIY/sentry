@@ -2,17 +2,13 @@ from time import time
 from unittest import mock
 
 import pytest
-from django.test.utils import override_settings
 
-from sentry import quotas
-from sentry.event_manager import EventManager, HashDiscarded
+from sentry import options, quotas
+from sentry.event_manager import EventManager
+from sentry.exceptions import HashDiscarded
 from sentry.plugins.base.v2 import Plugin2
-from sentry.tasks.store import (
-    preprocess_event,
-    process_event,
-    save_event,
-    time_synthetic_monitoring_event,
-)
+from sentry.tasks.store import is_process_disabled, preprocess_event, process_event, save_event
+from sentry.testutils.pytest.fixtures import django_db_all
 
 EVENT_ID = "cc3e6c2bb6b6498097f336d1e6979f4b"
 
@@ -61,18 +57,6 @@ def mock_symbolicate_event():
 
 
 @pytest.fixture
-def mock_symbolicate_event_low_priority():
-    with mock.patch("sentry.tasks.symbolication.symbolicate_event_low_priority") as m:
-        yield m
-
-
-@pytest.fixture
-def mock_get_symbolication_function():
-    with mock.patch("sentry.lang.native.processing.get_symbolication_function") as m:
-        yield m
-
-
-@pytest.fixture
 def mock_event_processing_store():
     with mock.patch("sentry.eventstore.processing.event_processing_store") as m:
         yield m
@@ -90,7 +74,7 @@ def mock_metrics_timing():
         yield m
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_move_to_process_event(
     default_project, mock_process_event, mock_save_event, mock_symbolicate_event, register_plugin
 ):
@@ -110,7 +94,7 @@ def test_move_to_process_event(
     assert mock_save_event.delay.call_count == 0
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_move_to_save_event(
     default_project, mock_process_event, mock_save_event, mock_symbolicate_event, register_plugin
 ):
@@ -130,7 +114,7 @@ def test_move_to_save_event(
     assert mock_save_event.delay.call_count == 1
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_process_event_mutate_and_save(
     default_project, mock_event_processing_store, mock_save_event, register_plugin
 ):
@@ -159,7 +143,7 @@ def test_process_event_mutate_and_save(
     )
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_process_event_no_mutate_and_save(
     default_project, mock_event_processing_store, mock_save_event, register_plugin
 ):
@@ -185,7 +169,7 @@ def test_process_event_no_mutate_and_save(
     )
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_process_event_unprocessed(
     default_project, mock_event_processing_store, mock_save_event, register_plugin
 ):
@@ -212,7 +196,7 @@ def test_process_event_unprocessed(
     )
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_hash_discarded_raised(default_project, mock_refund, register_plugin):
     register_plugin(globals(), BasicPreprocessorPlugin)
 
@@ -242,7 +226,7 @@ def options_model(request, default_organization, default_project):
         raise ValueError(request.param)
 
 
-@pytest.mark.django_db
+@django_db_all
 @pytest.mark.parametrize("setting_method", ["datascrubbers", "piiconfig"])
 def test_scrubbing_after_processing(
     default_project,
@@ -257,7 +241,7 @@ def test_scrubbing_after_processing(
         def get_event_preprocessors(self, data):
             # Right now we do not scrub data from event preprocessors
             def more_extra(data):
-                data["extra"]["aaa2"] = "event preprocessor"
+                data["extra"]["ooo2"] = "event preprocessor"
                 return data
 
             return [more_extra]
@@ -268,11 +252,11 @@ def test_scrubbing_after_processing(
     register_plugin(globals(), TestPlugin)
 
     if setting_method == "datascrubbers":
-        options_model.update_option("sentry:sensitive_fields", ["a"])
+        options_model.update_option("sentry:sensitive_fields", ["o"])
         options_model.update_option("sentry:scrub_data", True)
     elif setting_method == "piiconfig":
         options_model.update_option(
-            "sentry:relay_pii_config", '{"applications": {"extra.aaa": ["@anything:replace"]}}'
+            "sentry:relay_pii_config", '{"applications": {"extra.ooo": ["@anything:replace"]}}'
         )
     else:
         raise ValueError(setting_method)
@@ -282,7 +266,7 @@ def test_scrubbing_after_processing(
         "platform": "python",
         "logentry": {"formatted": "test"},
         "event_id": EVENT_ID,
-        "extra": {"aaa": "remove me"},
+        "extra": {"ooo": "remove me"},
     }
 
     mock_event_processing_store.get.return_value = data
@@ -293,60 +277,18 @@ def test_scrubbing_after_processing(
     process_event(cache_key="e:1", start_time=1, data_has_changed=True)
 
     ((_, (event,), _),) = mock_event_processing_store.store.mock_calls
-    assert event["extra"] == {"aaa": "[Filtered]", "aaa2": "event preprocessor"}
+    assert event["extra"] == {"ooo": "[Filtered]", "ooo2": "event preprocessor"}
 
     mock_save_event.delay.assert_called_once_with(
         cache_key="e:1", data=None, start_time=1, event_id=EVENT_ID, project_id=default_project.id
     )
 
 
-def test_time_synthetic_monitoring_event_in_save_event_disabled(mock_metrics_timing):
-    data = {"project": 1}
-    with override_settings(SENTRY_SYNTHETIC_MONITORING_PROJECT_ID=None):
-        assert time_synthetic_monitoring_event(data, 1, time()) is False
-    assert mock_metrics_timing.call_count == 0
-
-
-def test_time_synthetic_monitoring_event_in_save_event_not_matching_project(mock_metrics_timing):
-    data = {"project": 1}
-    with override_settings(SENTRY_SYNTHETIC_MONITORING_PROJECT_ID=2):
-        assert time_synthetic_monitoring_event(data, 1, time()) is False
-    assert mock_metrics_timing.call_count == 0
-
-
-def test_time_synthetic_monitoring_event_in_save_event_missing_extra(mock_metrics_timing):
-    data = {"project": 1}
-    with override_settings(SENTRY_SYNTHETIC_MONITORING_PROJECT_ID=1):
-        assert time_synthetic_monitoring_event(data, 1, time()) is False
-    assert mock_metrics_timing.call_count == 0
-
-
-def test_time_synthetic_monitoring_event_in_save_event(mock_metrics_timing):
-    tags = {
-        "source_region": "region-1",
-        "target": "target.io",
-        "source": "source-1",
-    }
-    extra = {"key": "value", "another": "val"}
-    extra.update(tags)
-    data = {
-        "project": 1,
-        "timestamp": time(),
-        "extra": {"_sentry_synthetic_monitoring": extra},
-    }
-    with override_settings(SENTRY_SYNTHETIC_MONITORING_PROJECT_ID=1):
-        assert time_synthetic_monitoring_event(data, 1, time()) is True
-
-    to_ingest, to_process = mock_metrics_timing.mock_calls
-
-    assert to_ingest.args == (
-        "events.synthetic-monitoring.time-to-ingest-total",
-        mock.ANY,
-    )
-    assert to_ingest.kwargs == {"tags": tags, "sample_rate": 1.0}
-
-    assert to_process.args == (
-        "events.synthetic-monitoring.time-to-process",
-        mock.ANY,
-    )
-    assert to_process.kwargs == {"tags": tags, "sample_rate": 1.0}
+@django_db_all
+def test_killswitch():
+    assert not is_process_disabled(1, "asdasdasd", "null")
+    options.set("store.load-shed-process-event-projects-gradual", {1: 0.0})
+    assert not is_process_disabled(1, "asdasdasd", "null")
+    options.set("store.load-shed-process-event-projects-gradual", {1: 1.0})
+    assert is_process_disabled(1, "asdasdasd", "null")
+    options.set("store.load-shed-process-event-projects-gradual", {})

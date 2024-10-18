@@ -1,59 +1,79 @@
-import {browserHistory, RouteComponentProps} from 'react-router';
-
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import AsyncView from 'sentry/views/asyncView';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project, ProjectKey} from 'sentry/types/project';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import {setApiQueryData, useApiQuery, useQueryClient} from 'sentry/utils/queryClient';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import useApi from 'sentry/utils/useApi';
+import RouteError from 'sentry/views/routeError';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import PermissionAlert from 'sentry/views/settings/project/permissionAlert';
-import KeySettings from 'sentry/views/settings/project/projectKeys/details/keySettings';
+import {KeySettings} from 'sentry/views/settings/project/projectKeys/details/keySettings';
 import KeyStats from 'sentry/views/settings/project/projectKeys/details/keyStats';
-import {ProjectKey} from 'sentry/views/settings/project/projectKeys/types';
 
-type Props = RouteComponentProps<
+type Props = {
+  organization: Organization;
+  project: Project;
+} & RouteComponentProps<
   {
     keyId: string;
-    orgId: string;
     projectId: string;
   },
   {}
 >;
 
-type State = {
-  data: ProjectKey;
-} & AsyncView['state'];
+export default function ProjectKeyDetails({organization, params, project}: Props) {
+  const {keyId, projectId} = params;
+  const api = useApi();
+  const queryClient = useQueryClient();
 
-export default class ProjectKeyDetails extends AsyncView<Props, State> {
-  getTitle() {
-    return t('Key Details');
-  }
+  const {
+    data: projKeyData,
+    isError,
+    isPending,
+  } = useApiQuery<ProjectKey>(
+    [`/projects/${organization.slug}/${projectId}/keys/${keyId}/`],
+    {staleTime: 0}
+  );
 
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    const {keyId, orgId, projectId} = this.props.params;
-    return [['data', `/projects/${orgId}/${projectId}/keys/${keyId}/`]];
-  }
-
-  handleRemove = () => {
-    const {orgId, projectId} = this.props.params;
-    browserHistory.push(`/${orgId}/${projectId}/settings/keys/`);
-  };
-
-  renderBody() {
-    const {data} = this.state;
-    const {params} = this.props;
-
-    return (
-      <div data-test-id="key-details">
-        <SettingsPageHeader title={t('Key Details')} />
-        <PermissionAlert />
-
-        <KeyStats api={this.api} params={params} />
-
-        <KeySettings
-          api={this.api}
-          params={params}
-          data={data}
-          onRemove={this.handleRemove}
-        />
-      </div>
+  function onDataChange(data: ProjectKey) {
+    setApiQueryData<ProjectKey>(
+      queryClient,
+      [`/projects/${organization.slug}/${projectId}/keys/${keyId}/`],
+      data
     );
   }
+
+  const handleRemove = () => {
+    browserHistory.push(
+      normalizeUrl(`/settings/${organization.slug}/projects/${projectId}/keys/`)
+    );
+  };
+
+  if (isError) {
+    return <RouteError />;
+  }
+
+  if (isPending) {
+    return <LoadingIndicator />;
+  }
+
+  return (
+    <SentryDocumentTitle title={t('Key Details')}>
+      <SettingsPageHeader title={t('Key Details')} data-test-id="key-details" />
+      <PermissionAlert project={project} />
+      <KeyStats api={api} organization={organization} params={params} />
+      <KeySettings
+        data={projKeyData}
+        updateData={onDataChange}
+        onRemove={handleRemove}
+        organization={organization}
+        project={project}
+        params={params}
+      />
+    </SentryDocumentTitle>
+  );
 }

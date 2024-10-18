@@ -1,7 +1,9 @@
+from urllib.parse import quote
+
 from django.urls import reverse
 
-from sentry.models import Environment, EnvironmentProject
-from sentry.testutils import APITestCase
+from sentry.models.environment import Environment, EnvironmentProject
+from sentry.testutils.cases import APITestCase
 
 
 class ProjectEnvironmentsTest(APITestCase):
@@ -9,7 +11,7 @@ class ProjectEnvironmentsTest(APITestCase):
         project = self.create_project()
 
         environment = Environment.objects.create(
-            project_id=project.id, organization_id=project.organization_id, name="production"
+            organization_id=project.organization_id, name="production"
         )
         environment.add_project(project)
 
@@ -18,8 +20,8 @@ class ProjectEnvironmentsTest(APITestCase):
         url = reverse(
             "sentry-api-0-project-environment-details",
             kwargs={
-                "organization_slug": project.organization.slug,
-                "project_slug": project.slug,
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
                 "environment": "production",
             },
         )
@@ -38,8 +40,8 @@ class ProjectEnvironmentsTest(APITestCase):
                 reverse(
                     "sentry-api-0-project-environment-details",
                     kwargs={
-                        "organization_slug": project.organization.slug,
-                        "project_slug": project.slug,
+                        "organization_id_or_slug": project.organization.slug,
+                        "project_id_or_slug": project.slug,
                         "environment": "invalid",
                     },
                 ),
@@ -52,7 +54,7 @@ class ProjectEnvironmentsTest(APITestCase):
         project = self.create_project()
 
         environment = Environment.objects.create(
-            project_id=project.id, organization_id=project.organization_id, name="production"
+            organization_id=project.organization_id, name="production"
         )
         environment.add_project(project)
 
@@ -61,8 +63,8 @@ class ProjectEnvironmentsTest(APITestCase):
         url = reverse(
             "sentry-api-0-project-environment-details",
             kwargs={
-                "organization_slug": project.organization.slug,
-                "project_slug": project.slug,
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
                 "environment": "production",
             },
         )
@@ -79,8 +81,8 @@ class ProjectEnvironmentsTest(APITestCase):
                 reverse(
                     "sentry-api-0-project-environment-details",
                     kwargs={
-                        "organization_slug": project.organization.slug,
-                        "project_slug": project.slug,
+                        "organization_id_or_slug": project.organization.slug,
+                        "project_id_or_slug": project.slug,
                         "environment": "invalid",
                     },
                 ),
@@ -88,4 +90,32 @@ class ProjectEnvironmentsTest(APITestCase):
                 format="json",
             ).status_code
             == 404
+        )
+
+    def test_escaped_character_put(self):
+        project = self.create_project()
+
+        # "/" character will have to be escaped in url path
+        env_name = "PROD/STAGE"
+        environment = Environment.objects.create(
+            organization_id=project.organization_id, name=env_name
+        )
+        environment.add_project(project)
+
+        self.login_as(user=self.user)
+
+        url = reverse(
+            "sentry-api-0-project-environment-details",
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+                "environment": quote(env_name, safe=""),
+            },
+        )
+        response = self.client.put(url, {"isHidden": True}, format="json")
+        assert response.status_code == 200, response.content
+
+        assert (
+            EnvironmentProject.objects.get(project=project, environment=environment).is_hidden
+            is True
         )

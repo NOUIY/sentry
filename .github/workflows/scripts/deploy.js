@@ -13,15 +13,15 @@ module.exports = {
    */
   updateChangeType: async ({github, context, fileChanges}) => {
     // Note that `fileChanges` bools and ints will get cast to strings
-    const {frontend, backend} = fileChanges;
+    const {frontend_all: frontend, backend_all: backend} = fileChanges;
     const frontendOnly = frontend === 'true' && backend === 'false';
     const backendOnly = backend === 'true' && frontend === 'false';
 
     const name = frontendOnly
       ? 'only frontend changes'
       : backendOnly
-      ? 'only backend changes'
-      : 'fullstack changes';
+        ? 'only backend changes'
+        : 'fullstack changes';
 
     if (!name) {
       return null;

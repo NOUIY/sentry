@@ -1,12 +1,14 @@
 import {Component, Fragment} from 'react';
-import find from 'lodash/find';
-import flatMap from 'lodash/flatMap';
 
+import SelectField from 'sentry/components/forms/fields/selectField';
 import FormContext from 'sentry/components/forms/formContext';
-import SelectField from 'sentry/components/forms/selectField';
 import {SENTRY_APP_PERMISSIONS} from 'sentry/constants';
 import {t} from 'sentry/locale';
-import {PermissionResource, Permissions, PermissionValue} from 'sentry/types/index';
+import type {
+  PermissionResource,
+  Permissions,
+  PermissionValue,
+} from 'sentry/types/integrations';
 
 /**
  * Custom form element that presents API scopes in a resource-centric way. Meaning
@@ -89,7 +91,20 @@ type State = {
 };
 
 function findResource(r: PermissionResource) {
-  return find(SENTRY_APP_PERMISSIONS, ['resource', r]);
+  return SENTRY_APP_PERMISSIONS.find(permissions => permissions.resource === r);
+}
+
+/**
+ * Converts the "Permission" values held in `state` to a list of raw
+ * API scopes we can send to the server. For example:
+ *
+ *    ['org:read', 'org:write', ...]
+ *
+ */
+function permissionStateToList(permissions: Permissions) {
+  return Object.entries(permissions).flatMap(
+    ([r, p]) => findResource(r as PermissionResource)?.choices?.[p]?.scopes
+  );
 }
 
 export default class PermissionSelection extends Component<Props, State> {
@@ -97,22 +112,8 @@ export default class PermissionSelection extends Component<Props, State> {
     permissions: this.props.permissions,
   };
 
+  declare context: Required<React.ContextType<typeof FormContext>>;
   static contextType = FormContext;
-
-  /**
-   * Converts the "Permission" values held in `state` to a list of raw
-   * API scopes we can send to the server. For example:
-   *
-   *    ['org:read', 'org:write', ...]
-   *
-   */
-  permissionStateToList() {
-    const {permissions} = this.state;
-    return flatMap(
-      Object.entries(permissions),
-      ([r, p]) => findResource(r as PermissionResource)?.choices?.[p]?.scopes
-    );
-  }
 
   onChange = (resource: PermissionResource, choice: PermissionValue) => {
     const {permissions} = this.state;
@@ -123,7 +124,10 @@ export default class PermissionSelection extends Component<Props, State> {
   save = (permissions: Permissions) => {
     this.setState({permissions});
     this.props.onChange(permissions);
-    this.context.form.setValue('scopes', this.permissionStateToList());
+    this.context.form.setValue(
+      'scopes',
+      permissionStateToList(this.state.permissions) as string[]
+    );
   };
 
   render() {
@@ -148,8 +152,8 @@ export default class PermissionSelection extends Component<Props, State> {
               name={`${config.resource}--permission`}
               key={config.resource}
               options={options}
-              help={t(config.help)}
-              label={t(config.label || config.resource)}
+              help={config.help}
+              label={config.label || config.resource}
               onChange={this.onChange.bind(this, config.resource)}
               value={value}
               defaultValue={value}

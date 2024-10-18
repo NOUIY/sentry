@@ -1,6 +1,7 @@
-import {defined, formatBytesBase2} from 'sentry/utils';
-
-import {DeviceData, DeviceKnownDataType} from './types';
+import type {DeviceContext} from 'sentry/types/event';
+import {DeviceContextKey} from 'sentry/types/event';
+import {defined} from 'sentry/utils';
+import {formatBytesBase2} from 'sentry/utils/bytes/formatBytesBase2';
 
 export function formatMemory(
   memory_size: number,
@@ -78,17 +79,17 @@ export const commonDisplayResolutions = {
   '3840x2160': '4K UHD',
 };
 
-export function getInferredData(data: DeviceData) {
-  const screenResolution = data[DeviceKnownDataType.SCREEN_RESOLUTION];
-  const screenWidth = data[DeviceKnownDataType.SCREEN_WIDTH_PIXELS];
-  const screenHeight = data[DeviceKnownDataType.SCREEN_HEIGHT_PIXELS];
+export function getInferredData(data: DeviceContext) {
+  const screenResolution = data[DeviceContextKey.SCREEN_RESOLUTION];
+  const screenWidth = data[DeviceContextKey.SCREEN_WIDTH_PIXELS];
+  const screenHeight = data[DeviceContextKey.SCREEN_HEIGHT_PIXELS];
 
   if (screenResolution) {
     const displayResolutionDescription = commonDisplayResolutions[screenResolution];
 
     const commonData = {
       ...data,
-      [DeviceKnownDataType.SCREEN_RESOLUTION]: displayResolutionDescription
+      [DeviceContextKey.SCREEN_RESOLUTION]: displayResolutionDescription
         ? `${screenResolution} (${displayResolutionDescription})`
         : screenResolution,
     };
@@ -99,8 +100,8 @@ export function getInferredData(data: DeviceData) {
       if (width && height) {
         return {
           ...commonData,
-          [DeviceKnownDataType.SCREEN_WIDTH_PIXELS]: Number(width),
-          [DeviceKnownDataType.SCREEN_HEIGHT_PIXELS]: Number(height),
+          [DeviceContextKey.SCREEN_WIDTH_PIXELS]: Number(width),
+          [DeviceContextKey.SCREEN_HEIGHT_PIXELS]: Number(height),
         };
       }
     }
@@ -114,7 +115,7 @@ export function getInferredData(data: DeviceData) {
 
     return {
       ...data,
-      [DeviceKnownDataType.SCREEN_RESOLUTION]: displayResolutionDescription
+      [DeviceContextKey.SCREEN_RESOLUTION]: displayResolutionDescription
         ? `${displayResolution} (${displayResolutionDescription})`
         : displayResolution,
     };

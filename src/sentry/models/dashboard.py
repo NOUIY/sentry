@@ -1,23 +1,51 @@
+from __future__ import annotations
+
+from typing import Any
+
 from django.db import models
 from django.utils import timezone
 
-from sentry.db.models import FlexibleForeignKey, Model, sane_repr
+from sentry import features
+from sentry.backup.scopes import RelocationScope
+from sentry.db.models import FlexibleForeignKey, Model, region_silo_model, sane_repr
 from sentry.db.models.fields.bounded import BoundedBigIntegerField
+from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
+from sentry.db.models.fields.jsonfield import JSONField
+from sentry.db.models.fields.slug import SentrySlugField
+from sentry.models.dashboard_widget import DashboardWidgetTypes
 
 
+@region_silo_model
+class DashboardProject(Model):
+    __relocation_scope__ = RelocationScope.Excluded
+
+    project = FlexibleForeignKey("sentry.Project")
+    dashboard = FlexibleForeignKey("sentry.Dashboard")
+
+    class Meta:
+        app_label = "sentry"
+        db_table = "sentry_dashboardproject"
+        unique_together = (("project", "dashboard"),)
+
+
+@region_silo_model
 class Dashboard(Model):
     """
     A dashboard.
     """
 
-    __include_in_export__ = True
+    __relocation_scope__ = RelocationScope.Organization
 
     title = models.CharField(max_length=255)
-    created_by = FlexibleForeignKey("sentry.User")
+    created_by_id = HybridCloudForeignKey("sentry.User", on_delete="CASCADE")
     organization = FlexibleForeignKey("sentry.Organization")
     date_added = models.DateTimeField(default=timezone.now)
     visits = BoundedBigIntegerField(null=True, default=1)
     last_visited = models.DateTimeField(null=True, default=timezone.now)
+    projects = models.ManyToManyField("sentry.Project", through=DashboardProject)
+    filters: models.Field[dict[str, Any] | None, dict[str, Any] | None] = JSONField(null=True)
+
+    MAX_WIDGETS = 30
 
     class Meta:
         app_label = "sentry"
@@ -27,13 +55,15 @@ class Dashboard(Model):
     __repr__ = sane_repr("organization", "title")
 
     @staticmethod
-    def get_prebuilt_list(organization, title_query=None):
+    def get_prebuilt_list(organization, user, title_query=None):
         query = list(
             DashboardTombstone.objects.filter(organization=organization).values_list("slug")
         )
         tombstones = [v[0] for v in query]
         results = []
-        for data in PREBUILT_DASHBOARDS.values():
+
+        # Needs to pass along organization to get the right dataset
+        for data in get_all_prebuilt_dashboards(organization, user).values():
             if title_query and title_query.lower() not in data["title"].lower():
                 continue
             if data["id"] not in tombstones:
@@ -41,21 +71,23 @@ class Dashboard(Model):
         return results
 
     @staticmethod
-    def get_prebuilt(dashboard_id):
-        if dashboard_id in PREBUILT_DASHBOARDS:
-            return PREBUILT_DASHBOARDS[dashboard_id]
+    def get_prebuilt(organization, user, dashboard_id):
+        all_prebuilt_dashboards = get_all_prebuilt_dashboards(organization, user)
+        if dashboard_id in all_prebuilt_dashboards:
+            return all_prebuilt_dashboards[dashboard_id]
         return None
 
 
+@region_silo_model
 class DashboardTombstone(Model):
     """
     A tombstone to indicate that a pre-built dashboard
     has been replaced or deleted for an organization.
     """
 
-    __include_in_export__ = True
+    __relocation_scope__ = RelocationScope.Organization
 
-    slug = models.CharField(max_length=255)
+    slug = SentrySlugField(max_length=255, db_index=False)
     organization = FlexibleForeignKey("sentry.Organization")
     date_added = models.DateTimeField(default=timezone.now)
 
@@ -73,9 +105,24 @@ class DashboardTombstone(Model):
 #
 # All widgets and queries in prebuilt dashboards must not have id attributes defined,
 # or users will be unable to 'update' them with a forked version.
-PREBUILT_DASHBOARDS = {
-    item["id"]: item
-    for item in [
+
+
+def get_prebuilt_dashboards(organization, user) -> list[dict[str, Any]]:
+    DISCOVER = DashboardWidgetTypes.get_type_name(DashboardWidgetTypes.DISCOVER)
+    has_discover_split = features.has(
+        "organizations:performance-discover-dataset-selector", organization, actor=user
+    )
+    error_events_type = (
+        DashboardWidgetTypes.get_type_name(DashboardWidgetTypes.ERROR_EVENTS)
+        if has_discover_split
+        else DISCOVER
+    )
+    transaction_type = (
+        DashboardWidgetTypes.get_type_name(DashboardWidgetTypes.TRANSACTION_LIKE)
+        if has_discover_split
+        else DISCOVER
+    )
+    return [
         {
             # This should match the general template in static/app/views/dashboardsV2/data.tsx
             "id": "default-overview",
@@ -87,13 +134,15 @@ PREBUILT_DASHBOARDS = {
                     "title": "Number of Errors",
                     "displayType": "big_number",
                     "interval": "5m",
+                    "widgetType": error_events_type,
                     "queries": [
                         {
                             "name": "",
-                            "conditions": "!event.type:transaction",
+                            "conditions": "" if has_discover_split else "!event.type:transaction",
                             "fields": ["count()"],
                             "aggregates": ["count()"],
                             "columns": [],
+                            "orderby": "",
                         }
                     ],
                 },
@@ -101,13 +150,15 @@ PREBUILT_DASHBOARDS = {
                     "title": "Number of Issues",
                     "displayType": "big_number",
                     "interval": "5m",
+                    "widgetType": error_events_type,
                     "queries": [
                         {
                             "name": "",
-                            "conditions": "!event.type:transaction",
+                            "conditions": "" if has_discover_split else "!event.type:transaction",
                             "fields": ["count_unique(issue)"],
                             "aggregates": ["count_unique(issue)"],
                             "columns": [],
+                            "orderby": "",
                         }
                     ],
                 },
@@ -115,13 +166,15 @@ PREBUILT_DASHBOARDS = {
                     "title": "Events",
                     "displayType": "line",
                     "interval": "5m",
+                    "widgetType": error_events_type,
                     "queries": [
                         {
                             "name": "Events",
-                            "conditions": "!event.type:transaction",
+                            "conditions": "" if has_discover_split else "!event.type:transaction",
                             "fields": ["count()"],
                             "aggregates": ["count()"],
                             "columns": [],
+                            "orderby": "",
                         }
                     ],
                 },
@@ -129,20 +182,31 @@ PREBUILT_DASHBOARDS = {
                     "title": "Affected Users",
                     "displayType": "line",
                     "interval": "5m",
+                    "widgetType": error_events_type,
                     "queries": [
                         {
                             "name": "Known Users",
-                            "conditions": "has:user.email !event.type:transaction",
+                            "conditions": (
+                                "has:user.email"
+                                if has_discover_split
+                                else "has:user.email !event.type:transaction"
+                            ),
                             "fields": ["count_unique(user)"],
                             "aggregates": ["count_unique(user)"],
                             "columns": [],
+                            "orderby": "",
                         },
                         {
                             "name": "Anonymous Users",
-                            "conditions": "!has:user.email !event.type:transaction",
+                            "conditions": (
+                                "!has:user.email"
+                                if has_discover_split
+                                else "!has:user.email !event.type:transaction"
+                            ),
                             "fields": ["count_unique(user)"],
                             "aggregates": ["count_unique(user)"],
                             "columns": [],
+                            "orderby": "",
                         },
                     ],
                 },
@@ -150,6 +214,7 @@ PREBUILT_DASHBOARDS = {
                     "title": "Handled vs. Unhandled",
                     "displayType": "line",
                     "interval": "5m",
+                    "widgetType": error_events_type,
                     "queries": [
                         {
                             "name": "Handled",
@@ -157,6 +222,7 @@ PREBUILT_DASHBOARDS = {
                             "fields": ["count()"],
                             "aggregates": ["count()"],
                             "columns": [],
+                            "orderby": "",
                         },
                         {
                             "name": "Unhandled",
@@ -164,20 +230,27 @@ PREBUILT_DASHBOARDS = {
                             "fields": ["count()"],
                             "aggregates": ["count()"],
                             "columns": [],
+                            "orderby": "",
                         },
                     ],
                 },
                 {
                     "title": "Errors by Country",
-                    "displayType": "world_map",
+                    "displayType": "table",
                     "interval": "5m",
+                    "widgetType": error_events_type,
                     "queries": [
                         {
                             "name": "Error counts",
-                            "conditions": "!event.type:transaction has:geo.country_code",
-                            "fields": ["count()"],
+                            "conditions": (
+                                "has:geo.country_code"
+                                if has_discover_split
+                                else "has:geo.country_code !event.type:transaction"
+                            ),
+                            "fields": ["geo.country_code", "geo.region", "count()"],
                             "aggregates": ["count()"],
-                            "columns": [],
+                            "columns": ["geo.country_code", "geo.region"],
+                            "orderby": "-count()",
                         }
                     ],
                 },
@@ -185,14 +258,19 @@ PREBUILT_DASHBOARDS = {
                     "title": "Errors by Browser",
                     "displayType": "table",
                     "interval": "5m",
+                    "widgetType": error_events_type,
                     "queries": [
                         {
                             "name": "",
-                            "conditions": "!event.type:transaction has:browser.name",
+                            "conditions": (
+                                "has:browser.name"
+                                if has_discover_split
+                                else "has:browser.name !event.type:transaction"
+                            ),
                             "fields": ["browser.name", "count()"],
                             "aggregates": ["count()"],
                             "columns": ["browser.name"],
-                            "orderby": "-count",
+                            "orderby": "-count()",
                         }
                     ],
                 },
@@ -200,14 +278,15 @@ PREBUILT_DASHBOARDS = {
                     "title": "High Throughput Transactions",
                     "displayType": "table",
                     "interval": "5m",
+                    "widgetType": transaction_type,
                     "queries": [
                         {
                             "name": "",
                             "fields": ["count()", "transaction"],
                             "aggregates": ["count()"],
                             "columns": ["transaction"],
-                            "conditions": "!event.type:error",
-                            "orderby": "-count",
+                            "conditions": "" if has_discover_split else "event.type:transaction",
+                            "orderby": "-count()",
                         },
                     ],
                 },
@@ -215,6 +294,7 @@ PREBUILT_DASHBOARDS = {
                     "title": "Overall User Misery",
                     "displayType": "big_number",
                     "interval": "5m",
+                    "widgetType": transaction_type,
                     "queries": [
                         {
                             "name": "",
@@ -230,14 +310,15 @@ PREBUILT_DASHBOARDS = {
                     "title": "High Throughput Transactions",
                     "displayType": "top_n",
                     "interval": "5m",
+                    "widgetType": transaction_type,
                     "queries": [
                         {
                             "name": "",
                             "fields": ["transaction", "count()"],
                             "aggregates": ["count()"],
                             "columns": ["transaction"],
-                            "conditions": "!event.type:error",
-                            "orderby": "-count",
+                            "conditions": "" if has_discover_split else "event.type:transaction",
+                            "orderby": "-count()",
                         },
                     ],
                 },
@@ -252,7 +333,7 @@ PREBUILT_DASHBOARDS = {
                             "aggregates": [],
                             "columns": ["assignee", "issue", "title"],
                             "conditions": "assigned_or_suggested:me is:unresolved",
-                            "orderby": "priority",
+                            "orderby": "trends",
                         },
                     ],
                     "widgetType": "issue",
@@ -261,6 +342,7 @@ PREBUILT_DASHBOARDS = {
                     "title": "Transactions Ordered by Misery",
                     "displayType": "table",
                     "interval": "5m",
+                    "widgetType": transaction_type,
                     "queries": [
                         {
                             "name": "",
@@ -268,11 +350,14 @@ PREBUILT_DASHBOARDS = {
                             "aggregates": ["user_misery(300)"],
                             "columns": ["transaction"],
                             "conditions": "",
-                            "orderby": "-user_misery_300",
+                            "orderby": "-user_misery(300)",
                         },
                     ],
                 },
             ],
         }
     ]
-}
+
+
+def get_all_prebuilt_dashboards(organization, user):
+    return {item["id"]: item for item in get_prebuilt_dashboards(organization, user)}

@@ -1,19 +1,27 @@
 import logging
 import operator
-from copy import copy
 from datetime import timedelta
 
+from django import forms
 from django.conf import settings
-from django.db import transaction
+from django.db import router, transaction
 from django.utils import timezone
+from parsimonious.exceptions import ParseError
 from rest_framework import serializers
-from snuba_sdk.legacy import json_to_snql
+from snuba_sdk import Column, Condition, Entity, Limit, Op
+from urllib3.exceptions import MaxRetryError, TimeoutError
 
+from sentry import features
+from sentry.api.exceptions import BadRequest, RequestTimeout
 from sentry.api.fields.actor import ActorField
 from sentry.api.serializers.rest_framework.base import CamelSnakeModelSerializer
 from sentry.api.serializers.rest_framework.environment import EnvironmentField
 from sentry.api.serializers.rest_framework.project import ProjectField
-from sentry.exceptions import InvalidSearchQuery, UnsupportedQuerySubscription
+from sentry.exceptions import (
+    IncompatibleMetricsQuery,
+    InvalidSearchQuery,
+    UnsupportedQuerySubscription,
+)
 from sentry.incidents.logic import (
     CRITICAL_TRIGGER_LABEL,
     WARNING_TRIGGER_LABEL,
@@ -21,24 +29,40 @@ from sentry.incidents.logic import (
     check_aggregate_column_support,
     create_alert_rule,
     delete_alert_rule_trigger,
+    get_column_from_aggregate,
+    query_datasets_to_type,
     translate_aggregate_field,
     update_alert_rule,
 )
-from sentry.incidents.models import AlertRule, AlertRuleThresholdType, AlertRuleTrigger
+from sentry.incidents.models.alert_rule import (
+    AlertRule,
+    AlertRuleDetectionType,
+    AlertRuleMonitorTypeInt,
+    AlertRuleThresholdType,
+    AlertRuleTrigger,
+)
+from sentry.incidents.utils.types import AlertRuleActivationConditionType
 from sentry.snuba.dataset import Dataset
-from sentry.snuba.entity_subscription import get_entity_subscription_for_dataset
-from sentry.snuba.models import QueryDatasets, QuerySubscription, SnubaQueryEventType
-from sentry.snuba.tasks import build_snuba_filter
-from sentry.utils import json
-from sentry.utils.snuba import raw_snql_query
+from sentry.snuba.entity_subscription import (
+    ENTITY_TIME_COLUMNS,
+    get_entity_key_from_query_builder,
+    get_entity_subscription,
+)
+from sentry.snuba.models import QuerySubscription, SnubaQuery, SnubaQueryEventType
 
-from . import CRASH_RATE_ALERTS_ALLOWED_TIME_WINDOWS, DATASET_VALID_EVENT_TYPES, UNSUPPORTED_QUERIES
+from ...snuba.metrics.naming_layer.mri import is_mri
+from . import (
+    CRASH_RATE_ALERTS_ALLOWED_TIME_WINDOWS,
+    QUERY_TYPE_VALID_DATASETS,
+    QUERY_TYPE_VALID_EVENT_TYPES,
+    UNSUPPORTED_QUERIES,
+)
 from .alert_rule_trigger import AlertRuleTriggerSerializer
 
 logger = logging.getLogger(__name__)
 
 
-class AlertRuleSerializer(CamelSnakeModelSerializer):
+class AlertRuleSerializer(CamelSnakeModelSerializer[AlertRule]):
     """
     Serializer for creating/updating an alert rule. Required context:
      - `organization`: The organization related to this alert rule.
@@ -47,13 +71,16 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
     """
 
     environment = EnvironmentField(required=False, allow_null=True)
-    # TODO: These might be slow for many projects, since it will query for each
-    # individually. If we find this to be a problem then we can look into batching.
-    projects = serializers.ListField(child=ProjectField(scope="project:read"), required=False)
+    projects = serializers.ListField(
+        child=ProjectField(scope="project:read"),
+        required=False,
+        max_length=1,
+    )
     excluded_projects = serializers.ListField(
         child=ProjectField(scope="project:read"), required=False
     )
     triggers = serializers.ListField(required=True)
+    query_type = serializers.IntegerField(required=False)
     dataset = serializers.CharField(required=False)
     event_types = serializers.ListField(child=serializers.CharField(), required=False)
     query = serializers.CharField(required=True, allow_blank=True)
@@ -68,16 +95,24 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
         allow_null=True,
     )
     aggregate = serializers.CharField(required=True, min_length=1)
-    owner = ActorField(
-        required=False,
-        allow_null=True,
-    )  # This will be set to required=True once the frontend starts sending it.
+
+    # This will be set to required=True once the frontend starts sending it.
+    owner = ActorField(required=False, allow_null=True)
+
+    monitor_type = serializers.IntegerField(required=False, min_value=0)
+    activation_condition = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+    sensitivity = serializers.CharField(required=False, allow_null=True)
+    seasonality = serializers.CharField(required=False, allow_null=True)
+    detection_type = serializers.CharField(required=False, default=AlertRuleDetectionType.STATIC)
 
     class Meta:
         model = AlertRule
         fields = [
             "name",
             "owner",
+            "query_type",
             "dataset",
             "query",
             "time_window",
@@ -92,9 +127,15 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
             "excluded_projects",
             "triggers",
             "event_types",
+            "monitor_type",
+            "activation_condition",
+            "description",
+            "sensitivity",
+            "seasonality",
+            "detection_type",
         ]
         extra_kwargs = {
-            "name": {"min_length": 1, "max_length": 64},
+            "name": {"min_length": 1, "max_length": 256},
             "include_all_projects": {"default": False},
             "threshold_type": {"required": True},
             "resolve_threshold": {"required": False},
@@ -104,13 +145,6 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
         AlertRuleThresholdType.ABOVE: lambda threshold: threshold + 100,
         AlertRuleThresholdType.BELOW: lambda threshold: 100 - threshold,
     }
-
-    def validate_owner(self, owner):
-        # owner should be team:id or user:id
-        if owner is None:
-            return
-
-        return owner
 
     def validate_query(self, query):
         query_terms = query.split()
@@ -122,27 +156,56 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
         return query
 
     def validate_aggregate(self, aggregate):
+        allow_mri = features.has(
+            "organizations:custom-metrics",
+            self.context["organization"],
+            actor=self.context.get("user", None),
+        ) or features.has(
+            "organizations:insights-alerts",
+            self.context["organization"],
+            actor=self.context.get("user", None),
+        )
+        allow_eap = features.has(
+            "organizations:alerts-eap",
+            self.context["organization"],
+            actor=self.context.get("user", None),
+        )
+
         try:
-            if not check_aggregate_column_support(aggregate):
+            if not check_aggregate_column_support(
+                aggregate,
+                allow_mri=allow_mri,
+                allow_eap=allow_eap,
+            ):
                 raise serializers.ValidationError(
                     "Invalid Metric: We do not currently support this field."
                 )
         except InvalidSearchQuery as e:
             raise serializers.ValidationError(f"Invalid Metric: {e}")
-        return translate_aggregate_field(aggregate)
+
+        return translate_aggregate_field(aggregate, allow_mri=allow_mri)
+
+    def validate_query_type(self, query_type):
+        try:
+            return SnubaQuery.Type(query_type)
+        except ValueError:
+            raise serializers.ValidationError(
+                f"Invalid query type {query_type}, valid values are {[item.value for item in SnubaQuery.Type]}"
+            )
 
     def validate_dataset(self, dataset):
         try:
-            return QueryDatasets(dataset)
+            dataset = Dataset(dataset)
+            if dataset in [Dataset.PerformanceMetrics, Dataset.Transactions]:
+                return self._validate_performance_dataset(dataset)
+
+            return dataset
         except ValueError:
             raise serializers.ValidationError(
-                "Invalid dataset, valid values are %s" % [item.value for item in QueryDatasets]
+                "Invalid dataset, valid values are %s" % [item.value for item in Dataset]
             )
 
     def validate_event_types(self, event_types):
-        dataset = self.initial_data.get("dataset")
-        if dataset not in [Dataset.Events.value, Dataset.Transactions.value]:
-            return []
         try:
             return [SnubaQueryEventType.EventType[event_type.upper()] for event_type in event_types]
         except KeyError:
@@ -160,6 +223,28 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
                 % [item.value for item in AlertRuleThresholdType]
             )
 
+    def validate_monitor_type(self, monitor_type):
+        if monitor_type > 0 and not features.has(
+            "organizations:activated-alert-rules",
+            self.context["organization"],
+            actor=self.context.get("user", None),
+        ):
+            raise serializers.ValidationError("Invalid monitor type")
+
+        return AlertRuleMonitorTypeInt(monitor_type)
+
+    def validate_activation_condition(self, activation_condition):
+        if activation_condition is None:
+            return activation_condition
+
+        try:
+            return AlertRuleActivationConditionType(activation_condition)
+        except ValueError:
+            raise serializers.ValidationError(
+                "Invalid activation condition, valid values are %s"
+                % [item.value for item in AlertRuleActivationConditionType]
+            )
+
     def validate(self, data):
         """
         Performs validation on an alert rule's data.
@@ -168,86 +253,8 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
         both alert and resolve 'after' the warning trigger (whether that means
         > or < the value depends on threshold type).
         """
-        data.setdefault("dataset", QueryDatasets.EVENTS)
-        project_id = data.get("projects")
-        if not project_id:
-            # We just need a valid project id from the org so that we can verify
-            # the query. We don't use the returned data anywhere, so it doesn't
-            # matter which.
-            project_id = list(self.context["organization"].project_set.all()[:1])
-
-        try:
-            entity_subscription = get_entity_subscription_for_dataset(
-                dataset=QueryDatasets(data["dataset"]),
-                aggregate=data["aggregate"],
-                time_window=int(timedelta(minutes=data["time_window"]).total_seconds()),
-                extra_fields={
-                    "org_id": project_id[0].organization_id,
-                    "event_types": data.get("event_types"),
-                },
-            )
-        except UnsupportedQuerySubscription as e:
-            raise serializers.ValidationError(f"{e}")
-
-        try:
-            snuba_filter = build_snuba_filter(
-                entity_subscription,
-                data["query"],
-                data.get("environment"),
-                params={
-                    "project_id": [p.id for p in project_id],
-                    "start": timezone.now() - timedelta(minutes=10),
-                    "end": timezone.now(),
-                },
-            )
-            if any(cond[0] == "project_id" for cond in snuba_filter.conditions):
-                raise serializers.ValidationError({"query": "Project is an invalid search term"})
-        except (InvalidSearchQuery, ValueError) as e:
-            raise serializers.ValidationError(f"Invalid Query or Metric: {e}")
-        else:
-            if not snuba_filter.aggregations:
-                raise serializers.ValidationError(
-                    "Invalid Metric: Please pass a valid function for aggregation"
-                )
-
-            dataset = Dataset(data["dataset"].value)
-            self._validate_time_window(dataset, data.get("time_window"))
-
-            conditions = copy(snuba_filter.conditions)
-            time_col = entity_subscription.time_col
-            conditions += [
-                [time_col, ">=", snuba_filter.start],
-                [time_col, "<", snuba_filter.end],
-            ]
-
-            body = {
-                "project": project_id[0].id,
-                "project_id": project_id[0].id,
-                "aggregations": snuba_filter.aggregations,
-                "conditions": conditions,
-                "filter_keys": snuba_filter.filter_keys,
-                "having": snuba_filter.having,
-                "dataset": dataset.value,
-                "limit": 1,
-                **entity_subscription.get_entity_extra_params(),
-            }
-
-            try:
-                snql_query = json_to_snql(body, entity_subscription.entity_key.value)
-                snql_query.validate()
-            except Exception as e:
-                raise serializers.ValidationError(
-                    str(e), params={"params": json.dumps(body), "dataset": data["dataset"].value}
-                )
-
-            try:
-                raw_snql_query(snql_query, referrer="alertruleserializer.test_query")
-            except Exception:
-                logger.exception("Error while validating snuba alert rule query")
-                raise serializers.ValidationError(
-                    "Invalid Query or Metric: An error occurred while attempting "
-                    "to run the query"
-                )
+        self._validate_query(data)
+        query_type = data["query_type"]
 
         triggers = data.get("triggers", [])
         if not triggers:
@@ -257,9 +264,11 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
                 "Must send 1 or 2 triggers - A critical trigger, and an optional warning trigger"
             )
 
+        if query_type == SnubaQuery.Type.CRASH_RATE:
+            data["event_types"] = []
         event_types = data.get("event_types")
 
-        valid_event_types = DATASET_VALID_EVENT_TYPES.get(data["dataset"], set())
+        valid_event_types = QUERY_TYPE_VALID_EVENT_TYPES.get(query_type, set())
         if event_types and set(event_types) - valid_event_types:
             raise serializers.ValidationError(
                 "Invalid event types for this dataset. Valid event types are %s"
@@ -277,7 +286,6 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
         self._translate_thresholds(threshold_type, data.get("comparison_delta"), triggers, data)
 
         critical = triggers[0]
-
         self._validate_trigger_thresholds(threshold_type, critical, data.get("resolve_threshold"))
 
         if len(triggers) == 2:
@@ -288,6 +296,114 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
             self._validate_critical_warning_triggers(threshold_type, critical, warning)
 
         return data
+
+    def _validate_query(self, data):
+        dataset = data.setdefault("dataset", Dataset.Events)
+
+        if features.has(
+            "organizations:custom-metrics",
+            self.context["organization"],
+            actor=self.context.get("user", None),
+        ) or features.has(
+            "organizations:insights-alerts",
+            self.context["organization"],
+            actor=self.context.get("user", None),
+        ):
+            column = get_column_from_aggregate(data["aggregate"], allow_mri=True)
+            if is_mri(column) and dataset != Dataset.PerformanceMetrics:
+                raise serializers.ValidationError(
+                    "You can use an MRI only on alerts on performance metrics"
+                )
+
+        query_type = data.setdefault("query_type", query_datasets_to_type[dataset])
+
+        valid_datasets = QUERY_TYPE_VALID_DATASETS[query_type]
+        if dataset not in valid_datasets:
+            raise serializers.ValidationError(
+                "Invalid dataset for this query type. Valid datasets are %s"
+                % sorted(dataset.name.lower() for dataset in valid_datasets)
+            )
+
+        if (
+            not features.has(
+                "organizations:mep-rollout-flag",
+                self.context["organization"],
+                actor=self.context.get("user", None),
+            )
+            and dataset == Dataset.PerformanceMetrics
+            and query_type == SnubaQuery.Type.PERFORMANCE
+        ):
+            raise serializers.ValidationError(
+                "This project does not have access to the `generic_metrics` dataset"
+            )
+
+        projects = data.get("projects")
+        if not projects:
+            # We just need a valid project id from the org so that we can verify
+            # the query. We don't use the returned data anywhere, so it doesn't
+            # matter which.
+            projects = list(self.context["organization"].project_set.all()[:1])
+
+        try:
+            entity_subscription = get_entity_subscription(
+                query_type,
+                dataset=dataset,
+                aggregate=data["aggregate"],
+                time_window=int(timedelta(minutes=data["time_window"]).total_seconds()),
+                extra_fields={
+                    "org_id": projects[0].organization_id,
+                    "event_types": data.get("event_types"),
+                },
+            )
+        except UnsupportedQuerySubscription as e:
+            raise serializers.ValidationError(f"{e}")
+
+        self._validate_snql_query(data, entity_subscription, projects)
+
+    def _validate_snql_query(self, data, entity_subscription, projects):
+        end = timezone.now()
+        start = end - timedelta(minutes=10)
+        try:
+            query_builder = entity_subscription.build_query_builder(
+                query=data["query"],
+                project_ids=[p.id for p in projects],
+                environment=data.get("environment"),
+                params={
+                    "organization_id": projects[0].organization_id,
+                    "project_id": [p.id for p in projects],
+                    "start": start,
+                    "end": end,
+                },
+            )
+        except (InvalidSearchQuery, ValueError, IncompatibleMetricsQuery) as e:
+            raise serializers.ValidationError(f"Invalid Query or Metric: {e}")
+
+        if not query_builder.are_columns_resolved():
+            raise serializers.ValidationError(
+                "Invalid Metric: Please pass a valid function for aggregation"
+            )
+
+        dataset = Dataset(data["dataset"].value)
+        self._validate_time_window(dataset, data.get("time_window"))
+
+        entity = Entity(Dataset.Events.value, alias=Dataset.Events.value)
+
+        time_col = ENTITY_TIME_COLUMNS[get_entity_key_from_query_builder(query_builder)]
+        query_builder.add_conditions(
+            [
+                Condition(Column(time_col, entity=entity), Op.GTE, start),
+                Condition(Column(time_col, entity=entity), Op.LT, end),
+            ]
+        )
+        query_builder.limit = Limit(1)
+
+        try:
+            query_builder.run_query(referrer="alertruleserializer.test_query")
+        except Exception:
+            logger.exception("Error while validating snuba alert rule query")
+            raise serializers.ValidationError(
+                "Invalid Query or Metric: An error occurred while attempting " "to run the query"
+            )
 
     def _translate_thresholds(self, threshold_type, comparison_delta, triggers, data):
         """
@@ -300,7 +416,12 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
         if comparison_delta is None:
             return
 
-        translator = self.threshold_translators[threshold_type]
+        translator = self.threshold_translators.get(threshold_type)
+        if not translator:
+            raise serializers.ValidationError(
+                "Invalid threshold type: Allowed types for comparison alerts are above OR below"
+            )
+
         resolve_threshold = data.get("resolve_threshold")
         if resolve_threshold:
             data["resolve_threshold"] = translator(resolve_threshold)
@@ -309,7 +430,7 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
 
     @staticmethod
     def _validate_time_window(dataset, time_window):
-        if dataset in [Dataset.Sessions, Dataset.Metrics]:
+        if dataset == Dataset.Metrics:
             # Validate time window
             if time_window not in CRASH_RATE_ALERTS_ALLOWED_TIME_WINDOWS:
                 raise serializers.ValidationError(
@@ -318,6 +439,9 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
                 )
 
     def _validate_trigger_thresholds(self, threshold_type, trigger, resolve_threshold):
+        if trigger.get("alert_threshold") is None:
+            raise serializers.ValidationError("Trigger must have an alertThreshold")
+
         if resolve_threshold is None:
             return
         is_integer = (
@@ -353,6 +477,30 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
                 f"Critical trigger must have an alert threshold {threshold_type} warning trigger"
             )
 
+    def _validate_performance_dataset(self, dataset):
+        if dataset != Dataset.Transactions:
+            return dataset
+
+        has_dynamic_sampling = features.has(
+            "organizations:dynamic-sampling", self.context["organization"]
+        )
+        has_performance_metrics_flag = features.has(
+            "organizations:mep-rollout-flag", self.context["organization"]
+        )
+        has_performance_metrics = has_dynamic_sampling and has_performance_metrics_flag
+
+        has_on_demand_metrics = features.has(
+            "organizations:on-demand-metrics-extraction",
+            self.context["organization"],
+        )
+
+        if has_performance_metrics or has_on_demand_metrics:
+            raise serializers.ValidationError(
+                "Performance alerts must use the `generic_metrics` dataset"
+            )
+
+        return dataset
+
     def create(self, validated_data):
         org_subscription_count = QuerySubscription.objects.filter(
             project__organization_id=self.context["organization"].id,
@@ -367,13 +515,28 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
             raise serializers.ValidationError(
                 f"You may not exceed {settings.MAX_QUERY_SUBSCRIPTIONS_PER_ORG} metric alerts per organization"
             )
-        with transaction.atomic():
+        with transaction.atomic(router.db_for_write(AlertRule)):
             triggers = validated_data.pop("triggers")
-            alert_rule = create_alert_rule(
-                user=self.context.get("user", None),
-                organization=self.context["organization"],
-                **validated_data,
-            )
+            try:
+                alert_rule = create_alert_rule(
+                    user=self.context.get("user", None),
+                    organization=self.context["organization"],
+                    ip_address=self.context.get("ip_address"),
+                    **validated_data,
+                )
+            except (TimeoutError, MaxRetryError):
+                raise RequestTimeout
+            except ParseError:
+                raise serializers.ValidationError("Failed to parse Seer store data response")
+            except forms.ValidationError as e:
+                # if we fail in create_metric_alert, then only one message is ever returned
+                raise serializers.ValidationError(e.error_list[0].message)
+            except Exception as e:
+                logger.exception(
+                    "Error when creating alert rule",
+                    extra={"details": str(e)},
+                )
+                raise BadRequest
             self._handle_triggers(alert_rule, triggers)
             return alert_rule
 
@@ -381,10 +544,33 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
         triggers = validated_data.pop("triggers")
         if "id" in validated_data:
             validated_data.pop("id")
-        with transaction.atomic():
-            alert_rule = update_alert_rule(
-                instance, user=self.context.get("user", None), **validated_data
-            )
+        if "monitor_type" in validated_data:
+            """
+            TODO: enable monitor type editing
+            requires creating/disabling activations accordingly
+            """
+            validated_data.pop("monitor_type")
+        with transaction.atomic(router.db_for_write(AlertRule)):
+            try:
+                alert_rule = update_alert_rule(
+                    instance,
+                    user=self.context.get("user", None),
+                    ip_address=self.context.get("ip_address"),
+                    **validated_data,
+                )
+            except (TimeoutError, MaxRetryError):
+                raise RequestTimeout
+            except ParseError:
+                raise serializers.ValidationError("Failed to parse Seer store data response")
+            except forms.ValidationError as e:
+                # if we fail in update_metric_alert, then only one message is ever returned
+                raise serializers.ValidationError(e.error_list[0].message)
+            except Exception as e:
+                logger.exception(
+                    "Error when updating alert rule",
+                    extra={"details": str(e)},
+                )
+                raise BadRequest
             self._handle_triggers(alert_rule, triggers)
             return alert_rule
 
@@ -415,7 +601,9 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
                         "user": self.context["user"],
                         "use_async_lookup": self.context.get("use_async_lookup"),
                         "input_channel_id": self.context.get("input_channel_id"),
-                        "validate_channel_id": self.context.get("validate_channel_id"),
+                        "validate_channel_id": self.context.get("validate_channel_id", True),
+                        "installations": self.context.get("installations"),
+                        "integrations": self.context.get("integrations"),
                     },
                     instance=trigger_instance,
                     data=trigger_data,

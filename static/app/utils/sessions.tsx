@@ -1,18 +1,22 @@
+import type {Theme} from '@emotion/react';
 import compact from 'lodash/compact';
-import mean from 'lodash/mean';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
+import type {DateTimeObject} from 'sentry/components/charts/utils';
 import {
-  DateTimeObject,
   getDiffInMinutes,
   SIX_HOURS,
   SIXTY_DAYS,
   THIRTY_DAYS,
+  TWENTY_FOUR_HOURS,
 } from 'sentry/components/charts/utils';
-import {SessionApiResponse, SessionFieldWithOperation, SessionStatus} from 'sentry/types';
-import {SeriesDataUnit} from 'sentry/types/echarts';
+import type {SeriesDataUnit} from 'sentry/types/echarts';
+import type {
+  SessionApiResponse,
+  SessionFieldWithOperation,
+} from 'sentry/types/organization';
+import {SessionStatus} from 'sentry/types/organization';
 import {defined, percent} from 'sentry/utils';
-import {Theme} from 'sentry/utils/theme';
 import {getCrashFreePercent, getSessionStatusPercent} from 'sentry/views/releases/utils';
 import {sessionTerm} from 'sentry/views/releases/utils/sessionTerm';
 
@@ -157,31 +161,6 @@ export function getSessionStatusRateSeries(
   );
 }
 
-export function getSessionP50Series(
-  groups: SessionApiResponse['groups'] = [],
-  intervals: SessionApiResponse['intervals'] = [],
-  field: SessionFieldWithOperation,
-  valueFormatter?: (value: number) => number
-): SeriesDataUnit[] {
-  return compact(
-    intervals.map((interval, i) => {
-      const meanValue = mean(
-        groups.map(group => group.series[field][i]).filter(v => !!v)
-      );
-
-      if (!meanValue) {
-        return null;
-      }
-
-      return {
-        name: interval,
-        value:
-          typeof valueFormatter === 'function' ? valueFormatter(meanValue) : meanValue,
-      };
-    })
-  );
-}
-
 export function getAdoptionSeries(
   releaseGroups: SessionApiResponse['groups'] = [],
   allGroups: SessionApiResponse['groups'] = [],
@@ -277,18 +256,23 @@ export function initSessionsChart(theme: Theme) {
 }
 
 type GetSessionsIntervalOptions = {
+  dailyInterval?: boolean;
   highFidelity?: boolean;
 };
 
 export function getSessionsInterval(
   datetimeObj: DateTimeObject,
-  {highFidelity}: GetSessionsIntervalOptions = {}
+  {highFidelity, dailyInterval}: GetSessionsIntervalOptions = {}
 ) {
   const diffInMinutes = getDiffInMinutes(datetimeObj);
 
   if (moment(datetimeObj.start).isSameOrBefore(moment().subtract(30, 'days'))) {
     // we cannot use sub-hour session resolution on buckets older than 30 days
     highFidelity = false;
+  }
+
+  if (dailyInterval === true && diffInMinutes > TWENTY_FOUR_HOURS) {
+    return '1d';
   }
 
   if (diffInMinutes >= SIXTY_DAYS) {
@@ -346,8 +330,8 @@ export function filterSessionsInTimeWindow(
   });
 
   const groups = sessions.groups.map(group => {
-    const series = {};
-    const totals = {};
+    const series: Record<string, number[]> = {};
+    const totals: Record<string, number> = {};
     Object.keys(group.series).forEach(field => {
       totals[field] = 0;
       series[field] = group.series[field].filter((value, index) => {
@@ -359,13 +343,15 @@ export function filterSessionsInTimeWindow(
         return isBetween;
       });
       if (field.startsWith('p50')) {
-        totals[field] = mean(series[field]);
+        // Calculate the mean of the current field.
+        const base = series[field] ?? [];
+        totals[field] = base.reduce((acc, curr) => acc + curr, 0) / base.length;
       }
       if (field.startsWith('count_unique')) {
-        /* E.g. users
-        We cannot sum here because users would not be unique anymore.
-        User can be repeated and part of multiple buckets in series but it's still that one user so totals would be wrong.
-        This operation is not 100% correct, because we are filtering series in time window but the total is for unfiltered series (it's the closest thing we can do right now) */
+        // E.g. users
+        // We cannot sum here because users would not be unique anymore.
+        // User can be repeated and part of multiple buckets in series but it's still that one user so totals would be wrong.
+        // This operation is not 100% correct, because we are filtering series in time window but the total is for unfiltered series (it's the closest thing we can do right now)
         totals[field] = group.totals[field];
       }
     });

@@ -1,9 +1,5 @@
-import functools
 import itertools
 import logging
-
-from sentry.utils.compat import map, zip
-from sentry.utils.dates import to_timestamp
 
 logger = logging.getLogger("sentry.similarity")
 
@@ -14,13 +10,13 @@ def get_application_chunks(exception):
     better align similar logical application paths. This returns a sequence of
     application code "chunks": blocks of contiguously called application code.
     """
-    return map(
-        lambda in_app__frames: list(in_app__frames[1]),
-        filter(
-            lambda in_app__frames: in_app__frames[0],
-            itertools.groupby(exception.stacktrace.frames, key=lambda frame: frame.in_app),
-        ),
-    )
+    return [
+        list(frames)
+        for in_app, frames in itertools.groupby(
+            exception.stacktrace.frames, key=lambda frame: frame.in_app
+        )
+        if in_app
+    ]
 
 
 class InterfaceDoesNotExist(KeyError):
@@ -69,10 +65,10 @@ class FeatureSet:
         self.expected_encoding_errors = expected_encoding_errors
         assert set(self.aliases) == set(self.features)
 
-    def __get_scope(self, project):
+    def __get_scope(self, project) -> str:
         return f"{project.id}"
 
-    def __get_key(self, group):
+    def __get_key(self, group) -> str:
         return f"{group.id}"
 
     def extract(self, event):
@@ -84,7 +80,7 @@ class FeatureSet:
                 log = (
                     logger.debug
                     if isinstance(error, self.expected_extraction_errors)
-                    else functools.partial(logger.warning, exc_info=True)
+                    else logger.warning
                 )
                 log(
                     "Could not extract features from %r for %r due to error: %r",
@@ -99,8 +95,8 @@ class FeatureSet:
         if not events:
             return []
 
-        scope = None
-        key = None
+        scope: str | None = None
+        key: str | None = None
 
         items = []
         for event in events:
@@ -122,24 +118,25 @@ class FeatureSet:
                     ), "all events must be associated with the same group"
 
                 try:
-                    features = map(self.encoder.dumps, features)
+                    features = [self.encoder.dumps(feature) for feature in features]
                 except Exception as error:
                     log = (
                         logger.debug
                         if isinstance(error, self.expected_encoding_errors)
-                        else functools.partial(logger.warning, exc_info=True)
+                        else logger.warning
                     )
                     log(
                         "Could not encode features from %r for %r due to error: %r",
                         event,
                         label,
                         error,
+                        exc_info=True,
                     )
                 else:
                     if features:
                         items.append((self.aliases[label], features))
 
-        return self.index.record(scope, key, items, timestamp=int(to_timestamp(event.datetime)))
+        return self.index.record(scope, key, items, timestamp=int(event.datetime.timestamp()))
 
     def classify(self, events, limit=None, thresholds=None):
         if not events:
@@ -148,7 +145,7 @@ class FeatureSet:
         if thresholds is None:
             thresholds = {}
 
-        scope = None
+        scope: str | None = None
 
         labels = []
         items = []
@@ -162,30 +159,34 @@ class FeatureSet:
                     ), "all events must be associated with the same project"
 
                 try:
-                    features = map(self.encoder.dumps, features)
+                    features = [self.encoder.dumps(feature) for feature in features]
                 except Exception as error:
                     log = (
                         logger.debug
                         if isinstance(error, self.expected_encoding_errors)
-                        else functools.partial(logger.warning, exc_info=True)
+                        else logger.warning
                     )
                     log(
                         "Could not encode features from %r for %r due to error: %r",
                         event,
                         label,
                         error,
+                        exc_info=True,
                     )
                 else:
                     if features:
                         items.append((self.aliases[label], thresholds.get(label, 0), features))
                         labels.append(label)
 
-        return map(
-            lambda key__scores: (int(key__scores[0]), dict(zip(labels, key__scores[1]))),
-            self.index.classify(
-                scope, items, limit=limit, timestamp=int(to_timestamp(event.datetime))
-            ),
-        )
+        return [
+            (int(key), dict(zip(labels, scores)))
+            for key, scores in self.index.classify(
+                scope,
+                items,
+                limit=limit,
+                timestamp=int(event.datetime.timestamp()),
+            )
+        ]
 
     def compare(self, group, limit=None, thresholds=None):
         if thresholds is None:
@@ -195,12 +196,12 @@ class FeatureSet:
 
         items = [(self.aliases[label], thresholds.get(label, 0)) for label in features]
 
-        return map(
-            lambda key__scores: (int(key__scores[0]), dict(zip(features, key__scores[1]))),
-            self.index.compare(
+        return [
+            (int(key), dict(zip(features, scores)))
+            for key, scores in self.index.compare(
                 self.__get_scope(group.project), self.__get_key(group), items, limit=limit
-            ),
-        )
+            )
+        ]
 
     def merge(self, destination, sources, allow_unsafe=False):
         def add_index_aliases_to_key(key):
@@ -210,7 +211,7 @@ class FeatureSet:
         # within so that we can make the most efficient queries possible and
         # reject queries that cross scopes if we haven't explicitly allowed
         # unsafe actions.
-        scopes = {}
+        scopes: dict[str, set[str]] = {}
         for source in sources:
             scopes.setdefault(self.__get_scope(source.project), set()).add(source)
 

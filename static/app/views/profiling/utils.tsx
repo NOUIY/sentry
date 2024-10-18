@@ -1,7 +1,9 @@
-import {Location} from 'history';
+import type {Location} from 'history';
 
+import type {GridColumnOrder} from 'sentry/components/gridEditable';
+import SortLink from 'sentry/components/gridEditable/sortLink';
 import {t} from 'sentry/locale';
-import {SelectValue} from 'sentry/types';
+import type {SelectValue} from 'sentry/types/core';
 import {defined} from 'sentry/utils';
 import {decodeScalar} from 'sentry/utils/queryString';
 
@@ -33,3 +35,43 @@ export function getColorEncodingFromLocation(location: Location): ColorEncoding 
 
   return 'transaction_name';
 }
+
+export function requestAnimationFrameTimeout(cb: () => void, timeout: number) {
+  const rafId = {current: 0};
+  const start = performance.now();
+
+  function timer() {
+    if (rafId.current) {
+      window.cancelAnimationFrame(rafId.current);
+    }
+    if (performance.now() - start > timeout) {
+      cb();
+      return;
+    }
+    rafId.current = window.requestAnimationFrame(timer);
+  }
+
+  rafId.current = window.requestAnimationFrame(timer);
+  return rafId;
+}
+
+export function renderTableHeader<K>(rightAlignedColumns: Set<K>) {
+  return function (column: GridColumnOrder<K>, _columnIndex: number) {
+    return (
+      <SortLink
+        align={rightAlignedColumns.has(column.key) ? 'right' : 'left'}
+        title={column.name}
+        direction={undefined}
+        canSort={false}
+        generateSortLink={() => undefined}
+      />
+    );
+  };
+}
+
+export const DEFAULT_PROFILING_DATETIME_SELECTION = {
+  start: null,
+  end: null,
+  utc: false,
+  period: '24h',
+};

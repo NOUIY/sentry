@@ -1,7 +1,7 @@
 from django.test.client import RequestFactory
 from django.urls import reverse
 
-from tests.apidocs.util import APIDocsTestCase
+from fixtures.apidocs_test_case import APIDocsTestCase
 
 
 class ProjectTagValuesDocs(APIDocsTestCase):
@@ -12,8 +12,8 @@ class ProjectTagValuesDocs(APIDocsTestCase):
         self.url = reverse(
             "sentry-api-0-project-tagkey-values",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "key": key,
             },
         )

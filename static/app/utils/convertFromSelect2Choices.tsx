@@ -1,6 +1,6 @@
-import {Choices, SelectValue} from 'sentry/types';
+import type {Choices, SelectValue} from 'sentry/types/core';
 
-type Input = undefined | string[] | Choices;
+type Input = number | string | undefined | Record<any, any> | string[] | Choices;
 
 function isStringList(maybe: string[] | Choices): maybe is string[] {
   return typeof maybe[0] === 'string';

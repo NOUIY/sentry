@@ -46,7 +46,7 @@ class LockTestCase(unittest.TestCase):
 
     @patch("sentry.utils.locking.lock.random.random", return_value=0.5)
     @patch("sentry.utils.locking.lock.Lock.acquire", side_effect=UnableToAcquireLock)
-    def test_blocking_aqcuire(self, mock_acquire, mock_random):
+    def test_blocking_acquire(self, mock_acquire, mock_random):
         backend = mock.Mock(spec=LockBackend)
         key = "lock"
         duration = 60
@@ -64,7 +64,7 @@ class LockTestCase(unittest.TestCase):
         with patch(
             "sentry.utils.locking.lock.time.monotonic", side_effect=lambda: MockTime.time
         ), patch("sentry.utils.locking.lock.time.sleep", side_effect=MockTime.incr) as mock_sleep:
-            with self.assertRaises(UnableToAcquireLock):
+            with pytest.raises(UnableToAcquireLock):
                 lock.blocking_acquire(initial_delay=0.1, timeout=1, exp_base=2)
 
             # 0.0, 0.05, 0.15, 0.35, 0.75

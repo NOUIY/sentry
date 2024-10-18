@@ -2,10 +2,14 @@ import logging
 import types
 from unittest.mock import PropertyMock, patch
 
-from sentry.mediators import Mediator, Param
-from sentry.models import User
-from sentry.testutils import TestCase
-from sentry.testutils.helpers.faux import faux
+import pytest
+from django.db import router
+
+from sentry.mediators.mediator import Mediator
+from sentry.mediators.param import Param
+from sentry.testutils.cases import TestCase
+from sentry.testutils.silo import control_silo_test
+from sentry.users.models.user import User
 
 
 class Double:
@@ -16,14 +20,16 @@ class Double:
 
 class MockMediator(Mediator):
     user = Param(dict)
-    name = Param((str,), default=lambda self: self.user["name"])
+    name = Param(str, default=lambda self: self.user["name"])
     age = Param(int, required=False)
+    using = router.db_for_write(User)
 
     def call(self):
         with self.log():
             pass
 
 
+@control_silo_test
 class TestMediator(TestCase):
     def setUp(self):
         super(TestCase, self).setUp()
@@ -32,13 +38,14 @@ class TestMediator(TestCase):
         self.mediator = MockMediator(user={"name": "Example"}, age=30, logger=self.logger)
 
     def test_must_implement_call(self):
-        del MockMediator.call
+        with patch.object(MockMediator, "call"):
+            del MockMediator.call
 
-        with self.assertRaises(NotImplementedError):
-            MockMediator.run(user={"name": "Example"})
+            with pytest.raises(NotImplementedError):
+                MockMediator.run(user={"name": "Example"})
 
     def test_validate_params(self):
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             MockMediator.run(user=False)
 
     def test_param_access(self):
@@ -49,7 +56,7 @@ class TestMediator(TestCase):
         assert self.mediator.name == "Example"
 
     def test_missing_params(self):
-        with self.assertRaises(AttributeError):
+        with pytest.raises(AttributeError):
             MockMediator.run(name="Pete", age=30)
 
     def test_log(self):
@@ -69,7 +76,8 @@ class TestMediator(TestCase):
     def test_log_with_request_org(self, _):
         with patch.object(self.logger, "info") as log:
             self.mediator.log(at="test")
-            assert faux(log).kwarg_equals("extra.org", "beep")
+            ((_, kwargs),) = log.call_args_list
+            assert kwargs["extra"]["org"] == "beep"
 
     @patch(
         "sentry.app.env",
@@ -80,7 +88,8 @@ class TestMediator(TestCase):
     def test_log_with_request_team(self, _):
         with patch.object(self.logger, "info") as log:
             self.mediator.log(at="test")
-            assert faux(log).kwarg_equals("extra.team", "foo")
+            ((_, kwargs),) = log.call_args_list
+            assert kwargs["extra"]["team"] == "foo"
 
     @patch(
         "sentry.app.env",
@@ -93,20 +102,18 @@ class TestMediator(TestCase):
     def test_log_with_request_project(self, _):
         with patch.object(self.logger, "info") as log:
             self.mediator.log(at="test")
-            assert faux(log).kwarg_equals("extra.project", "bar")
+            ((_, kwargs),) = log.call_args_list
+            assert kwargs["extra"]["project"] == "bar"
 
-    def test_log_start(self):
+    def test_log_start_finish(self):
         with patch.object(self.logger, "info") as mock:
             self.mediator.call()
 
-        assert faux(mock, 0).args_equals(None)
-        assert faux(mock, 0).kwarg_equals("extra.at", "start")
-
-    def test_log_finish(self):
-        with patch.object(self.logger, "info") as mock:
-            self.mediator.call()
-
-        assert faux(mock).kwarg_equals("extra.at", "finish")
+        ((args1, kwargs1), (args2, kwargs2)) = mock.call_args_list
+        assert args1 == (None,)
+        assert kwargs1["extra"]["at"] == "start"
+        assert args2 == (None,)
+        assert kwargs2["extra"]["at"] == "finish"
 
     def test_log_exception(self):
         def call(self):
@@ -121,16 +128,22 @@ class TestMediator(TestCase):
             except Exception:
                 pass
 
-        assert faux(mock).kwarg_equals("extra.at", "exception")
-        assert faux(mock).kwargs_contain("extra.elapsed")
+        (
+            _,
+            (_, kwargs),
+        ) = mock.call_args_list
+        assert kwargs["extra"]["at"] == "exception"
+        assert "elapsed" in kwargs["extra"]
 
     def test_automatic_transaction(self):
         class TransactionMediator(Mediator):
+            using = router.db_for_write(User)
+
             def call(self):
                 User.objects.create(username="beep")
                 raise RuntimeError()
 
-        with self.assertRaises(RuntimeError):
+        with pytest.raises(RuntimeError):
             TransactionMediator.run()
 
         assert not User.objects.filter(username="beep").exists()

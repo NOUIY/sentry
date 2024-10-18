@@ -1,28 +1,48 @@
 import pickle
 import unittest
 
+import pytest
 from django import forms
 from django.db import connection, models
 from django.db.models import F
 from django.test import TestCase
 
-from bitfield import Bit, BitField, BitHandler
+from bitfield import Bit, BitField, BitHandler, TypedClassBitField
 from bitfield.compat import bitand, bitor
 
 
 class BitFieldTestModel(models.Model):
     class Meta:
-        app_label = "tests"
+        app_label = "fixtures"
 
-    flags = BitField(
-        flags=("FLAG_0", "FLAG_1", "FLAG_2", "FLAG_3"), default=3, db_column="another_name"
-    )
+    class flags(TypedClassBitField):
+        FLAG_0: bool
+        FLAG_1: bool
+        FLAG_2: bool
+        FLAG_3: bool
+
+        bitfield_default = 3
+        bitfield_db_column = "another_name"
 
 
 class BitFieldTestModelForm(forms.ModelForm):
     class Meta:
         model = BitFieldTestModel
-        exclude = tuple()
+        exclude = ()
+
+
+class BitFieldTestModelWithDefaultsAsKeyNames(models.Model):
+    class Meta:
+        app_label = "fixtures"
+
+    class flags(TypedClassBitField):
+        FLAG_0: bool
+        FLAG_1: bool
+        FLAG_2: bool
+        FLAG_3: bool
+
+        bitfield_default = ("FLAG_1", "FLAG_2")
+        bitfield_db_column = "another_name"
 
 
 class BitHandlerTest(unittest.TestCase):
@@ -44,14 +64,14 @@ class BitHandlerTest(unittest.TestCase):
         self.assertEqual(int(bithandler.FLAG_2.number), 2)
         self.assertEqual(int(bithandler.FLAG_3.number), 3)
         # Negative test non-existant key.
-        self.assertRaises(AttributeError, lambda: bithandler.FLAG_4)
+        pytest.raises(AttributeError, lambda: bithandler.FLAG_4)
         # Test bool().
         self.assertEqual(bool(bithandler.FLAG_0), False)
         self.assertEqual(bool(bithandler.FLAG_1), False)
         self.assertEqual(bool(bithandler.FLAG_2), False)
         self.assertEqual(bool(bithandler.FLAG_3), False)
 
-    def test_nonzero_default(self):
+    def test_bool_default(self):
         bithandler = BitHandler(1, ("FLAG_0", "FLAG_1", "FLAG_2", "FLAG_3"))
         self.assertEqual(bool(bithandler.FLAG_0), True)
         self.assertEqual(bool(bithandler.FLAG_1), False)
@@ -170,7 +190,8 @@ class BitFieldTest(TestCase):
 
         cursor = connection.cursor()
         flags_field = BitFieldTestModel._meta.get_field("flags")
-        flags_db_column = flags_field.db_column or flags_field.name
+        assert isinstance(flags_field, BitField)
+        flags_db_column = flags_field.db_column
         cursor.execute(
             f"INSERT INTO {BitFieldTestModel._meta.db_table} ({flags_db_column}) VALUES (-1)"
         )
@@ -306,7 +327,7 @@ class BitFieldTest(TestCase):
         except ValueError:
             self.fail("It should work well with these flags")
 
-        self.assertRaises(ValueError, BitField, flags=flags[: (MAX_COUNT + 1)])
+        pytest.raises(ValueError, BitField, flags=flags[: (MAX_COUNT + 1)])
 
     def test_dictionary_init(self):
         flags = {
@@ -325,18 +346,18 @@ class BitFieldTest(TestCase):
             self.fail("It should work well with these flags")
 
         self.assertEqual(bf.flags, ["zero", "first", "second", "", "", "", "", "", "", "", "tenth"])
-        self.assertRaises(ValueError, BitField, flags={})
-        self.assertRaises(ValueError, BitField, flags={"wrongkey": "wrongkey"})
-        self.assertRaises(ValueError, BitField, flags={"1": "non_int_key"})
+        pytest.raises(ValueError, BitField, flags={})
+        pytest.raises(ValueError, BitField, flags={"wrongkey": "wrongkey"})
+        pytest.raises(ValueError, BitField, flags={"1": "non_int_key"})
 
     def test_defaults_as_key_names(self):
-        class TestModel(models.Model):
-            flags = BitField(
-                flags=("FLAG_0", "FLAG_1", "FLAG_2", "FLAG_3"), default=("FLAG_1", "FLAG_2")
-            )
-
-        field = TestModel._meta.get_field("flags")
-        self.assertEqual(field.default, TestModel.flags.FLAG_1 | TestModel.flags.FLAG_2)
+        field = BitFieldTestModelWithDefaultsAsKeyNames._meta.get_field("flags")
+        assert isinstance(field, BitField)
+        self.assertEqual(
+            field.default,
+            BitFieldTestModelWithDefaultsAsKeyNames.flags.FLAG_1
+            | BitFieldTestModelWithDefaultsAsKeyNames.flags.FLAG_2,
+        )
 
     def test_pickle_integration(self):
         inst = BitFieldTestModel.objects.create(flags=1)
@@ -349,8 +370,8 @@ class BitFieldTest(TestCase):
 class BitFieldSerializationTest(unittest.TestCase):
     def test_can_unserialize_bithandler(self):
         bf = BitFieldTestModel()
-        bf.flags.FLAG_0 = 1
-        bf.flags.FLAG_1 = 0
+        bf.flags.FLAG_0 = True
+        bf.flags.FLAG_1 = False
         data = pickle.dumps(bf)
         inst = pickle.loads(data)
         self.assertTrue(inst.flags.FLAG_0)
@@ -358,9 +379,9 @@ class BitFieldSerializationTest(unittest.TestCase):
 
     def test_added_field(self):
         bf = BitFieldTestModel()
-        bf.flags.FLAG_0 = 1
-        bf.flags.FLAG_1 = 0
-        bf.flags.FLAG_3 = 0
+        bf.flags.FLAG_0 = True
+        bf.flags.FLAG_1 = False
+        bf.flags.FLAG_3 = False
         data = pickle.dumps(bf)
         inst = pickle.loads(data)
         self.assertTrue("FLAG_3" in inst.flags.keys())

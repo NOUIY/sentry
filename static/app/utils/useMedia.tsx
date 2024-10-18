@@ -4,9 +4,7 @@ import {useEffect, useState} from 'react';
  * Hook that updates when a media query result changes
  */
 export default function useMedia(query: string) {
-  const [state, setState] = useState(
-    () => window.matchMedia && window.matchMedia(query)?.matches
-  );
+  const [state, setState] = useState(() => window.matchMedia?.(query)?.matches);
 
   useEffect(() => {
     let mounted = true;
@@ -22,12 +20,12 @@ export default function useMedia(query: string) {
       setState(!!mql.matches);
     };
 
-    mql.addListener(onChange);
+    mql.addEventListener('change', onChange);
     setState(mql.matches);
 
     return () => {
       mounted = false;
-      mql.removeListener(onChange);
+      mql.removeEventListener('change', onChange);
     };
   }, [query]);
 

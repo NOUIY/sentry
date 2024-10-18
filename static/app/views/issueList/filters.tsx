@@ -1,75 +1,69 @@
-import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import DatePageFilter from 'sentry/components/datePageFilter';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
-import ProjectPageFilter from 'sentry/components/projectPageFilter';
-import space from 'sentry/styles/space';
-import {Organization, SavedSearch} from 'sentry/types';
+import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilter';
+import {space} from 'sentry/styles/space';
+import useOrganization from 'sentry/utils/useOrganization';
+import IssueListSortOptions from 'sentry/views/issueList/actions/sortOptions';
+import {IssueSearchWithSavedSearches} from 'sentry/views/issueList/issueSearchWithSavedSearches';
 
-import IssueListSearchBar from './searchBar';
-import {TagValueLoader} from './types';
-
-type IssueListSearchBarProps = React.ComponentProps<typeof IssueListSearchBar>;
-
-type Props = {
-  isSearchDisabled: boolean;
+interface Props {
   onSearch: (query: string) => void;
-  onSidebarToggle: (event: React.MouseEvent) => void;
-  organization: Organization;
+  onSortChange: (sort: string) => void;
   query: string;
-  savedSearch: SavedSearch;
   sort: string;
-  tagValueLoader: TagValueLoader;
-  tags: NonNullable<IssueListSearchBarProps['supportedTags']>;
-};
+}
 
-function IssueListFilters({
-  organization,
-  savedSearch,
-  query,
-  isSearchDisabled,
-  sort,
-  onSidebarToggle,
-  onSearch,
-  tagValueLoader,
-  tags,
-}: Props) {
+function IssueListFilters({query, sort, onSortChange, onSearch}: Props) {
+  const organization = useOrganization();
+
   return (
-    <Fragment>
-      <SearchContainer>
-        <PageFilterBar>
-          <ProjectPageFilter />
-          <EnvironmentPageFilter />
-          <DatePageFilter alignDropdown="left" />
-        </PageFilterBar>
-        <IssueListSearchBar
-          organization={organization}
-          query={query || ''}
+    <SearchContainer>
+      <StyledPageFilterBar>
+        <ProjectPageFilter />
+        <EnvironmentPageFilter />
+        <DatePageFilter />
+      </StyledPageFilterBar>
+
+      <IssueSearchWithSavedSearches {...{query, onSearch}} />
+
+      {organization.features.includes('issue-stream-table-layout') && (
+        <IssueListSortOptions
+          query={query}
           sort={sort}
-          onSearch={onSearch}
-          disabled={isSearchDisabled}
-          excludeEnvironment
-          supportedTags={tags}
-          tagValueLoader={tagValueLoader}
-          savedSearch={savedSearch}
-          onSidebarToggle={onSidebarToggle}
+          onSelect={onSortChange}
+          triggerSize="md"
+          showIcon={false}
         />
-      </SearchContainer>
-    </Fragment>
+      )}
+    </SearchContainer>
   );
 }
 
 const SearchContainer = styled('div')`
-  display: grid;
-  gap: ${space(2)};
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: ${space(2)};
+  row-gap: ${space(1)};
   width: 100%;
   margin-bottom: ${space(2)};
-  grid-template-columns: minmax(0, max-content) minmax(20rem, 1fr);
 
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
-    grid-template-columns: minmax(0, 1fr);
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
+    flex-direction: column;
+  }
+`;
+
+const StyledPageFilterBar = styled(PageFilterBar)`
+  display: flex;
+  flex-basis: content;
+  width: 100%;
+  max-width: 43rem;
+  align-self: flex-start;
+
+  > div > button {
+    width: 100%;
   }
 `;
 

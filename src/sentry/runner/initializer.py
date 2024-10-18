@@ -1,19 +1,30 @@
+from __future__ import annotations
+
 import importlib.metadata
 import logging
 import os
 import sys
+from typing import IO, Any
 
 import click
 from django.conf import settings
 
-from sentry.utils import metrics, warnings
+from sentry.silo.patches.silo_aware_transaction_patch import patch_silo_aware_atomic
+from sentry.utils import warnings
 from sentry.utils.sdk import configure_sdk
 from sentry.utils.warnings import DeprecatedSettingWarning
 
-logger = logging.getLogger("sentry.runner.initializer")
+
+class ConfigurationError(ValueError, click.ClickException):
+    def show(self, file: IO[str] | None = None) -> None:
+        if file is None:
+            from click._compat import get_text_stderr
+
+            file = get_text_stderr()
+        click.secho(f"!! Configuration error: {self!r}", file=file, fg="red")
 
 
-def register_plugins(settings, raise_on_plugin_load_failure=False):
+def register_plugins(settings: Any, raise_on_plugin_load_failure: bool = False) -> None:
     from sentry.plugins.base import plugins
 
     # entry_points={
@@ -43,7 +54,7 @@ def register_plugins(settings, raise_on_plugin_load_failure=False):
     for plugin in plugins.all(version=None):
         init_plugin(plugin)
 
-    from sentry import integrations
+    from sentry.integrations.manager import default_manager as integrations
     from sentry.utils.imports import import_string
 
     for integration_path in settings.SENTRY_DEFAULT_INTEGRATIONS:
@@ -66,7 +77,7 @@ def register_plugins(settings, raise_on_plugin_load_failure=False):
             pass
 
 
-def init_plugin(plugin):
+def init_plugin(plugin: Any) -> None:
     from sentry.plugins.base import bindings
 
     plugin.setup(bindings)
@@ -101,12 +112,12 @@ def init_plugin(plugin):
             settings.CELERY_QUEUES.append(q)
 
 
-def initialize_receivers():
+def initialize_receivers() -> None:
     # force signal registration
     import sentry.receivers  # NOQA
 
 
-def get_asset_version(settings):
+def get_asset_version(settings: Any) -> str:
     path = os.path.join(settings.STATIC_ROOT, "version")
     try:
         with open(path) as fp:
@@ -114,7 +125,7 @@ def get_asset_version(settings):
     except OSError:
         from time import time
 
-        return int(time())
+        return str(int(time()))
 
 
 # Options which must get extracted into Django settings while
@@ -145,7 +156,7 @@ options_mapper = {
 }
 
 
-def bootstrap_options(settings, config=None):
+def bootstrap_options(settings: Any, config: str | None = None) -> None:
     """
     Quickly bootstrap options that come in from a config file
     and convert options into Django settings that are
@@ -156,7 +167,6 @@ def bootstrap_options(settings, config=None):
 
     load_defaults()
 
-    options = {}
     if config is not None:
         # Attempt to load our config yaml file
         from yaml.parser import ParserError
@@ -169,10 +179,8 @@ def bootstrap_options(settings, config=None):
                 options = safe_load(fp)
         except OSError:
             # Gracefully fail if yaml file doesn't exist
-            pass
+            options = {}
         except (AttributeError, ParserError, ScannerError) as e:
-            from .importer import ConfigurationError
-
             raise ConfigurationError("Malformed config.yml file: %s" % str(e))
 
         # Empty options file, so fail gracefully
@@ -180,9 +188,9 @@ def bootstrap_options(settings, config=None):
             options = {}
         # Options needs to be a dict
         elif not isinstance(options, dict):
-            from .importer import ConfigurationError
-
             raise ConfigurationError("Malformed config.yml file")
+    else:
+        options = {}
 
     from sentry.conf.server import DEAD
 
@@ -213,7 +221,7 @@ def bootstrap_options(settings, config=None):
                 setattr(settings, options_mapper[k], v)
 
 
-def configure_structlog():
+def configure_structlog() -> None:
     """
     Make structlog comply with all of our options.
     """
@@ -225,9 +233,7 @@ def configure_structlog():
     from sentry import options
     from sentry.logging import LoggingFormat
 
-    WrappedDictClass = structlog.threadlocal.wrap_dict(dict)
-    kwargs = {
-        "context_class": WrappedDictClass,
+    kwargs: dict[str, Any] = {
         "wrapper_class": structlog.stdlib.BoundLogger,
         "cache_logger_on_first_use": True,
         "processors": [
@@ -254,13 +260,19 @@ def configure_structlog():
 
         kwargs["processors"].append(JSONRenderer())
 
+    is_s4s = os.environ.get("CUSTOMER_ID") == "sentry4sentry"
+    if is_s4s:
+        kwargs["logger_factory"] = structlog.PrintLoggerFactory(sys.stderr)
+
     structlog.configure(**kwargs)
+
+    if is_s4s:
+        logging.info("Writing logs to stderr. Expected only in s4s")
 
     lvl = os.environ.get("SENTRY_LOG_LEVEL")
 
-    if lvl:
-        if lvl not in logging._nameToLevel:
-            raise AttributeError("%s is not a valid logging level." % lvl)
+    if lvl and lvl not in logging._nameToLevel:
+        raise AttributeError("%s is not a valid logging level." % lvl)
 
     settings.LOGGING["root"].update({"level": lvl or settings.LOGGING["default_level"]})
 
@@ -274,7 +286,7 @@ def configure_structlog():
     logging.config.dictConfig(settings.LOGGING)
 
 
-def show_big_error(message):
+def show_big_error(message: str | list[str]) -> None:
     if isinstance(message, str):
         lines = message.strip().splitlines()
     else:
@@ -290,13 +302,8 @@ def show_big_error(message):
     click.echo("", err=True)
 
 
-def initialize_app(config, skip_service_validation=False):
+def initialize_app(config: dict[str, Any], skip_service_validation: bool = False) -> None:
     settings = config["settings"]
-
-    if settings.DEBUG:
-        # Enable line buffering for stderr, TODO(py3.9) can be removed after py3.9, see bpo-13601
-        sys.stderr = os.fdopen(sys.stderr.fileno(), "w", 1)
-        sys.stdout = os.fdopen(sys.stdout.fileno(), "w", 1)
 
     # Just reuse the integration app for Single Org / Self-Hosted as
     # it doesn't make much sense to use 2 separate apps for SSO and
@@ -310,6 +317,8 @@ def initialize_app(config, skip_service_validation=False):
         )
 
     bootstrap_options(settings, config["options"])
+
+    logging.raiseExceptions = settings.DEBUG
 
     configure_structlog()
 
@@ -351,13 +360,17 @@ def initialize_app(config, skip_service_validation=False):
 
     monkeypatch_drf_listfield_serializer_errors()
 
-    monkeypatch_model_unpickle()
-
     import django
 
     django.setup()
 
+    validate_regions(settings)
+
+    validate_outbox_config()
+
     monkeypatch_django_migrations()
+
+    patch_silo_aware_atomic()
 
     apply_legacy_settings(settings)
 
@@ -375,16 +388,29 @@ def initialize_app(config, skip_service_validation=False):
 
     setup_services(validate=not skip_service_validation)
 
+    import_grouptype()
+
     from django.utils import timezone
 
     from sentry.app import env
     from sentry.runner.settings import get_sentry_conf
 
+    # Hacky workaround to dynamically set the CSRF_TRUSTED_ORIGINS for self hosted
+    if settings.SENTRY_SELF_HOSTED and not settings.CSRF_TRUSTED_ORIGINS:
+        from sentry import options
+
+        system_url_prefix = options.get("system.url-prefix")
+        if system_url_prefix:
+            settings.CSRF_TRUSTED_ORIGINS = [system_url_prefix]
+        else:
+            # For first time users that have not yet set system url prefix, let's default to localhost url
+            settings.CSRF_TRUSTED_ORIGINS = ["http://localhost:9000", "http://127.0.0.1:9000"]
+
     env.data["config"] = get_sentry_conf()
     env.data["start_date"] = timezone.now()
 
 
-def setup_services(validate=True):
+def setup_services(validate: bool = True) -> None:
     from sentry import (
         analytics,
         buffer,
@@ -397,8 +423,6 @@ def setup_services(validate=True):
         tagstore,
         tsdb,
     )
-
-    from .importer import ConfigurationError
 
     service_list = (
         analytics,
@@ -431,44 +455,23 @@ def setup_services(validate=True):
             raise
 
 
-def validate_options(settings):
+def validate_options(settings: Any) -> None:
     from sentry.options import default_manager
 
     default_manager.validate(settings.SENTRY_OPTIONS, warn=True)
 
 
-import django.db.models.base
+def validate_regions(settings: Any) -> None:
+    from sentry.types.region import load_from_config
 
-model_unpickle = django.db.models.base.model_unpickle
+    region_config = getattr(settings, "SENTRY_REGION_CONFIG", None)
+    if not region_config:
+        return
 
-
-def __model_unpickle_compat(model_id, attrs=None, factory=None):
-    if attrs is not None or factory is not None:
-        metrics.incr("django.pickle.loaded_19_pickle.__model_unpickle_compat", sample_rate=1)
-        logger.error(
-            "django.compat.model-unpickle-compat",
-            extra={"model_id": model_id, "attrs": attrs, "factory": factory},
-            exc_info=True,
-        )
-    return model_unpickle(model_id)
+    load_from_config(region_config).validate_all()
 
 
-def __simple_class_factory_compat(model, attrs):
-    return model
-
-
-def monkeypatch_model_unpickle():
-    # https://code.djangoproject.com/ticket/27187
-    # Django 1.10 breaks pickle compat with 1.9 models.
-    django.db.models.base.model_unpickle = __model_unpickle_compat
-
-    # Django 1.10 needs this to unpickle 1.9 models, but we can't branch while
-    # monkeypatching else our monkeypatched funcs won't be pickleable.
-    # So just vendor simple_class_factory from 1.9.
-    django.db.models.base.simple_class_factory = __simple_class_factory_compat
-
-
-def monkeypatch_django_migrations():
+def monkeypatch_django_migrations() -> None:
     # This monkeypatches django's migration executor with our own, which
     # adds some small but important customizations.
     from sentry.new_migrations.monkey import monkey_migrations
@@ -476,7 +479,7 @@ def monkeypatch_django_migrations():
     monkey_migrations()
 
 
-def monkeypatch_drf_listfield_serializer_errors():
+def monkeypatch_drf_listfield_serializer_errors() -> None:
     # This patches reverts https://github.com/encode/django-rest-framework/pull/5655,
     # effectively we don't get that slight improvement
     # in serializer error structure introduced in drf 3.8.x,
@@ -491,7 +494,7 @@ def monkeypatch_drf_listfield_serializer_errors():
     from rest_framework.fields import ListField
     from rest_framework.utils import html
 
-    def to_internal_value(self, data):
+    def to_internal_value(self: ListField, data: Any) -> Any:
         if html.is_html_input(data):
             data = html.parse_html_list(data, default=[])
         if isinstance(data, (str, Mapping)) or not hasattr(data, "__iter__"):
@@ -502,7 +505,7 @@ def monkeypatch_drf_listfield_serializer_errors():
         return [self.child.run_validation(item) for item in data]
         # End code retained from < drf 3.8.x.
 
-    ListField.to_internal_value = to_internal_value
+    ListField.to_internal_value = to_internal_value  # type: ignore[assignment,method-assign]
 
     # We don't need to patch DictField since we don't use it
     # at the time of patching. This is fine since anything newly
@@ -510,7 +513,7 @@ def monkeypatch_drf_listfield_serializer_errors():
     # errors.
 
 
-def bind_cache_to_option_store():
+def bind_cache_to_option_store() -> None:
     # The default ``OptionsStore`` instance is initialized without the cache
     # backend attached. The store itself utilizes the cache during normal
     # operation, but can't use the cache before the options (which typically
@@ -522,10 +525,10 @@ def bind_cache_to_option_store():
 
     from sentry.options import default_store
 
-    default_store.cache = default_cache
+    default_store.set_cache_impl(default_cache)
 
 
-def apply_legacy_settings(settings):
+def apply_legacy_settings(settings: Any) -> None:
     from sentry import options
 
     # SENTRY_USE_QUEUE used to determine if Celery was eager or not
@@ -541,13 +544,14 @@ def apply_legacy_settings(settings):
 
     for old, new in (
         ("SENTRY_ADMIN_EMAIL", "system.admin-email"),
-        ("SENTRY_URL_PREFIX", "system.url-prefix"),
         ("SENTRY_SYSTEM_MAX_EVENTS_PER_MINUTE", "system.rate-limit"),
         ("SENTRY_ENABLE_EMAIL_REPLIES", "mail.enable-replies"),
         ("SENTRY_SMTP_HOSTNAME", "mail.reply-hostname"),
         ("MAILGUN_API_KEY", "mail.mailgun-api-key"),
         ("SENTRY_FILESTORE", "filestore.backend"),
         ("SENTRY_FILESTORE_OPTIONS", "filestore.options"),
+        ("SENTRY_RELOCATION_BACKEND", "filestore.relocation-backend"),
+        ("SENTRY_RELOCATION_OPTIONS", "filestore.relocation-options"),
         ("GOOGLE_CLIENT_ID", "auth-google.client-id"),
         ("GOOGLE_CLIENT_SECRET", "auth-google.client-secret"),
     ):
@@ -577,13 +581,6 @@ def apply_legacy_settings(settings):
         # option.)
         settings.SENTRY_REDIS_OPTIONS = options.get("redis.clusters")["default"]
 
-    if not hasattr(settings, "SENTRY_URL_PREFIX"):
-        url_prefix = options.get("system.url-prefix", silent=True)
-        if not url_prefix:
-            # HACK: We need to have some value here for backwards compatibility
-            url_prefix = "http://sentry.example.com"
-        settings.SENTRY_URL_PREFIX = url_prefix
-
     if settings.TIME_ZONE != "UTC":
         # non-UTC timezones are not supported
         show_big_error("TIME_ZONE should be set to UTC")
@@ -609,14 +606,12 @@ def apply_legacy_settings(settings):
     # this is the only value that should prevent the app from booting up. Currently FLAG_REQUIRED is used to
     # trigger the Installation Wizard, not abort startup.
     if not settings.SENTRY_OPTIONS.get("system.secret-key"):
-        from .importer import ConfigurationError
-
         raise ConfigurationError(
             "`system.secret-key` MUST be set. Use 'sentry config generate-secret-key' to get one."
         )
 
 
-def validate_snuba():
+def validate_snuba() -> None:
     """
     Make sure everything related to Snuba is in sync.
 
@@ -655,34 +650,7 @@ def validate_snuba():
     if has_all_snuba_required_backends and eventstream_is_snuba:
         return
 
-    from sentry.features import requires_snuba as snuba_features
-
-    snuba_enabled_features = set()
-
-    for feature in snuba_features:
-        if settings.SENTRY_FEATURES.get(feature, False):
-            snuba_enabled_features.add(feature)
-
-    if snuba_enabled_features and not eventstream_is_snuba:
-        from .importer import ConfigurationError
-
-        show_big_error(
-            """
-You have features enabled which require Snuba,
-but you don't have any Snuba compatible configuration.
-
-Features you have enabled:
-%s
-
-See: https://github.com/getsentry/snuba#sentry--snuba
-"""
-            % "\n".join(snuba_enabled_features)
-        )
-        raise ConfigurationError("Cannot continue without Snuba configured.")
-
     if not eventstream_is_snuba:
-        from .importer import ConfigurationError
-
         show_big_error(
             """
 It appears that you are requiring Snuba,
@@ -727,3 +695,19 @@ See: https://github.com/getsentry/snuba#sentry--snuba"""
                 settings.SENTRY_EVENTSTREAM,
             )
         )
+
+
+def validate_outbox_config() -> None:
+    from sentry.hybridcloud.models.outbox import ControlOutboxBase, RegionOutboxBase
+
+    for outbox_name in settings.SENTRY_OUTBOX_MODELS["CONTROL"]:
+        ControlOutboxBase.from_outbox_name(outbox_name)
+
+    for outbox_name in settings.SENTRY_OUTBOX_MODELS["REGION"]:
+        RegionOutboxBase.from_outbox_name(outbox_name)
+
+
+def import_grouptype() -> None:
+    from sentry.issues.grouptype import import_grouptype
+
+    import_grouptype()

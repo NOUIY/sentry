@@ -1,18 +1,15 @@
 import {createStore} from 'reflux';
 
-import {Indicator} from 'sentry/actionCreators/indicator';
-import IndicatorActions from 'sentry/actions/indicatorActions';
+import type {Indicator} from 'sentry/actionCreators/indicator';
 import {t} from 'sentry/locale';
-import {makeSafeRefluxStore} from 'sentry/utils/makeSafeRefluxStore';
 
-import {CommonStoreDefinition} from './types';
+import type {StrictStoreDefinition} from './types';
 
 interface InternalDefinition {
-  items: any[];
   lastId: number;
 }
 interface IndicatorStoreDefinition
-  extends CommonStoreDefinition<Indicator[]>,
+  extends StrictStoreDefinition<Indicator[]>,
     InternalDefinition {
   /**
    * When this method is called directly via older parts of the application,
@@ -23,7 +20,7 @@ interface IndicatorStoreDefinition
    * @param options Options object
    */
   add(
-    message: string,
+    message: React.ReactNode,
     type?: Indicator['type'],
     options?: Indicator['options']
   ): Indicator;
@@ -32,7 +29,7 @@ interface IndicatorStoreDefinition
    * Alias for add()
    */
   addMessage(
-    message: string,
+    message: React.ReactNode,
     type: Indicator['type'],
     options?: Indicator['options']
   ): Indicator;
@@ -45,7 +42,7 @@ interface IndicatorStoreDefinition
    * @param options Options object
    */
   append(
-    message: string,
+    message: React.ReactNode,
     type: Indicator['type'],
     options?: Indicator['options']
   ): Indicator;
@@ -61,18 +58,15 @@ interface IndicatorStoreDefinition
 }
 
 const storeConfig: IndicatorStoreDefinition = {
-  items: [],
+  state: [],
   lastId: 0,
-  unsubscribeListeners: [],
 
   init() {
-    this.items = [];
-    this.lastId = 0;
+    // XXX: Do not use `this.listenTo` in this store. We avoid usage of reflux
+    // listeners due to their leaky nature in tests.
 
-    this.unsubscribeListeners.push(this.listenTo(IndicatorActions.append, this.append));
-    this.unsubscribeListeners.push(this.listenTo(IndicatorActions.replace, this.add));
-    this.unsubscribeListeners.push(this.listenTo(IndicatorActions.remove, this.remove));
-    this.unsubscribeListeners.push(this.listenTo(IndicatorActions.clear, this.clear));
+    this.state = [];
+    this.lastId = 0;
   },
 
   addSuccess(message) {
@@ -98,10 +92,10 @@ const storeConfig: IndicatorStoreDefinition = {
       }, options.duration);
     }
 
-    const newItems = append ? [...this.items, indicator] : [indicator];
+    const newItems = append ? [...this.state, indicator] : [indicator];
 
-    this.items = newItems;
-    this.trigger(this.items);
+    this.state = newItems;
+    this.trigger(this.state);
     return indicator;
   },
 
@@ -120,8 +114,8 @@ const storeConfig: IndicatorStoreDefinition = {
   },
 
   clear() {
-    this.items = [];
-    this.trigger(this.items);
+    this.state = [];
+    this.trigger(this.state);
   },
 
   remove(indicator) {
@@ -129,20 +123,20 @@ const storeConfig: IndicatorStoreDefinition = {
       return;
     }
 
-    this.items = this.items.filter(item => item !== indicator);
+    this.state = this.state.filter(item => item !== indicator);
 
     if (indicator.clearId) {
       window.clearTimeout(indicator.clearId);
       indicator.clearId = null;
     }
 
-    this.trigger(this.items);
+    this.trigger(this.state);
   },
 
   getState() {
-    return this.items;
+    return this.state;
   },
 };
 
-const IndicatorStore = createStore(makeSafeRefluxStore(storeConfig));
+const IndicatorStore = createStore(storeConfig);
 export default IndicatorStore;

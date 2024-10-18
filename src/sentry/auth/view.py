@@ -1,8 +1,5 @@
-__all__ = ["AuthView", "ConfigureView"]
+from __future__ import annotations
 
-from rest_framework.request import Request
-
-from sentry.plugins.base.view import PluggableViewMixin
 from sentry.web.frontend.base import BaseView
 
 
@@ -16,13 +13,9 @@ class AuthView(BaseView):
     auth_required = False
     sudo_required = False
 
-    def get_ident(self):
+    def get_ident(self) -> str:
         cls = type(self)
         return f"{cls.__module__}.{cls.__name__}"
 
 
-class ConfigureView(BaseView, PluggableViewMixin):
-    """ """
-
-    def dispatch(self, request: Request, organization, auth_provider):
-        return ""
+__all__ = ("AuthView",)

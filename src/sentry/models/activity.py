@@ -1,36 +1,61 @@
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
+from __future__ import annotations
+
+import logging
+from collections.abc import Mapping, Sequence
+from enum import Enum
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from django.conf import settings
 from django.db import models
 from django.db.models import F
+from django.db.models.signals import post_save
 from django.utils import timezone
 
+from sentry import options
+from sentry.backup.scopes import RelocationScope
 from sentry.db.models import (
-    BaseManager,
     BoundedPositiveIntegerField,
     FlexibleForeignKey,
     GzippedDictField,
     Model,
+    region_silo_model,
     sane_repr,
 )
+from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
+from sentry.db.models.manager.base import BaseManager
 from sentry.tasks import activity
 from sentry.types.activity import CHOICES, ActivityType
+from sentry.types.group import PriorityLevel
 
 if TYPE_CHECKING:
-    from sentry.models import Group, User
+    from sentry.models.group import Group
+    from sentry.users.models.user import User
+    from sentry.users.services.user import RpcUser
 
 
-class ActivityManager(BaseManager):
-    def get_activities_for_group(self, group: "Group", num: int) -> Sequence["Group"]:
+_default_logger = logging.getLogger(__name__)
+
+
+class ActivityManager(BaseManager["Activity"]):
+    def get_activities_for_group(self, group: Group, num: int) -> Sequence[Activity]:
         activities = []
-        activity_qs = self.filter(group=group).order_by("-datetime").select_related("user")
+        activity_qs = self.filter(group=group).order_by("-datetime")
+
+        # Check if 'initial_priority' is available
+        initial_priority_value = group.get_event_metadata().get(
+            "initial_priority", None
+        ) or group.get_event_metadata().get("initial_priority", None)
+
+        initial_priority = (
+            PriorityLevel(initial_priority_value).to_str() if initial_priority_value else None
+        )
 
         prev_sig = None
         sig = None
         # we select excess so we can filter dupes
         for item in activity_qs[: num * 2]:
             prev_sig = sig
-            sig = (item.type, item.ident, item.user_id)
+            sig = (item.type, item.ident, item.user_id, item.data)
 
             if item.type == ActivityType.NOTE.value:
                 activities.append(item)
@@ -45,6 +70,7 @@ class ActivityManager(BaseManager):
                 project=group.project,
                 group=group,
                 type=ActivityType.FIRST_SEEN.value,
+                data={"priority": initial_priority},
                 datetime=group.first_seen,
             )
         )
@@ -53,69 +79,50 @@ class ActivityManager(BaseManager):
 
     def create_group_activity(
         self,
-        group: "Group",
+        group: Group,
         type: ActivityType,
-        user: Optional["User"] = None,
-        data: Optional[Mapping[str, Any]] = None,
+        user: User | RpcUser | None = None,
+        user_id: int | None = None,
+        data: Mapping[str, Any] | None = None,
         send_notification: bool = True,
-    ) -> "Activity":
-        activity = self.create(
-            project_id=group.project_id,
-            group=group,
-            type=type.value,
-            user=user,
-            data=data,
-        )
+    ) -> Activity:
+        if user:
+            user_id = user.id
+        activity_args = {
+            "project_id": group.project_id,
+            "group": group,
+            "type": type.value,
+            "data": data,
+        }
+        if user_id is not None:
+            activity_args["user_id"] = user_id
+        activity = self.create(**activity_args)
         if send_notification:
             activity.send_notification()
 
         return activity
 
 
+@region_silo_model
 class Activity(Model):
-    __include_in_export__ = False
-
-    # TODO(mgaeta): Replace all usages with ActivityTypes.
-    ASSIGNED = ActivityType.ASSIGNED.value
-    CREATE_ISSUE = ActivityType.CREATE_ISSUE.value
-    DEPLOY = ActivityType.DEPLOY.value
-    FIRST_SEEN = ActivityType.FIRST_SEEN.value
-    MARK_REVIEWED = ActivityType.MARK_REVIEWED.value
-    MERGE = ActivityType.MERGE.value
-    NEW_PROCESSING_ISSUES = ActivityType.NEW_PROCESSING_ISSUES.value
-    NOTE = ActivityType.NOTE.value
-    RELEASE = ActivityType.RELEASE.value
-    REPROCESS = ActivityType.REPROCESS.value
-    SET_IGNORED = ActivityType.SET_IGNORED.value
-    SET_PRIVATE = ActivityType.SET_PRIVATE.value
-    SET_PUBLIC = ActivityType.SET_PUBLIC.value
-    SET_REGRESSION = ActivityType.SET_REGRESSION.value
-    SET_RESOLVED = ActivityType.SET_RESOLVED.value
-    SET_RESOLVED_BY_AGE = ActivityType.SET_RESOLVED_BY_AGE.value
-    SET_RESOLVED_IN_COMMIT = ActivityType.SET_RESOLVED_IN_COMMIT.value
-    SET_RESOLVED_IN_PULL_REQUEST = ActivityType.SET_RESOLVED_IN_PULL_REQUEST.value
-    SET_RESOLVED_IN_RELEASE = ActivityType.SET_RESOLVED_IN_RELEASE.value
-    SET_UNRESOLVED = ActivityType.SET_UNRESOLVED.value
-    UNASSIGNED = ActivityType.UNASSIGNED.value
-    UNMERGE_DESTINATION = ActivityType.UNMERGE_DESTINATION.value
-    UNMERGE_SOURCE = ActivityType.UNMERGE_SOURCE.value
+    __relocation_scope__ = RelocationScope.Excluded
 
     project = FlexibleForeignKey("sentry.Project")
     group = FlexibleForeignKey("sentry.Group", null=True)
     # index on (type, ident)
-    type = BoundedPositiveIntegerField(choices=CHOICES)
+    type: models.Field[int | ActivityType, int] = BoundedPositiveIntegerField(choices=CHOICES)
     ident = models.CharField(max_length=64, null=True)
     # if the user is not set, it's assumed to be the system
-    user = FlexibleForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    user_id = HybridCloudForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete="SET_NULL")
     datetime = models.DateTimeField(default=timezone.now)
-    data = GzippedDictField(null=True)
+    data: models.Field[dict[str, Any] | None, dict[str, Any]] = GzippedDictField(null=True)
 
-    objects = ActivityManager()
+    objects: ClassVar[ActivityManager] = ActivityManager()
 
     class Meta:
         app_label = "sentry"
         db_table = "sentry_activity"
-        index_together = (("project", "datetime"),)
+        indexes = (models.Index(fields=("project", "datetime")),)
 
     __repr__ = sane_repr("project_id", "group_id", "event_id", "user_id", "type", "ident")
 
@@ -125,12 +132,14 @@ class Activity(Model):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        from sentry.models import Release
+        from sentry.models.release import Release
 
         # XXX(dcramer): fix for bad data
-        if self.type in (self.RELEASE, self.DEPLOY) and isinstance(self.data["version"], Release):
+        if self.type in (ActivityType.RELEASE.value, ActivityType.DEPLOY.value) and isinstance(
+            self.data["version"], Release
+        ):
             self.data["version"] = self.data["version"].version
-        if self.type == self.ASSIGNED:
+        if self.type == ActivityType.ASSIGNED.value:
             self.data["assignee"] = str(self.data["assignee"])
 
     def save(self, *args, **kwargs):
@@ -138,19 +147,59 @@ class Activity(Model):
 
         super().save(*args, **kwargs)
 
+        # The receiver for the post_save signal was not working in production, so just execute directly and safely
+        try:
+            from sentry.integrations.slack.tasks.send_notifications_on_activity import (
+                activity_created_receiver,
+            )
+
+            activity_created_receiver(self, created)
+        except Exception as err:
+            _default_logger.info(
+                "there was an error trying to kick off activity receiver",
+                exc_info=err,
+                extra={
+                    "activity_id": self.id,
+                },
+            )
+            pass
+
         if not created:
             return
 
         # HACK: support Group.num_comments
-        if self.type == Activity.NOTE:
+        if self.type == ActivityType.NOTE.value and self.group is not None:
+            from sentry.models.group import Group
+
             self.group.update(num_comments=F("num_comments") + 1)
+            if not options.get("groups.enable-post-update-signal"):
+                post_save.send_robust(
+                    sender=Group, instance=self.group, created=True, update_fields=["num_comments"]
+                )
 
     def delete(self, *args, **kwargs):
         super().delete(*args, **kwargs)
 
         # HACK: support Group.num_comments
-        if self.type == Activity.NOTE:
+        if self.type == ActivityType.NOTE.value and self.group is not None:
+            from sentry.models.group import Group
+
             self.group.update(num_comments=F("num_comments") - 1)
+            if not options.get("groups.enable-post-update-signal"):
+                post_save.send_robust(
+                    sender=Group, instance=self.group, created=True, update_fields=["num_comments"]
+                )
 
     def send_notification(self):
         activity.send_activity_notifications.delay(self.id)
+
+
+class ActivityIntegration(Enum):
+    """Used in the Activity data column to define an acting integration"""
+
+    CODEOWNERS = "codeowners"
+    PROJECT_OWNERSHIP = "projectOwnership"
+    SLACK = "slack"
+    MSTEAMS = "msteams"
+    DISCORD = "discord"
+    SUSPECT_COMMITTER = "suspectCommitter"

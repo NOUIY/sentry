@@ -1,8 +1,9 @@
 from io import BytesIO
-from typing import Any, Optional, Union
+from typing import Any
 from urllib.parse import urljoin
 from uuid import uuid4
 
+import orjson
 import requests
 import sentry_sdk
 from django.conf import settings
@@ -10,11 +11,10 @@ from django.conf import settings
 from sentry import options
 from sentry.exceptions import InvalidConfiguration
 from sentry.models.file import get_storage
-from sentry.utils import json
 from sentry.utils.http import absolute_uri
 
 from .base import ChartRenderer, logger
-from .types import ChartType
+from .types import ChartSize, ChartType
 
 
 class Chartcuterie(ChartRenderer):
@@ -26,7 +26,7 @@ class Chartcuterie(ChartRenderer):
     """
 
     @property
-    def service_url(self) -> Optional[str]:
+    def service_url(self) -> str | None:
         return options.get("chart-rendering.chartcuterie", {}).get("url")
 
     @property
@@ -52,24 +52,29 @@ class Chartcuterie(ChartRenderer):
         if not self.service_url:
             raise InvalidConfiguration("`chart-rendering.chartcuterie.url` is not configured")
 
-    def generate_chart(self, style: ChartType, data: Any, upload: bool = True) -> Union[str, bytes]:
+    def generate_chart(self, style: ChartType, data: Any, size: ChartSize | None = None) -> str:
         request_id = uuid4().hex
 
-        data = {
+        payload = {
             "requestId": request_id,
             "style": style.value,
             "data": data,
         }
 
+        # Override the default size defined by the chart style
+        if size:
+            payload.update(size)
+
         with sentry_sdk.start_span(
             op="charts.chartcuterie.generate_chart",
-            description=type(self).__name__,
+            name=type(self).__name__,
         ):
 
             # Using sentry json formatter to handle datetime objects
+            assert self.service_url is not None
             resp = requests.post(
                 url=urljoin(self.service_url, "render"),
-                data=json.dumps(data, cls=json._default_encoder),
+                data=orjson.dumps(payload, option=orjson.OPT_UTC_Z | orjson.OPT_NON_STR_KEYS),
                 headers={"Content-Type": "application/json"},
             )
 
@@ -81,14 +86,11 @@ class Chartcuterie(ChartRenderer):
             if resp.status_code != 200:
                 raise RuntimeError(f"Chartcuterie responded with {resp.status_code}: {resp.text}")
 
-        if not upload:
-            return resp.content
-
         file_name = f"{request_id}.png"
 
         with sentry_sdk.start_span(
             op="charts.chartcuterie.upload",
-            description=type(self).__name__,
+            name=type(self).__name__,
         ):
             storage = get_storage(self.storage_options)
             storage.save(file_name, BytesIO(resp.content))

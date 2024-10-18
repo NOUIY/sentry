@@ -1,5 +1,9 @@
-from sentry.models import OnboardingTask, OnboardingTaskStatus, OrganizationOnboardingTask
-from sentry.testutils import APITestCase
+from sentry.models.organizationonboardingtask import (
+    OnboardingTask,
+    OnboardingTaskStatus,
+    OrganizationOnboardingTask,
+)
+from sentry.testutils.cases import APITestCase
 
 
 class SkipOnboardingTaskTest(APITestCase):

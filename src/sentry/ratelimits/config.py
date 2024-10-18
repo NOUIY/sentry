@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping, Union, cast
 
 from django.conf import settings
 
@@ -38,6 +40,7 @@ SENTRY_RATELIMITER_GROUP_DEFAULTS: Mapping[GroupName, Mapping[RateLimitCategory,
             settings.SENTRY_CONCURRENT_RATE_LIMIT_GROUP_CLI,
         ),
     },
+    "INTERNAL": {category: DEFAULT_RATELIMIT for category in RateLimitCategory},
 }
 
 
@@ -69,27 +72,23 @@ def get_default_rate_limits_for_group(group_name: str, category: RateLimitCatego
 @dataclass(frozen=True)
 class RateLimitConfig:
     group: str = field(default="default")
-    limit_overrides: Union[RateLimitOverrideDict, _sentinel] = field(default=_sentinel())
+    limit_overrides: RateLimitOverrideDict | _sentinel = field(default=_sentinel())
 
     def has_custom_limit(self) -> bool:
         return not isinstance(self.limit_overrides, _sentinel)
 
     def get_rate_limit(self, http_method: str, category: RateLimitCategory) -> RateLimit:
-        if not self.has_custom_limit():
+        if isinstance(self.limit_overrides, _sentinel):
             return get_default_rate_limits_for_group(self.group, category)
-        override_rate_limit = (
-            cast(RateLimitOverrideDict, self.limit_overrides)
-            .get(http_method, {})
-            .get(category, None)
-        )
+        override_rate_limit = self.limit_overrides.get(http_method, {}).get(category, None)
         if isinstance(override_rate_limit, RateLimit):
             return override_rate_limit
         return get_default_rate_limits_for_group(self.group, category)
 
     @classmethod
     def from_rate_limit_override_dict(
-        cls, rate_limit_override_dict: Union["RateLimitConfig", RateLimitOverrideDict]
-    ) -> "RateLimitConfig":
+        cls, rate_limit_override_dict: RateLimitConfig | RateLimitOverrideDict
+    ) -> RateLimitConfig:
         if isinstance(rate_limit_override_dict, cls):
             return rate_limit_override_dict
         elif isinstance(rate_limit_override_dict, dict):
