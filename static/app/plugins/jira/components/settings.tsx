@@ -1,6 +1,7 @@
 import isEqual from 'lodash/isEqual';
 
-import {Form, FormState} from 'sentry/components/deprecatedforms';
+import Form from 'sentry/components/deprecatedforms/form';
+import FormState from 'sentry/components/forms/state';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import DefaultSettings from 'sentry/plugins/components/settings';
 
@@ -33,7 +34,7 @@ class Settings extends DefaultSettings<Props, State> {
   }
 
   isConfigured() {
-    return !!(this.state.formData && this.state.formData.default_project);
+    return !!this.state.formData?.default_project;
   }
 
   isLastPage = () => {
@@ -57,7 +58,7 @@ class Settings extends DefaultSettings<Props, State> {
             formData,
             initialData,
             // start off in edit mode if there isn't a project set
-            editing: !(formData && formData.default_project),
+            editing: !formData?.default_project,
             // call this here to prevent FormState.READY from being
             // set before fieldList is
           },
@@ -116,7 +117,7 @@ class Settings extends DefaultSettings<Props, State> {
       }),
       error: this.onSaveError.bind(this, error => {
         this.setState({
-          errors: (error.responseJSON || {}).errors || {},
+          errors: error.responseJSON?.errors || {},
         });
       }),
       complete: this.onSaveComplete,

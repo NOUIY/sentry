@@ -3,19 +3,22 @@ from datetime import datetime, timedelta
 import responses
 from django.urls import reverse
 
-from sentry.models import Identity, IdentityProvider, Integration
-from sentry.testutils import APITestCase
+from sentry.integrations.models.organization_integration import OrganizationIntegration
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.silo import control_silo_test
+from sentry.users.models.identity import Identity
 
 
+@control_silo_test
 class GithubSearchTest(APITestCase):
     # There is another test case that inherits from this
     # one to ensure that github:enterprise behaves as expected.
     provider = "github"
     base_url = "https://api.github.com"
 
-    def create_integration(self):
+    def _create_integration(self):
         future = datetime.now() + timedelta(hours=1)
-        return Integration.objects.create(
+        return self.create_provider_integration(
             provider=self.provider,
             name="test",
             external_id=9999,
@@ -29,9 +32,9 @@ class GithubSearchTest(APITestCase):
 
     def setUp(self):
         super().setUp()
-        self.integration = self.create_integration()
+        self.integration = self._create_integration()
         identity = Identity.objects.create(
-            idp=IdentityProvider.objects.create(type=self.provider, config={}),
+            idp=self.create_identity_provider(type=self.provider),
             user=self.user,
             external_id=self.user.id,
             data={"access_token": "123456789"},
@@ -41,9 +44,9 @@ class GithubSearchTest(APITestCase):
 
         self.login_as(self.user)
         self.url = reverse(
-            "sentry-extensions-github-search",
+            "sentry-integration-github-search",
             kwargs={
-                "organization_slug": self.organization.slug,
+                "organization_id_or_slug": self.organization.slug,
                 "integration_id": self.installation.model.id,
             },
         )
@@ -192,8 +195,11 @@ class GithubSearchTest(APITestCase):
     # Missing Resources
     def test_missing_integration(self):
         url = reverse(
-            "sentry-extensions-gitlab-search",
-            kwargs={"organization_slug": self.organization.slug, "integration_id": "1234567890"},
+            "sentry-integration-github-search",
+            kwargs={
+                "organization_id_or_slug": self.organization.slug,
+                "integration_id": "1234567890",
+            },
         )
         resp = self.client.get(
             url, data={"field": "externalIssue", "query": "search", "repo": "example"}
@@ -203,7 +209,11 @@ class GithubSearchTest(APITestCase):
 
     def test_missing_installation(self):
         # remove organization integration aka "uninstalling" installation
-        self.installation.org_integration.delete()
+        org_integration = OrganizationIntegration.objects.get(
+            id=self.installation.org_integration.id
+        )
+        org_integration.delete()
+
         resp = self.client.get(self.url, data={"field": "repo", "query": "not-found"})
 
         assert resp.status_code == 404

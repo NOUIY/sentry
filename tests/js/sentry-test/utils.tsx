@@ -1,3 +1,5 @@
+import MockDate from 'mockdate';
+
 // Taken from https://stackoverflow.com/a/56859650/1015027
 function findTextWithMarkup(contentNode: null | Element, textMatch: string | RegExp) {
   const hasText = (node: Element): boolean => {
@@ -28,24 +30,15 @@ export function textWithMarkupMatcher(textMatch: string | RegExp) {
   };
 }
 
+export function setMockDate(date: Date | number) {
+  MockDate.set(date);
+}
+
 /**
- * @deprecated  (This function is a workaround for test files that still use
- * enzyme.)
- *
- * Triggers onPress events on components that use react-aria (e.g. the
- * dropdown menu). These components require more complex events than what
- * enzyme can simulate with `.simulate('click')`. Preferably, we should use
- * the 'user-event' library from react testing library. Read more:
- * https://react-spectrum.adobe.com/react-spectrum/testing.html#triggering-events
+ * Mock (current) date to always be National Pasta Day
+ * 2017-10-17T02:41:20.000Z
  */
-export function triggerPress(element) {
-  element.prop('onClick')({
-    button: 0,
-    detail: 0,
-    nativeEvent: {detail: 0},
-    currentTarget: element.getDOMNode(),
-    target: element.getDOMNode(),
-    stopPropagation: () => {},
-    preventDefault: () => {},
-  });
+export function resetMockDate() {
+  const constantDate = new Date(1508208080000);
+  MockDate.set(constantDate);
 }

@@ -1,18 +1,18 @@
 import {Fragment} from 'react';
+import type {Theme} from '@emotion/react';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
-import {LocationDescriptor} from 'history';
+import type {LocationDescriptor} from 'history';
 
+import {Chevron} from 'sentry/components/chevron';
 import GlobalSelectionLink from 'sentry/components/globalSelectionLink';
-import Link, {LinkProps} from 'sentry/components/links/link';
-import {IconChevron} from 'sentry/icons';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
-import {Theme} from 'sentry/utils/theme';
-import BreadcrumbDropdown, {
-  BreadcrumbDropdownProps,
-} from 'sentry/views/settings/components/settingsBreadcrumb/breadcrumbDropdown';
+import type {LinkProps} from 'sentry/components/links/link';
+import Link from 'sentry/components/links/link';
+import {space} from 'sentry/styles/space';
+import type {BreadcrumbDropdownProps} from 'sentry/views/settings/components/settingsBreadcrumb/breadcrumbDropdown';
+import BreadcrumbDropdown from 'sentry/views/settings/components/settingsBreadcrumb/breadcrumbDropdown';
 
-const BreadcrumbList = styled('div')`
+const BreadcrumbList = styled('nav')`
   display: flex;
   align-items: center;
   padding: ${space(1)} 0;
@@ -81,7 +81,7 @@ function isCrumbDropdown(crumb: Crumb | CrumbDropdown): crumb is CrumbDropdown {
 /**
  * Page breadcrumbs used for navigation, not to be confused with sentry's event breadcrumbs
  */
-const Breadcrumbs = ({crumbs, linkLastItem = false, ...props}: Props) => {
+export function Breadcrumbs({crumbs, linkLastItem = false, ...props}: Props) {
   if (crumbs.length === 0) {
     return null;
   }
@@ -127,19 +127,17 @@ const Breadcrumbs = ({crumbs, linkLastItem = false, ...props}: Props) => {
               <BreadcrumbItem>{label}</BreadcrumbItem>
             )}
 
-            {index < crumbs.length - 1 && (
-              <BreadcrumbDividerIcon size="xs" direction="right" />
-            )}
+            {index < crumbs.length - 1 && <BreadcrumbDividerIcon direction="right" />}
           </Fragment>
         );
       })}
     </BreadcrumbList>
   );
-};
+}
 
-const getBreadcrumbListItemStyles = (p: {theme: Theme}) => `
-  color: ${p.theme.gray300};
-  ${overflowEllipsis};
+const getBreadcrumbListItemStyles = (p: {theme: Theme}) => css`
+  ${p.theme.overflowEllipsis}
+  color: ${p.theme.subText};
   width: auto;
 
   &:last-child {
@@ -174,10 +172,13 @@ const BreadcrumbItem = styled('span')`
   max-width: 400px;
 `;
 
-const BreadcrumbDividerIcon = styled(IconChevron)`
-  color: ${p => p.theme.gray300};
-  margin: 0 ${space(1)};
+const BreadcrumbDividerIcon = styled(Chevron)`
+  color: ${p => p.theme.subText};
+  margin: 0 ${space(0.5)};
   flex-shrink: 0;
 `;
 
-export default Breadcrumbs;
+// TODO(epurkhiser): Remove once removed from getsentry
+const DO_NOT_USE = Breadcrumbs;
+
+export default DO_NOT_USE;

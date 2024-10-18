@@ -1,4 +1,5 @@
-import Button, {ButtonProps} from 'sentry/components/button';
+import type {ButtonProps} from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import {IconDelete} from 'sentry/icons';
 import {t} from 'sentry/locale';
 
@@ -18,9 +19,8 @@ export default function DeleteActionButton(
 
   return (
     <Button
-      type="button"
-      size="small"
-      icon={<IconDelete size="xs" />}
+      size="sm"
+      icon={<IconDelete />}
       aria-label={t('Remove action')}
       {...props}
       onClick={handleClick}

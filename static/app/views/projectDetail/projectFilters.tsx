@@ -1,53 +1,56 @@
+import {useCallback} from 'react';
 import styled from '@emotion/styled';
 
-import GuideAnchor from 'sentry/components/assistant/guideAnchor';
-import DatePageFilter from 'sentry/components/datePageFilter';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
-import SmartSearchBar from 'sentry/components/smartSearchBar';
+import {SearchQueryBuilder} from 'sentry/components/searchQueryBuilder';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Tag} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Tag} from 'sentry/types/group';
 import {SEMVER_TAGS} from 'sentry/utils/discover/fields';
 
-import {TagValueLoader} from '../issueList/types';
+import type {TagValueLoader} from '../issueList/types';
 
 type Props = {
   onSearch: (q: string) => void;
   query: string;
+  relativeDateOptions: React.ComponentProps<typeof DatePageFilter>['relativeOptions'];
   tagValueLoader: TagValueLoader;
 };
 
-function ProjectFilters({query, tagValueLoader, onSearch}: Props) {
-  const getTagValues = async (tag: Tag, currentQuery: string): Promise<string[]> => {
-    const values = await tagValueLoader(tag.key, currentQuery);
-    return values.map(({value}) => value);
-  };
+const SUPPORTED_TAGS = {
+  ...SEMVER_TAGS,
+  release: {
+    key: 'release',
+    name: 'release',
+  },
+};
+
+function ProjectFilters({query, relativeDateOptions, tagValueLoader, onSearch}: Props) {
+  const getTagValues = useCallback(
+    async (tag: Tag, currentQuery: string): Promise<string[]> => {
+      const values = await tagValueLoader(tag.key, currentQuery);
+      return values.map(({value}) => value);
+    },
+    [tagValueLoader]
+  );
 
   return (
     <FiltersWrapper>
       <PageFilterBar>
         <EnvironmentPageFilter />
-        <DatePageFilter alignDropdown="left" />
+        <DatePageFilter relativeOptions={relativeDateOptions} />
       </PageFilterBar>
-      <GuideAnchor target="releases_search" position="bottom">
-        <SmartSearchBar
-          searchSource="project_filters"
-          query={query}
-          placeholder={t('Search by release version, build, package, or stage')}
-          maxSearchItems={5}
-          hasRecentSearches={false}
-          supportedTags={{
-            ...SEMVER_TAGS,
-            release: {
-              key: 'release',
-              name: 'release',
-            },
-          }}
-          onSearch={onSearch}
-          onGetTagValues={getTagValues}
-        />
-      </GuideAnchor>
+      <SearchQueryBuilder
+        searchSource="project_filters"
+        initialQuery={query ?? ''}
+        placeholder={t('Search by release version, build, package, or stage')}
+        filterKeys={SUPPORTED_TAGS}
+        onSearch={onSearch}
+        getTagValues={getTagValues}
+        showUnsubmittedIndicator
+      />
     </FiltersWrapper>
   );
 }
@@ -57,7 +60,7 @@ const FiltersWrapper = styled('div')`
   grid-template-columns: minmax(0, max-content) 1fr;
   gap: ${space(2)};
 
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
     grid-template-columns: minmax(0, 1fr);
   }
 `;

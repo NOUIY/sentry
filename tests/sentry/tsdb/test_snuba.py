@@ -1,18 +1,15 @@
-from datetime import datetime, timedelta
-
-import pytz
+from datetime import datetime, timedelta, timezone
 
 from sentry.constants import DataCategory
 from sentry.testutils.cases import OutcomesSnubaTest
 from sentry.tsdb.base import TSDBModel
 from sentry.tsdb.snuba import SnubaTSDB
-from sentry.utils.dates import to_timestamp
 from sentry.utils.outcomes import Outcome
 
 
 def floor_to_hour_epoch(value):
     value = value.replace(minute=0, second=0, microsecond=0)
-    return int(to_timestamp(value))
+    return int(value.timestamp())
 
 
 def floor_to_10s_epoch(value):
@@ -20,7 +17,7 @@ def floor_to_10s_epoch(value):
     floored_second = 10 * (seconds // 10)
 
     value = value.replace(second=floored_second, microsecond=0)
-    return int(to_timestamp(value))
+    return int(value.timestamp())
 
 
 class SnubaTSDBTest(OutcomesSnubaTest):
@@ -29,7 +26,7 @@ class SnubaTSDBTest(OutcomesSnubaTest):
         self.db = SnubaTSDB()
 
         # Set up the times
-        self.now = datetime.now(pytz.utc)
+        self.now = datetime.now(timezone.utc)
         self.start_time = self.now - timedelta(days=7)
         self.one_day_later = self.start_time + timedelta(days=1)
         self.day_before_start_time = self.start_time - timedelta(days=1)
@@ -142,6 +139,19 @@ class SnubaTSDBTest(OutcomesSnubaTest):
                 1,
             )
 
+        # Add client-discards (which we shouldn't show in total queries)
+        self.store_outcomes(
+            {
+                "org_id": other_organization.id,
+                "project_id": self.project.id,
+                "outcome": Outcome.CLIENT_DISCARD.value,
+                "category": DataCategory.ERROR,
+                "timestamp": self.start_time,
+                "quantity": 1,
+            },
+            5,
+        )
+
         for tsdb_model, granularity, floor_func, start_time_count, day_later_count in [
             (TSDBModel.organization_total_received, 3600, floor_to_hour_epoch, 4 * 3, 5 * 3),
             (TSDBModel.organization_total_rejected, 3600, floor_to_hour_epoch, 4, 5),
@@ -152,7 +162,13 @@ class SnubaTSDBTest(OutcomesSnubaTest):
         ]:
             # Query SnubaTSDB
             response = self.db.get_range(
-                tsdb_model, [self.organization.id], self.start_time, self.now, granularity, None
+                tsdb_model,
+                [self.organization.id],
+                self.start_time,
+                self.now,
+                granularity,
+                None,
+                tenant_ids={"referrer": "tests", "organization_id": 1},
             )
 
             # Assert that the response has values set for the times we expect, and nothing more
@@ -295,7 +311,13 @@ class SnubaTSDBTest(OutcomesSnubaTest):
             (TSDBModel.project_total_blacklisted, 10, floor_to_10s_epoch, 4, 5),
         ]:
             response = self.db.get_range(
-                tsdb_model, [self.project.id], self.start_time, self.now, granularity, None
+                tsdb_model,
+                [self.project.id],
+                self.start_time,
+                self.now,
+                granularity,
+                None,
+                tenant_ids={"referrer": "tests", "organization_id": 1},
             )
 
             # Assert that the response has values set for the times we expect, and nothing more
@@ -435,6 +457,7 @@ class SnubaTSDBTest(OutcomesSnubaTest):
                 self.now,
                 granularity,
                 None,
+                tenant_ids={"referrer": "tests", "organization_id": 123},
             )
 
             # Assert that the response has values set for the times we expect, and nothing more

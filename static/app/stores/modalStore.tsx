@@ -1,31 +1,36 @@
-import {createStore, StoreDefinition} from 'reflux';
+import type {FocusTrap} from 'focus-trap';
+import {createStore} from 'reflux';
 
-import {ModalOptions, ModalRenderProps} from 'sentry/actionCreators/modal';
-import {makeSafeRefluxStore} from 'sentry/utils/makeSafeRefluxStore';
+import type {ModalOptions, ModalRenderProps} from 'sentry/actionCreators/modal';
+
+import type {StrictStoreDefinition} from './types';
 
 type Renderer = (renderProps: ModalRenderProps) => React.ReactNode;
 
-type ModalStoreState = {
+type State = {
   options: ModalOptions;
   renderer: Renderer | null;
+  focusTrap?: FocusTrap;
 };
 
-interface ModalStoreDefinition extends StoreDefinition {
+interface ModalStoreDefinition extends StrictStoreDefinition<State> {
   closeModal(): void;
-  get(): ModalStoreState;
   init(): void;
   openModal(renderer: Renderer, options: ModalOptions): void;
   reset(): void;
+  setFocusTrap(focusTrap: FocusTrap): void;
 }
 
 const storeConfig: ModalStoreDefinition = {
-  unsubscribeListeners: [],
-
+  state: {renderer: null, options: {}},
   init() {
+    // XXX: Do not use `this.listenTo` in this store. We avoid usage of reflux
+    // listeners due to their leaky nature in tests.
+
     this.reset();
   },
 
-  get() {
+  getState() {
     return this.state;
   },
 
@@ -33,7 +38,8 @@ const storeConfig: ModalStoreDefinition = {
     this.state = {
       renderer: null,
       options: {},
-    } as ModalStoreState;
+      focusTrap: this.state.focusTrap,
+    };
   },
 
   closeModal() {
@@ -42,10 +48,17 @@ const storeConfig: ModalStoreDefinition = {
   },
 
   openModal(renderer: Renderer, options: ModalOptions) {
-    this.state = {renderer, options};
+    this.state = {renderer, options, focusTrap: this.state.focusTrap};
     this.trigger(this.state);
+  },
+
+  setFocusTrap(focusTrap: FocusTrap) {
+    this.state = {
+      ...this.state,
+      focusTrap,
+    };
   },
 };
 
-const ModalStore = createStore(makeSafeRefluxStore(storeConfig));
+const ModalStore = createStore(storeConfig);
 export default ModalStore;

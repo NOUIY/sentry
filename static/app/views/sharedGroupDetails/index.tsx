@@ -1,8 +1,6 @@
-import {Component} from 'react';
-import {RouteComponentProps} from 'react-router';
+import {useLayoutEffect, useMemo} from 'react';
 import styled from '@emotion/styled';
 
-import {Client} from 'sentry/api';
 import NotFound from 'sentry/components/errors/notFound';
 import {BorderlessEventEntries} from 'sentry/components/events/eventEntries';
 import Footer from 'sentry/components/footer';
@@ -11,99 +9,72 @@ import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import SentryTypes from 'sentry/sentryTypes';
-import space from 'sentry/styles/space';
-import {Group} from 'sentry/types';
-import withApi from 'sentry/utils/withApi';
+import {space} from 'sentry/styles/space';
+import type {Group} from 'sentry/types/group';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import {useApiQuery} from 'sentry/utils/queryClient';
+
+import {OrganizationContext} from '../organizationContext';
 
 import SharedGroupHeader from './sharedGroupHeader';
 
-type Props = RouteComponentProps<{shareId: string}, {}> & {
-  api: Client;
-};
+type Props = RouteComponentProps<{shareId: string; orgId?: string}, {}>;
 
-type State = {
-  error: boolean;
-  group: Group | null;
-  loading: boolean;
-};
-
-class SharedGroupDetails extends Component<Props, State> {
-  static childContextTypes = {
-    group: SentryTypes.Group,
-  };
-
-  state: State = this.getInitialState();
-
-  getInitialState() {
-    return {
-      group: null,
-      loading: true,
-      error: false,
-    };
-  }
-
-  getChildContext() {
-    return {
-      group: this.state.group,
-    };
-  }
-
-  componentWillMount() {
+function SharedGroupDetails({params}: Props) {
+  useLayoutEffect(() => {
     document.body.classList.add('shared-group');
-  }
+    return () => {
+      document.body.classList.remove('shared-group');
+    };
+  }, []);
 
-  componentDidMount() {
-    this.fetchData();
-  }
-
-  componentWillUnmount() {
-    document.body.classList.remove('shared-group');
-  }
-
-  async fetchData() {
-    const {params, api} = this.props;
-    const {shareId} = params;
-    try {
-      const group = await api.requestPromise(`/shared/issues/${shareId}/`);
-      this.setState({loading: false, group});
-    } catch {
-      this.setState({loading: false, error: true});
+  const orgSlug = useMemo(() => {
+    if (params.orgId) {
+      return params.orgId;
     }
+    const {customerDomain} = window.__initialData || {};
+    if (customerDomain?.subdomain) {
+      return customerDomain.subdomain;
+    }
+    return null;
+  }, [params.orgId]);
+
+  const {shareId} = params;
+  const {
+    data: group,
+    isPending,
+    isError,
+    refetch,
+  } = useApiQuery<Group>(
+    [
+      orgSlug
+        ? `/organizations/${orgSlug}/shared/issues/${shareId}/`
+        : `/shared/issues/${shareId}/`,
+    ],
+    {
+      staleTime: 0,
+    }
+  );
+
+  if (isPending) {
+    return <LoadingIndicator />;
   }
 
-  handleRetry = () => {
-    this.setState(this.getInitialState());
-    this.fetchData();
-  };
-
-  getTitle() {
-    const {group} = this.state;
-
-    return group?.title ?? 'Sentry';
+  if (!group) {
+    return <NotFound />;
   }
 
-  render() {
-    const {group, loading, error} = this.state;
+  if (isError) {
+    return <LoadingError onRetry={refetch} />;
+  }
 
-    if (loading) {
-      return <LoadingIndicator />;
-    }
+  // project.organization is not a real organization, it's just the slug and name
+  // Add the features array to avoid errors when using OrganizationContext
+  const org = {...group.project.organization, features: []};
 
-    if (!group) {
-      return <NotFound />;
-    }
-
-    if (error) {
-      return <LoadingError onRetry={this.handleRetry} />;
-    }
-
-    const {location, api, route, router} = this.props;
-    const {permalink, latestEvent, project} = group;
-    const title = this.getTitle();
-
-    return (
-      <SentryDocumentTitle noSuffix title={title}>
+  return (
+    <SentryDocumentTitle noSuffix title={group?.title ?? 'Sentry'}>
+      <OrganizationContext.Provider value={org}>
         <div className="app">
           <div className="pattern-bg" />
           <div className="container">
@@ -112,25 +83,20 @@ class SharedGroupDetails extends Component<Props, State> {
                 <Link className="logo" to="/">
                   <span className="icon-sentry-logo-full" />
                 </Link>
-                {permalink && (
-                  <Link className="details" to={permalink}>
+                {group.permalink && (
+                  <Link className="details" to={group.permalink}>
                     {t('Details')}
                   </Link>
                 )}
               </div>
-              <div className="content">
+              <div className="box-content">
                 <SharedGroupHeader group={group} />
                 <Container className="group-overview event-details-container">
                   <BorderlessEventEntries
-                    location={location}
-                    organization={project.organization}
+                    organization={org}
                     group={group}
-                    event={latestEvent}
-                    project={project}
-                    api={api}
-                    route={route}
-                    router={router}
-                    isBorderless
+                    event={group.latestEvent}
+                    project={group.project}
                     isShare
                   />
                 </Container>
@@ -139,14 +105,13 @@ class SharedGroupDetails extends Component<Props, State> {
             </div>
           </div>
         </div>
-      </SentryDocumentTitle>
-    );
-  }
+      </OrganizationContext.Provider>
+    </SentryDocumentTitle>
+  );
 }
 
 const Container = styled('div')`
-  padding: 0 ${space(4)};
+  padding: ${space(4)};
 `;
 
-export {SharedGroupDetails};
-export default withApi(SharedGroupDetails);
+export default SharedGroupDetails;

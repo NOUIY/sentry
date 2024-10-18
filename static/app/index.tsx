@@ -30,17 +30,14 @@
 //
 // 3. App initialization does the following...
 //
-//   a. Initialize the ConfigStore with clinet-config data.
+//   a. Initialize the ConfigStore with client-config data.
 //
-//   b. Setup the colorscheme event handlers, for matching the system
-//      colorscheme.
-//
-//   c. Initialize the Sentry SDK. This includes setting up integrations for
+//   b. Initialize the Sentry SDK. This includes setting up integrations for
 //      routing and tracing.
 //
-//   d. The <Main /> component is rendered. See step 4 for more details.
+//   c. The <Main /> component is rendered. See step 4 for more details.
 //
-//   e. Run global init-queue tasks. These are essentially functions registered
+//   d. Run global init-queue tasks. These are essentially functions registered
 //      in the `window.__onSentryInit` array from outside of the app. This is
 //      specifically for old-style pages rendered as django templates, but
 //      still need React frontend components.
@@ -61,8 +58,8 @@
 //    |                            parts of the application (such as loading
 //    |                            your org list)
 //    |
-//    <OrganizationDetails>    <-- Most routes live within the
-//                                 OrganizationDetails, which handles loading
+//    <OrganizationLayout>     <-- Most routes live within the
+//                                 OrganizationLayout, which handles loading
 //                                 details for the org, projects, and teams.
 //
 //

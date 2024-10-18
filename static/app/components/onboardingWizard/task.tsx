@@ -1,21 +1,25 @@
 import {forwardRef} from 'react';
-import {withRouter, WithRouterProps} from 'react-router';
 import styled from '@emotion/styled';
 import {motion} from 'framer-motion';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
 import {navigateTo} from 'sentry/actionCreators/navigation';
 import Avatar from 'sentry/components/avatar';
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import Card from 'sentry/components/card';
 import LetterAvatar from 'sentry/components/letterAvatar';
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconCheckmark, IconClose, IconLock, IconSync} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {AvatarUser, OnboardingTask, OnboardingTaskKey, Organization} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import DemoWalkthroughStore from 'sentry/stores/demoWalkthroughStore';
+import {space} from 'sentry/styles/space';
+import type {OnboardingTask, OnboardingTaskKey} from 'sentry/types/onboarding';
+import type {Organization} from 'sentry/types/organization';
+import type {AvatarUser} from 'sentry/types/user';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {isDemoWalkthrough} from 'sentry/utils/demoMode';
 import testableTransition from 'sentry/utils/testableTransition';
+import useRouter from 'sentry/utils/useRouter';
 import withOrganization from 'sentry/utils/withOrganization';
 
 import SkipConfirm from './skipConfirm';
@@ -26,20 +30,22 @@ const recordAnalytics = (
   organization: Organization,
   action: string
 ) =>
-  trackAdvancedAnalyticsEvent('onboarding.wizard_clicked', {
+  trackAnalytics('quick_start.task_card_clicked', {
     organization,
     todo_id: task.task,
     todo_title: task.title,
     action,
   });
 
-type Props = WithRouterProps & {
+type Props = {
   forwardedRef: React.Ref<HTMLDivElement>;
+  hidePanel: () => void;
   /**
    * Fired when a task is completed. This will typically happen if there is a
    * supplemental component with the ability to complete a task
    */
   onMarkComplete: (taskKey: OnboardingTaskKey) => void;
+
   /**
    * Fired when the task has been skipped
    */
@@ -52,7 +58,9 @@ type Props = WithRouterProps & {
   task: OnboardingTask;
 };
 
-function Task({router, task, onSkip, onMarkComplete, forwardedRef, organization}: Props) {
+function Task(props: Props) {
+  const {task, onSkip, onMarkComplete, forwardedRef, organization, hidePanel} = props;
+  const router = useRouter();
   const handleSkip = () => {
     recordAnalytics(task, organization, 'skipped');
     onSkip(task.task);
@@ -62,19 +70,28 @@ function Task({router, task, onSkip, onMarkComplete, forwardedRef, organization}
     recordAnalytics(task, organization, 'clickthrough');
     e.stopPropagation();
 
+    if (isDemoWalkthrough()) {
+      DemoWalkthroughStore.activateGuideAnchor(task.task);
+    }
+
     if (task.actionType === 'external') {
       window.open(task.location, '_blank');
     }
 
     if (task.actionType === 'action') {
-      task.action();
+      task.action(router);
     }
 
     if (task.actionType === 'app') {
-      const url = new URL(task.location, window.location.origin);
-      url.searchParams.append('referrer', 'onboarding_task');
-      navigateTo(url.toString(), router);
+      // Convert all paths to a location object
+      let to =
+        typeof task.location === 'string' ? {pathname: task.location} : task.location;
+      // Add referrer to all links
+      to = {...to, query: {...to.query, referrer: 'onboarding_task'}};
+
+      navigateTo(to, router);
     }
+    hidePanel();
   };
 
   if (taskIsDone(task) && task.completionSeen) {
@@ -113,7 +130,7 @@ function Task({router, task, onSkip, onMarkComplete, forwardedRef, organization}
         requisite: task.requisiteTasks[0].title,
       })}
     >
-      <IconLock color="pink300" isSolid />
+      <IconLock color="pink400" locked />
     </Tooltip>
   );
 
@@ -155,7 +172,7 @@ function Task({router, task, onSkip, onMarkComplete, forwardedRef, organization}
           {task.status === 'pending' ? (
             <InProgressIndicator user={task.user} />
           ) : (
-            <Button priority="primary" size="small">
+            <Button priority="primary" size="sm">
               {t('Start')}
             </Button>
           )}
@@ -175,7 +192,7 @@ const IncompleteTitle = styled('div')`
   grid-template-columns: max-content 1fr;
   gap: ${space(1)};
   align-items: center;
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
 `;
 
 const CompleteTitle = styled(IncompleteTitle)`
@@ -214,8 +231,8 @@ const InProgressIndicator = styled(({user, ...props}: InProgressIndicatorProps) 
   </div>
 ))`
   font-size: ${p => p.theme.fontSizeMedium};
-  font-weight: bold;
-  color: ${p => p.theme.pink300};
+  font-weight: ${p => p.theme.fontWeightBold};
+  color: ${p => p.theme.pink400};
   display: grid;
   grid-template-columns: max-content max-content;
   align-items: center;
@@ -251,7 +268,7 @@ CompleteIndicator.defaultProps = {
 const SkippedIndicator = styled(IconClose)``;
 SkippedIndicator.defaultProps = {
   isCircled: true,
-  color: 'pink300',
+  color: 'pink400',
 };
 
 const completedItemAnimation = {
@@ -262,7 +279,7 @@ const completedItemAnimation = {
 const DateCompleted = styled(motion.div)`
   color: ${p => p.theme.subText};
   font-size: ${p => p.theme.fontSizeSmall};
-  font-weight: 300;
+  font-weight: ${p => p.theme.fontWeightNormal};
 `;
 
 DateCompleted.defaultProps = {
@@ -285,7 +302,7 @@ TaskBlankAvatar.defaultProps = {
   transition,
 };
 
-const WrappedTask = withOrganization(withRouter(Task));
+const WrappedTask = withOrganization(Task);
 
 export default forwardRef<
   HTMLDivElement,

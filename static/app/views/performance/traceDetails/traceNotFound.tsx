@@ -1,7 +1,7 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
 import Link from 'sentry/components/links/link';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
@@ -12,11 +12,11 @@ import {
   ErrorTitle,
 } from 'sentry/components/performance/waterfall/rowDetails';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
 import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
-import {TraceMeta} from 'sentry/utils/performance/quickTrace/types';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {TraceMeta} from 'sentry/utils/performance/quickTrace/types';
 
 interface TraceNotFoundProps {
   location: any;
@@ -83,7 +83,7 @@ function TraceNotFound({
                     <ErrorLevel>{data.level}</ErrorLevel>
                     <ErrorTitle>
                       <Link
-                        to={`/organizations/${organization.slug}/issues/${data['issue.id']}/events/${data.id}`}
+                        to={`/organizations/${organization.slug}/issues/${data['issue.id']}/events/${data.id}?referrer=performance-trace-not-found`}
                       >
                         {data.title}
                       </Link>

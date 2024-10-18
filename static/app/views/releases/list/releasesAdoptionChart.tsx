@@ -1,13 +1,12 @@
 import {Component} from 'react';
-import {InjectedRouter} from 'react-router';
 import styled from '@emotion/styled';
 import type {LineSeriesOption} from 'echarts';
-import {Location} from 'history';
+import type {Location} from 'history';
 import compact from 'lodash/compact';
 import pick from 'lodash/pick';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import ChartZoom from 'sentry/components/charts/chartZoom';
 import {LineChart} from 'sentry/components/charts/lineChart';
 import SessionsRequest from 'sentry/components/charts/sessionsRequest';
@@ -25,21 +24,26 @@ import {
   truncationFormatter,
 } from 'sentry/components/charts/utils';
 import Count from 'sentry/components/count';
+import type {StatsPeriodType} from 'sentry/components/organizations/pageFilters/parse';
 import {
   normalizeDateTimeParams,
   parseStatsPeriod,
-  StatsPeriodType,
 } from 'sentry/components/organizations/pageFilters/parse';
-import {Panel, PanelBody, PanelFooter} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelFooter from 'sentry/components/panels/panelFooter';
 import Placeholder from 'sentry/components/placeholder';
 import {URL_PARAM} from 'sentry/constants/pageFilters';
 import {t, tct, tn} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, PageFilters, SessionApiResponse} from 'sentry/types';
-import {EChartClickHandler} from 'sentry/types/echarts';
-import {formatVersion} from 'sentry/utils/formatters';
+import {space} from 'sentry/styles/space';
+import type {PageFilters} from 'sentry/types/core';
+import type {EChartClickHandler} from 'sentry/types/echarts';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
+import type {Organization, SessionApiResponse} from 'sentry/types/organization';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {getAdoptionSeries, getCount} from 'sentry/utils/sessions';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {formatVersion} from 'sentry/utils/versions/formatVersion';
 import withApi from 'sentry/utils/withApi';
 import {sessionDisplayToField} from 'sentry/views/releases/list/releasesRequest';
 
@@ -120,12 +124,14 @@ class ReleasesAdoptionChart extends Component<Props> {
 
     const project = selection.projects[0];
 
-    router.push({
-      pathname: `/organizations/${organization?.slug}/releases/${encodeURIComponent(
-        params.seriesId
-      )}/`,
-      query: {project, environment: location.query.environment},
-    });
+    router.push(
+      normalizeUrl({
+        pathname: `/organizations/${organization?.slug}/releases/${encodeURIComponent(
+          params.seriesId
+        )}/`,
+        query: {project, environment: location.query.environment},
+      })
+    );
   };
 
   renderEmpty() {
@@ -145,7 +151,7 @@ class ReleasesAdoptionChart extends Component<Props> {
   }
 
   render() {
-    const {activeDisplay, router, selection, api, organization, location} = this.props;
+    const {activeDisplay, selection, api, organization, location} = this.props;
     const {start, end, period, utc} = selection.datetime;
     const interval = this.getInterval();
     const field = sessionDisplayToField(activeDisplay);
@@ -185,13 +191,7 @@ class ReleasesAdoptionChart extends Component<Props> {
                 </ChartHeader>
                 <TransitionChart loading={loading} reloading={reloading}>
                   <TransparentLoadingMask visible={reloading} />
-                  <ChartZoom
-                    router={router}
-                    period={period}
-                    utc={utc}
-                    start={start}
-                    end={end}
-                  >
+                  <ChartZoom period={period} utc={utc} start={start} end={end}>
                     {zoomRenderProps => (
                       <LineChart
                         {...zoomRenderProps}
@@ -206,7 +206,6 @@ class ReleasesAdoptionChart extends Component<Props> {
                           type: 'value',
                           interval: 10,
                           splitNumber: 10,
-                          data: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
                           axisLabel: {
                             formatter: '{value}%',
                           },
@@ -216,7 +215,6 @@ class ReleasesAdoptionChart extends Component<Props> {
                           min: xAxisData[0],
                           max: xAxisData[numDataPoints - 1],
                           type: 'time',
-                          data: xAxisData,
                         }}
                         tooltip={{
                           formatter: seriesParams => {
@@ -268,12 +266,12 @@ class ReleasesAdoptionChart extends Component<Props> {
                                       s.marker
                                     }<strong>${
                                       s.seriesName &&
-                                      truncationFormatter(s.seriesName, 12)
+                                      truncationFormatter(s.seriesName, 32)
                                     }</strong></span>${s.data[1].toFixed(2)}%</div>`
                                 )
                                 .join(''),
                               '</div>',
-                              `<div class="tooltip-date">${intervalStart} &mdash; ${intervalEnd}</div>`,
+                              `<div class="tooltip-footer">${intervalStart} &mdash; ${intervalEnd}</div>`,
                               '<div class="tooltip-arrow"></div>',
                             ].join('');
                           },

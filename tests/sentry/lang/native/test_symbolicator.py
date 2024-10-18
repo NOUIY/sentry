@@ -2,9 +2,13 @@ import copy
 
 import pytest
 
-from sentry.lang.native import symbolicator
-from sentry.lang.native.symbolicator import get_sources_for_project, redact_internal_sources
+from sentry.lang.native.sources import (
+    get_sources_for_project,
+    redact_internal_sources,
+    reverse_aliases_map,
+)
 from sentry.testutils.helpers import Feature
+from sentry.testutils.pytest.fixtures import django_db_all
 
 CUSTOM_SOURCE_CONFIG = """
 [{
@@ -12,11 +16,21 @@ CUSTOM_SOURCE_CONFIG = """
     "id": "custom",
     "layout": {"type": "symstore"},
     "url": "https://msdl.microsoft.com/download/symbols/"
+},{
+    "type": "appStoreConnect",
+    "id": "asc",
+    "name": "appconnect-disabled",
+    "appconnectIssuer": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "appconnectKey": "foobar",
+    "appconnectPrivateKey": "quux",
+    "appName": "test",
+    "appId": "test",
+    "bundleId": "test"
 }]
 """
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_sources_no_feature(default_project):
     features = {"organizations:symbol-sources": False, "organizations:custom-symbol-sources": False}
 
@@ -28,7 +42,7 @@ def test_sources_no_feature(default_project):
     assert sources[0]["id"] == "sentry:project"
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_sources_builtin(default_project):
     features = {"organizations:symbol-sources": True, "organizations:custom-symbol-sources": False}
 
@@ -44,7 +58,7 @@ def test_sources_builtin(default_project):
 
 # Test that a builtin source that is not declared in SENTRY_BUILTIN_SOURCES does
 # not lead to an error. It should simply be ignored.
-@pytest.mark.django_db
+@django_db_all
 def test_sources_builtin_unknown(default_project):
     features = {"organizations:symbol-sources": True, "organizations:custom-symbol-sources": False}
 
@@ -59,7 +73,7 @@ def test_sources_builtin_unknown(default_project):
 
 # Test that previously saved builtin sources are not returned if the feature for
 # builtin sources is missing at query time.
-@pytest.mark.django_db
+@django_db_all
 def test_sources_builtin_disabled(default_project):
     features = {"organizations:symbol-sources": False, "organizations:custom-symbol-sources": False}
 
@@ -72,7 +86,7 @@ def test_sources_builtin_disabled(default_project):
     assert source_ids == ["sentry:project"]
 
 
-@pytest.mark.django_db
+@django_db_all
 def test_sources_custom(default_project):
     features = {"organizations:symbol-sources": True, "organizations:custom-symbol-sources": True}
 
@@ -84,13 +98,14 @@ def test_sources_custom(default_project):
         sources = get_sources_for_project(default_project)
 
     # XXX: The order matters here! Project is always first, then custom sources
+    # The appStoreConnect source should be filtered out.
     source_ids = list(map(lambda s: s["id"], sources))
     assert source_ids == ["sentry:project", "custom"]
 
 
 # Test that previously saved custom sources are not returned if the feature for
 # custom sources is missing at query time.
-@pytest.mark.django_db
+@django_db_all
 def test_sources_custom_disabled(default_project):
     features = {"organizations:symbol-sources": True, "organizations:custom-symbol-sources": False}
 
@@ -261,6 +276,6 @@ class TestAliasReversion:
         }
 
     def test_reverse_aliases(self, builtin_sources):
-        reverse_aliases = symbolicator.reverse_aliases_map(builtin_sources)
+        reverse_aliases = reverse_aliases_map(builtin_sources)
         expected = {"sentry:ios-source": "sentry:ios", "sentry:tvos-source": "sentry:ios"}
         assert reverse_aliases == expected

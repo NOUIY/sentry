@@ -1,4 +1,6 @@
 import threading
+from collections.abc import Callable
+from typing import Any
 
 from celery.signals import task_failure, task_success
 from django.core.signals import request_finished
@@ -8,14 +10,14 @@ from sentry import app
 _cache = threading.local()
 
 
-def request_cache(func):
+def request_cache(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     A decorator to memoize functions on a per-request basis.
     Arguments to the memoized function should NOT be objects
     Use primitive types as arguments
     """
 
-    def wrapped(*args, **kwargs):
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
         # if no request, skip cache
         if app.env.request is None:
             return func(*args, **kwargs)
@@ -33,7 +35,7 @@ def request_cache(func):
     return wrapped
 
 
-def clear_cache(**kwargs):
+def clear_cache(**kwargs: Any) -> None:
     _cache.items = {}
 
 

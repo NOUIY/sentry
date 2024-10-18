@@ -3,20 +3,15 @@ import isEqual from 'lodash/isEqual';
 import omit from 'lodash/omit';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import {Client} from 'sentry/api';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {Client} from 'sentry/api';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 
 import submitRules from '../submitRules';
-import {
-  EventIdStatus,
-  KeysOfUnion,
-  MethodType,
-  ProjectId,
-  Rule,
-  RuleType,
-} from '../types';
+import type {KeysOfUnion, Rule} from '../types';
+import {EventIdStatus, MethodType, RuleType} from '../types';
 import {valueSuggestions} from '../utils';
 
 import Form from './form';
@@ -29,16 +24,16 @@ type Values = FormProps['values'];
 type EventId = NonNullable<FormProps['eventId']>;
 type SourceSuggestions = FormProps['sourceSuggestions'];
 
-type Props<T> = ModalRenderProps & {
+type Props = ModalRenderProps & {
   api: Client;
   endpoint: string;
-  onGetNewRules: (values: Values) => Array<Rule>;
-  onSubmitSuccess: (data: T extends undefined ? Organization : Project) => void;
+  onGetNewRules: (values: Values) => Rule[];
+  onSubmitSuccess: (data: {relayPiiConfig: string}) => void;
   orgSlug: Organization['slug'];
-  savedRules: Array<Rule>;
+  savedRules: Rule[];
   title: string;
   initialState?: Partial<Values>;
-  projectId?: T;
+  projectId?: Project['id'];
 };
 
 type State = {
@@ -50,14 +45,14 @@ type State = {
   values: Values;
 };
 
-class ModalManager<T extends ProjectId> extends Component<Props<T>, State> {
+class ModalManager extends Component<Props, State> {
   state = this.getDefaultState();
 
   componentDidMount() {
     this.handleValidateForm();
   }
 
-  componentDidUpdate(_prevProps: Props<T>, prevState: State) {
+  componentDidUpdate(_prevProps: Props, prevState: State) {
     if (!isEqual(prevState.values, this.state.values)) {
       this.handleValidateForm();
     }
@@ -178,7 +173,7 @@ class ModalManager<T extends ProjectId> extends Component<Props<T>, State> {
 
   convertRequestError(error: ReturnType<typeof handleError>) {
     switch (error.type) {
-      case ErrorType.InvalidSelector:
+      case ErrorType.INVALID_SELECTOR:
         this.setState(prevState => ({
           errors: {
             ...prevState.errors,
@@ -186,7 +181,7 @@ class ModalManager<T extends ProjectId> extends Component<Props<T>, State> {
           },
         }));
         break;
-      case ErrorType.RegexParse:
+      case ErrorType.REGEX_PARSE:
         this.setState(prevState => ({
           errors: {
             ...prevState.errors,

@@ -1,12 +1,12 @@
 import {Fragment} from 'react';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import {HeaderTitleLegend} from 'sentry/components/charts/styles';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {t, tct} from 'sentry/locale';
-import {OrganizationSummary} from 'sentry/types';
+import type {OrganizationSummary} from 'sentry/types/organization';
 
-import {ViewProps} from '../../../types';
+import type {ViewProps} from '../../../types';
 import {SpanOperationBreakdownFilter} from '../../filter';
 
 import Content from './content';
@@ -15,12 +15,14 @@ type Props = ViewProps & {
   currentFilter: SpanOperationBreakdownFilter;
   location: Location;
   organization: OrganizationSummary;
+  queryExtras?: Record<string, string>;
+  totalCount?: number | null;
 };
 
 function LatencyChart({currentFilter, ...props}: Props) {
   const header = (
     <HeaderTitleLegend>
-      {currentFilter === SpanOperationBreakdownFilter.None
+      {currentFilter === SpanOperationBreakdownFilter.NONE
         ? t('Duration Distribution')
         : tct('Span Operation Distribution - [operationName]', {
             operationName: currentFilter,

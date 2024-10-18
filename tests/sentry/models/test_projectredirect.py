@@ -1,5 +1,5 @@
-from sentry.models import ProjectRedirect
-from sentry.testutils import TestCase
+from sentry.models.projectredirect import ProjectRedirect
+from sentry.testutils.cases import TestCase
 
 
 class ProjectRedirectTest(TestCase):

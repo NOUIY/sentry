@@ -1,24 +1,29 @@
-import {Component, Fragment} from 'react';
+import type React from 'react';
+import {Component, Fragment, type ReactNode} from 'react';
 import styled from '@emotion/styled';
 
-import FeatureBadge from 'sentry/components/featureBadge';
-import SelectControl from 'sentry/components/forms/selectControl';
+import SelectControl from 'sentry/components/forms/controls/selectControl';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
-import {
+import {space} from 'sentry/styles/space';
+import type {
+  IssueAlertConfiguration,
+  IssueAlertGenericConditionConfig,
   IssueAlertRuleAction,
   IssueAlertRuleActionTemplate,
   IssueAlertRuleCondition,
   IssueAlertRuleConditionTemplate,
 } from 'sentry/types/alerts';
+import {IssueAlertActionType, IssueAlertConditionType} from 'sentry/types/alerts';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {
   CHANGE_ALERT_CONDITION_IDS,
   COMPARISON_INTERVAL_CHOICES,
   COMPARISON_TYPE_CHOICE_VALUES,
   COMPARISON_TYPE_CHOICES,
 } from 'sentry/views/alerts/utils/constants';
-import {EVENT_FREQUENCY_PERCENT_CONDITION} from 'sentry/views/projectInstall/issueAlertOptions';
+
+import {AlertRuleComparisonType} from '../metric/types';
 
 import RuleNode from './ruleNode';
 
@@ -32,8 +37,10 @@ type Props = {
   /**
    * All available actions or conditions
    */
-  nodes: IssueAlertRuleActionTemplate[] | IssueAlertRuleConditionTemplate[] | null;
-  onAddRow: (value: string) => void;
+  nodes: IssueAlertConfiguration[keyof IssueAlertConfiguration] | null;
+  onAddRow: (
+    value: IssueAlertRuleActionTemplate | IssueAlertRuleConditionTemplate
+  ) => void;
   onDeleteRow: (ruleIndex: number) => void;
   onPropertyChange: (ruleIndex: number, prop: string, val: string) => void;
   onResetRow: (ruleIndex: number, name: string, value: string) => void;
@@ -43,7 +50,103 @@ type Props = {
    */
   placeholder: string;
   project: Project;
+  additionalAction?: {
+    label: ReactNode;
+    onClick: () => void;
+    option: {
+      label: ReactNode;
+      value: IssueAlertRuleActionTemplate;
+    };
+  };
+  incompatibleBanner?: number | null;
+  incompatibleRules?: number[] | null;
   selectType?: 'grouped';
+};
+
+const createSelectOptions = (
+  actions: IssueAlertRuleActionTemplate[]
+): Array<{
+  label: React.ReactNode;
+  value: IssueAlertRuleActionTemplate;
+}> => {
+  return actions.map(node => {
+    if (node.id === IssueAlertActionType.NOTIFY_EMAIL) {
+      const label = t('Suggested Assignees, Team, or Member');
+      return {
+        value: node,
+        label,
+      };
+    }
+
+    if (node.id === IssueAlertConditionType.REAPPEARED_EVENT) {
+      const label = t('The issue changes state from archived to escalating');
+      return {
+        value: node,
+        label,
+      };
+    }
+
+    return {
+      value: node,
+      label: node.prompt ?? node.label,
+    };
+  });
+};
+
+const groupLabels = {
+  notify: t('Send notification to\u{2026}'),
+  notifyIntegration: t('Notify integration\u{2026}'),
+  ticket: t('Create new\u{2026}'),
+  change: t('Issue state change'),
+  frequency: t('Issue frequency'),
+};
+
+/**
+ * Group options by category
+ */
+const groupSelectOptions = (actions: IssueAlertRuleActionTemplate[]) => {
+  const grouped = actions.reduce<
+    Record<
+      keyof typeof groupLabels,
+      IssueAlertRuleActionTemplate[] | IssueAlertRuleConditionTemplate[]
+    >
+  >(
+    (acc, curr) => {
+      if (curr.actionType === 'ticket') {
+        acc.ticket.push(curr);
+      } else if (curr.id.includes('event_frequency')) {
+        acc.frequency.push(curr);
+      } else if (
+        curr.id.includes('sentry.rules.conditions') &&
+        !curr.id.includes('event_frequency')
+      ) {
+        acc.change.push(curr);
+      } else if (curr.id.includes('sentry.integrations')) {
+        acc.notifyIntegration.push(curr);
+      } else if (curr.id.includes('notify_event')) {
+        acc.notifyIntegration.push(curr);
+      } else {
+        acc.notify.push(curr);
+      }
+      return acc;
+    },
+    {
+      notify: [],
+      notifyIntegration: [],
+      ticket: [],
+      change: [],
+      frequency: [],
+    }
+  );
+
+  return Object.entries(grouped)
+    .filter(([_, values]) => values.length)
+    .map(([key, values]) => {
+      return {
+        label: groupLabels[key],
+        options: createSelectOptions(values),
+      };
+    });
 };
 
 class RuleNodeList extends Component<Props> {
@@ -54,15 +157,21 @@ class RuleNodeList extends Component<Props> {
   propertyChangeTimeout: number | undefined = undefined;
 
   getNode = (
-    id: string,
+    template: IssueAlertRuleAction | IssueAlertRuleCondition,
     itemIdx: number
-  ):
-    | IssueAlertRuleActionTemplate
-    | IssueAlertRuleConditionTemplate
-    | null
-    | undefined => {
+  ): IssueAlertConfiguration[keyof IssueAlertConfiguration][number] | null => {
     const {nodes, items, organization, onPropertyChange} = this.props;
-    const node = nodes ? nodes.find(n => n.id === id) : null;
+    const node = nodes?.find(n => {
+      if ('sentryAppInstallationUuid' in n) {
+        // Match more than just the id for sentryApp actions, they share the same id
+        return (
+          n.id === template.id &&
+          n.sentryAppInstallationUuid === template.sentryAppInstallationUuid
+        );
+      }
+
+      return n.id === template.id;
+    });
 
     if (!node) {
       return null;
@@ -75,13 +184,13 @@ class RuleNodeList extends Component<Props> {
       return node;
     }
 
-    const item = items[itemIdx] as IssueAlertRuleCondition;
+    const item = items[itemIdx];
 
-    let changeAlertNode: IssueAlertRuleConditionTemplate = {
-      ...node,
+    let changeAlertNode: IssueAlertGenericConditionConfig = {
+      ...(node as IssueAlertGenericConditionConfig),
       label: node.label.replace('...', ' {comparisonType}'),
       formFields: {
-        ...node.formFields,
+        ...(node.formFields as IssueAlertGenericConditionConfig['formFields']),
         comparisonType: {
           type: 'choice',
           choices: COMPARISON_TYPE_CHOICES,
@@ -106,7 +215,7 @@ class RuleNodeList extends Component<Props> {
         ),
       };
 
-      if (item.comparisonType === 'percent') {
+      if (item.comparisonType === AlertRuleComparisonType.PERCENT) {
         if (!item.comparisonInterval) {
           // comparisonInterval value in IssueRuleEditor state
           // is undefined even if initial value is defined
@@ -140,6 +249,7 @@ class RuleNodeList extends Component<Props> {
       onResetRow,
       onDeleteRow,
       onPropertyChange,
+      additionalAction,
       nodes,
       placeholder,
       items,
@@ -148,103 +258,59 @@ class RuleNodeList extends Component<Props> {
       disabled,
       error,
       selectType,
+      incompatibleRules,
+      incompatibleBanner,
     } = this.props;
 
-    const shouldUsePrompt = project.features?.includes?.('issue-alerts-targeting');
     const enabledNodes = nodes ? nodes.filter(({enabled}) => enabled) : [];
 
-    const createSelectOptions = (actions: IssueAlertRuleActionTemplate[]) =>
-      actions.map(node => {
-        const isNew = node.id === EVENT_FREQUENCY_PERCENT_CONDITION;
-
-        if (node.id.includes('NotifyEmailAction')) {
-          return {
-            value: node.id,
-            label: t('Issue Owners, Team, or Member'),
-          };
-        }
-
-        return {
-          value: node.id,
-          label: (
-            <Fragment>
-              {isNew && <StyledFeatureBadge type="new" noTooltip />}
-              {shouldUsePrompt && node.prompt?.length > 0 ? node.prompt : node.label}
-            </Fragment>
-          ),
-        };
-      });
-
-    let options: any = !selectType ? createSelectOptions(enabledNodes) : [];
-
+    let options;
     if (selectType === 'grouped') {
-      const grouped = enabledNodes.reduce(
-        (acc, curr) => {
-          if (curr.actionType === 'ticket') {
-            acc.ticket.push(curr);
-          } else if (curr.id.includes('event_frequency')) {
-            acc.frequency.push(curr);
-          } else if (
-            curr.id.includes('sentry.rules.conditions') &&
-            !curr.id.includes('event_frequency')
-          ) {
-            acc.change.push(curr);
-          } else if (curr.id.includes('sentry.integrations')) {
-            acc.notifyIntegration.push(curr);
-          } else if (curr.id.includes('notify_event')) {
-            acc.notifyIntegration.push(curr);
-          } else {
-            acc.notify.push(curr);
-          }
-          return acc;
-        },
-        {
-          notify: [] as IssueAlertRuleActionTemplate[],
-          notifyIntegration: [] as IssueAlertRuleActionTemplate[],
-          ticket: [] as IssueAlertRuleActionTemplate[],
-          change: [] as IssueAlertRuleConditionTemplate[],
-          frequency: [] as IssueAlertRuleConditionTemplate[],
+      options = groupSelectOptions(enabledNodes);
+      if (additionalAction) {
+        const optionToModify = options.find(
+          option => option.label === additionalAction.label
+        );
+        if (optionToModify) {
+          optionToModify.options.push(additionalAction.option);
         }
-      );
-
-      options = Object.entries(grouped)
-        .filter(([_, values]) => values.length)
-        .map(([key, values]) => {
-          const label = {
-            notify: t('Send notification to\u{2026}'),
-            notifyIntegration: t('Notify integration\u{2026}'),
-            ticket: t('Create new\u{2026}'),
-            change: t('Issue state change'),
-            frequency: t('Issue frequency'),
-          };
-
-          return {label: label[key], options: createSelectOptions(values)};
-        });
+      }
+    } else {
+      options = createSelectOptions(enabledNodes);
     }
 
     return (
       <Fragment>
         <RuleNodes>
           {error}
-          {items.map((item, idx) => (
-            <RuleNode
-              key={idx}
-              index={idx}
-              node={this.getNode(item.id, idx)}
-              onDelete={onDeleteRow}
-              onPropertyChange={onPropertyChange}
-              onReset={onResetRow}
-              data={item}
-              organization={organization}
-              project={project}
-              disabled={disabled}
-            />
-          ))}
+          {items.map(
+            (item: IssueAlertRuleAction | IssueAlertRuleCondition, idx: number) => (
+              <RuleNode
+                key={idx}
+                index={idx}
+                node={this.getNode(item, idx)}
+                onDelete={onDeleteRow}
+                onPropertyChange={onPropertyChange}
+                onReset={onResetRow}
+                data={item}
+                organization={organization}
+                project={project}
+                disabled={disabled}
+                incompatibleRule={incompatibleRules?.includes(idx)}
+                incompatibleBanner={incompatibleBanner === idx}
+              />
+            )
+          )}
         </RuleNodes>
+
         <StyledSelectControl
           placeholder={placeholder}
           value={null}
-          onChange={obj => onAddRow(obj ? obj.value : obj)}
+          onChange={obj => {
+            additionalAction && obj === additionalAction.option
+              ? additionalAction.onClick()
+              : onAddRow(obj.value);
+          }}
           options={options}
           disabled={disabled}
         />
@@ -264,11 +330,7 @@ const RuleNodes = styled('div')`
   margin-bottom: ${space(1)};
   gap: ${space(1)};
 
-  @media (max-width: ${p => p.theme.breakpoints[1]}) {
+  @media (max-width: ${p => p.theme.breakpoints.medium}) {
     grid-auto-flow: row;
   }
-`;
-
-const StyledFeatureBadge = styled(FeatureBadge)`
-  margin: 0 ${space(1)} 0 0;
 `;

@@ -1,20 +1,34 @@
-import {Fragment, ReactNode, useState} from 'react';
+import type {ReactNode} from 'react';
+import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
 
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import Button from 'sentry/components/button';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import {Button, LinkButton} from 'sentry/components/button';
 import RadioGroup from 'sentry/components/forms/controls/radioGroup';
 import ExternalLink from 'sentry/components/links/externalLink';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {
+  platformEventLinkMap,
+  PlatformEvents,
+} from 'sentry/utils/analytics/integrations/platformAnalyticsEvents';
+import {trackIntegrationAnalytics} from 'sentry/utils/integrationUtil';
+import withOrganization from 'sentry/utils/withOrganization';
+import ExampleIntegrationButton from 'sentry/views/settings/organizationIntegrations/exampleIntegrationButton';
 
-export type CreateNewIntegrationModalOptions = {
-  orgSlug: string;
-};
+export type CreateNewIntegrationModalOptions = {organization: Organization};
+type CreateNewIntegrationModalProps = CreateNewIntegrationModalOptions & ModalRenderProps;
 
-type Props = ModalRenderProps & CreateNewIntegrationModalOptions;
+const analyticsView = 'new_integration_modal' as const;
 
-function CreateNewIntegration({Body, Header, Footer, closeModal, orgSlug}: Props) {
+function CreateNewIntegrationModal({
+  Body,
+  Header,
+  Footer,
+  closeModal,
+  organization,
+}: CreateNewIntegrationModalProps) {
   const [option, selectOption] = useState('internal');
   const choices = [
     [
@@ -27,7 +41,15 @@ function CreateNewIntegration({Body, Header, Footer, closeModal, orgSlug}: Props
           'Internal integrations are meant for custom integrations unique to your organization. See more info on [docsLink].',
           {
             docsLink: (
-              <ExternalLink href="https://docs.sentry.io/product/integrations/integration-platform/#internal-integrations">
+              <ExternalLink
+                href={platformEventLinkMap[PlatformEvents.INTERNAL_DOCS]}
+                onClick={() => {
+                  trackIntegrationAnalytics(PlatformEvents.INTERNAL_DOCS, {
+                    organization,
+                    view: analyticsView,
+                  });
+                }}
+              >
                 {t('Internal Integrations')}
               </ExternalLink>
             ),
@@ -45,7 +67,15 @@ function CreateNewIntegration({Body, Header, Footer, closeModal, orgSlug}: Props
           'A public integration will be available for all Sentry users for installation. See more info on [docsLink].',
           {
             docsLink: (
-              <ExternalLink href="https://docs.sentry.io/product/integrations/integration-platform/#public-integrations">
+              <ExternalLink
+                href={platformEventLinkMap[PlatformEvents.PUBLIC_DOCS]}
+                onClick={() => {
+                  trackIntegrationAnalytics(PlatformEvents.PUBLIC_DOCS, {
+                    organization,
+                    view: analyticsView,
+                  });
+                }}
+              >
                 {t('Public Integrations')}
               </ExternalLink>
             ),
@@ -58,7 +88,10 @@ function CreateNewIntegration({Body, Header, Footer, closeModal, orgSlug}: Props
   return (
     <Fragment>
       <Header>
-        <h3>{t('Choose Integration Type')}</h3>
+        <HeaderWrapper>
+          <h3>{t('Choose Integration Type')}</h3>
+          <ExampleIntegrationButton analyticsView={analyticsView} />
+        </HeaderWrapper>
       </Header>
       <Body>
         <StyledRadioGroup
@@ -69,18 +102,29 @@ function CreateNewIntegration({Body, Header, Footer, closeModal, orgSlug}: Props
         />
       </Body>
       <Footer>
-        <Button size="small" onClick={() => closeModal()} style={{marginRight: space(1)}}>
+        <Button size="sm" onClick={() => closeModal()} style={{marginRight: space(1)}}>
           {t('Cancel')}
         </Button>
-        <Button
+        <LinkButton
           priority="primary"
-          size="small"
-          to={`/settings/${orgSlug}/developer-settings/${
+          size="sm"
+          to={`/settings/${organization.slug}/developer-settings/${
             option === 'public' ? 'new-public' : 'new-internal'
           }/`}
+          onClick={() => {
+            trackIntegrationAnalytics(
+              option === 'public'
+                ? PlatformEvents.CHOSE_PUBLIC
+                : PlatformEvents.CHOSE_INTERNAL,
+              {
+                organization,
+                view: analyticsView,
+              }
+            );
+          }}
         >
           {t('Next')}
-        </Button>
+        </LinkButton>
       </Footer>
     </Fragment>
   );
@@ -101,4 +145,12 @@ const RadioChoiceDescription = styled('div')`
   font-size: ${p => p.theme.fontSizeMedium};
   line-height: 1.6em;
 `;
-export default CreateNewIntegration;
+
+const HeaderWrapper = styled('div')`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+`;
+
+export default withOrganization(CreateNewIntegrationModal);

@@ -3,12 +3,16 @@ import pick from 'lodash/pick';
 import {action, computed, makeObservable, observable} from 'mobx';
 
 import {Client} from 'sentry/api';
-import {EventTransaction} from 'sentry/types/event';
-import {createFuzzySearch, Fuse} from 'sentry/utils/fuzzySearch';
+import type {AggregateEventTransaction, EventTransaction} from 'sentry/types/event';
+import type {Fuse} from 'sentry/utils/fuzzySearch';
+import {createFuzzySearch} from 'sentry/utils/fuzzySearch';
+import type {TraceInfo} from 'sentry/views/performance/traceDetails/types';
 
-import {ActiveOperationFilter, noFilter, toggleAllFilters, toggleFilter} from './filter';
+import type {ActiveOperationFilter} from './filter';
+import {noFilter, toggleAllFilters, toggleFilter} from './filter';
 import SpanTreeModel from './spanTreeModel';
-import {
+import type {
+  EnhancedProcessedSpanType,
   FilterSpans,
   IndexedFusedSpan,
   ParsedTraceType,
@@ -21,10 +25,12 @@ class WaterfallModel {
   api: Client = new Client();
 
   // readonly state
-  event: Readonly<EventTransaction>;
+  event: Readonly<EventTransaction | AggregateEventTransaction>;
   rootSpan: SpanTreeModel;
   parsedTrace: ParsedTraceType;
   fuse: Fuse<IndexedFusedSpan> | undefined = undefined;
+  affectedSpanIds: string[] | undefined = undefined;
+  isEmbeddedSpanTree: boolean;
 
   // readable/writable state
   operationNameFilters: ActiveOperationFilter = noFilter;
@@ -32,17 +38,26 @@ class WaterfallModel {
   searchQuery: string | undefined = undefined;
   hiddenSpanSubTrees: Set<string>;
   traceBounds: Array<TraceBound>;
+  focusedSpanIds: Set<string> | undefined = undefined;
+  traceInfo: TraceInfo | undefined = undefined;
 
-  constructor(event: Readonly<EventTransaction>) {
+  constructor(
+    event: Readonly<EventTransaction | AggregateEventTransaction>,
+    affectedSpanIds?: string[],
+    focusedSpanIds?: string[],
+    hiddenSpanSubTrees?: Set<string>,
+    traceInfo?: TraceInfo
+  ) {
     this.event = event;
-
+    this.traceInfo = traceInfo;
     this.parsedTrace = parseTrace(event);
     const rootSpan = generateRootSpan(this.parsedTrace);
     this.rootSpan = new SpanTreeModel(
       rootSpan,
       this.parsedTrace.childSpans,
       this.api,
-      true
+      true,
+      traceInfo
     );
 
     // Track the trace bounds of the current transaction and the trace bounds of
@@ -53,7 +68,20 @@ class WaterfallModel {
 
     // Set of span IDs whose sub-trees should be hidden. This is used for the
     // span tree toggling product feature.
-    this.hiddenSpanSubTrees = new Set();
+    this.hiddenSpanSubTrees = hiddenSpanSubTrees ?? new Set();
+
+    // When viewing the span waterfall from a Performance Issue, a set of span IDs may be provided
+
+    this.affectedSpanIds = affectedSpanIds;
+
+    if (affectedSpanIds || focusedSpanIds) {
+      affectedSpanIds ??= [];
+      focusedSpanIds ??= [];
+      this.focusedSpanIds = new Set([...affectedSpanIds, ...focusedSpanIds]);
+    }
+
+    // If the set of span IDs is provided, this waterfall is for an embedded span tree
+    this.isEmbeddedSpanTree = !!this.focusedSpanIds;
 
     makeObservable(this, {
       parsedTrace: observable,
@@ -78,6 +106,9 @@ class WaterfallModel {
       traceBounds: observable,
       addTraceBounds: action,
       removeTraceBounds: action,
+
+      focusedSpanIds: observable,
+      expandHiddenSpans: action,
     });
   }
 
@@ -266,24 +297,28 @@ class WaterfallModel {
     viewEnd: number;
     viewStart: number; // in [0, 1]
   }) => {
+    const bounds = this.traceInfo
+      ? {
+          traceEndTimestamp: this.traceInfo.endTimestamp,
+          traceStartTimestamp: this.traceInfo.startTimestamp,
+        }
+      : this.getTraceBounds();
+
     return boundsGenerator({
-      ...this.getTraceBounds(),
+      ...bounds,
       viewStart,
       viewEnd,
     });
   };
 
-  getWaterfall = (
-    {
-      viewStart,
-      viewEnd,
-    }: {
-      // in [0, 1]
-      viewEnd: number;
-      viewStart: number; // in [0, 1]
-    },
-    isAutogroupSiblingFeatureEnabled: boolean
-  ) => {
+  getWaterfall = ({
+    viewStart,
+    viewEnd,
+  }: {
+    // in [0, 1]
+    viewEnd: number;
+    viewStart: number; // in [0, 1]
+  }) => {
     const generateBounds = this.generateBounds({
       viewStart,
       viewEnd,
@@ -293,11 +328,13 @@ class WaterfallModel {
       operationNameFilters: this.operationNameFilters,
       generateBounds,
       treeDepth: 0,
+      directParent: null,
       isLastSibling: true,
       continuingTreeDepths: [],
       hiddenSpanSubTrees: this.hiddenSpanSubTrees,
       spanAncestors: new Set(),
       filterSpans: this.filterSpans,
+      focusedSpanIds: this.focusedSpanIds,
       previousSiblingEndTimestamp: undefined,
       event: this.event,
       isOnlySibling: true,
@@ -306,7 +343,16 @@ class WaterfallModel {
       isNestedSpanGroupExpanded: false,
       addTraceBounds: this.addTraceBounds,
       removeTraceBounds: this.removeTraceBounds,
-      isAutogroupSiblingFeatureEnabled,
+    });
+  };
+
+  expandHiddenSpans = (spans: EnhancedProcessedSpanType[]) => {
+    spans.forEach(span => {
+      if (span.type !== 'filtered_out') {
+        return;
+      }
+
+      this.focusedSpanIds?.add(span.span.span_id);
     });
   };
 }

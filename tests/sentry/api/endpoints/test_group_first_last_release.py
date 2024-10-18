@@ -1,4 +1,4 @@
-from sentry.testutils import APITestCase, SnubaTestCase
+from sentry.testutils.cases import APITestCase, SnubaTestCase
 
 
 class GroupFirstLastTest(APITestCase, SnubaTestCase):

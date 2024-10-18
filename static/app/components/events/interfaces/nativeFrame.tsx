@@ -1,60 +1,79 @@
-import {Fragment, MouseEvent, useContext, useState} from 'react';
-import {css} from '@emotion/react';
+import type {MouseEvent} from 'react';
+import {Fragment, useContext, useState} from 'react';
 import styled from '@emotion/styled';
-import scrollToElement from 'scroll-to-element';
 
-import Button from 'sentry/components/button';
+import Tag from 'sentry/components/badge/tag';
+import {Button} from 'sentry/components/button';
+import {Chevron} from 'sentry/components/chevron';
+import ErrorBoundary from 'sentry/components/errorBoundary';
+import {OpenInContextLine} from 'sentry/components/events/interfaces/frame/openInContextLine';
+import {StacktraceLink} from 'sentry/components/events/interfaces/frame/stacktraceLink';
 import {
+  getLeadHint,
   hasAssembly,
   hasContextRegisters,
   hasContextSource,
   hasContextVars,
-  isDotnet,
   isExpandable,
   trimPackage,
 } from 'sentry/components/events/interfaces/frame/utils';
 import {formatAddress, parseAddress} from 'sentry/components/events/interfaces/utils';
-import AnnotatedText from 'sentry/components/events/meta/annotatedText';
-import {getMeta} from 'sentry/components/events/meta/metaProxy';
+import {AnnotatedText} from 'sentry/components/events/meta/annotatedText';
 import {TraceEventDataSectionContext} from 'sentry/components/events/traceEventDataSection';
-import {DisplayOption} from 'sentry/components/events/traceEventDataSection/displayOptions';
-import {STACKTRACE_PREVIEW_TOOLTIP_DELAY} from 'sentry/components/stacktracePreview';
+import InteractionStateLayer from 'sentry/components/interactionStateLayer';
 import StrictClick from 'sentry/components/strictClick';
-import Tooltip from 'sentry/components/tooltip';
-import {IconChevron} from 'sentry/icons/iconChevron';
-import {IconInfo} from 'sentry/icons/iconInfo';
-import {IconQuestion} from 'sentry/icons/iconQuestion';
+import {Tooltip} from 'sentry/components/tooltip';
+import {SLOW_TOOLTIP_DELAY} from 'sentry/constants';
+import {IconFileBroken} from 'sentry/icons/iconFileBroken';
+import {IconRefresh} from 'sentry/icons/iconRefresh';
 import {IconWarning} from 'sentry/icons/iconWarning';
-import {t} from 'sentry/locale';
-import {DebugMetaActions} from 'sentry/stores/debugMetaStore';
-import space from 'sentry/styles/space';
-import {Frame, PlatformType, SentryAppComponent} from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import {t, tn} from 'sentry/locale';
+import DebugMetaStore from 'sentry/stores/debugMetaStore';
+import {space} from 'sentry/styles/space';
+import type {Event, Frame} from 'sentry/types/event';
+import type {
+  SentryAppComponent,
+  SentryAppSchemaStacktraceLink,
+} from 'sentry/types/integrations';
+import type {PlatformKey} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
-import {Color} from 'sentry/utils/theme';
+import {useSyncedLocalStorageState} from 'sentry/utils/useSyncedLocalStorageState';
 import withSentryAppComponents from 'sentry/utils/withSentryAppComponents';
+import {SectionKey, useEventDetails} from 'sentry/views/issueDetails/streamline/context';
+import {getFoldSectionKey} from 'sentry/views/issueDetails/streamline/foldSection';
+import {useHasStreamlinedUI} from 'sentry/views/issueDetails/utils';
 
-import DebugImage from './debugMeta/debugImage';
+import type DebugImage from './debugMeta/debugImage';
 import {combineStatus} from './debugMeta/utils';
 import Context from './frame/context';
 import {SymbolicatorStatus} from './types';
 
 type Props = {
-  components: Array<SentryAppComponent>;
+  components: SentryAppComponent<SentryAppSchemaStacktraceLink>[];
   event: Event;
   frame: Frame;
   isUsedForGrouping: boolean;
-  platform: PlatformType;
+  platform: PlatformKey;
   registers: Record<string, string>;
   emptySourceNotation?: boolean;
+  frameMeta?: Record<any, any>;
+  hiddenFrameCount?: number;
   image?: React.ComponentProps<typeof DebugImage>['image'];
   includeSystemFrames?: boolean;
   isExpanded?: boolean;
   isHoverPreviewed?: boolean;
   isOnlyFrame?: boolean;
+  isShowFramesToggleExpanded?: boolean;
+  /**
+   * Frames that are hidden under the most recent non-InApp frame
+   */
+  isSubFrame?: boolean;
   maxLengthOfRelativeAddress?: number;
   nextFrame?: Frame;
+  onShowFramesToggle?: (event: React.MouseEvent<HTMLElement>) => void;
   prevFrame?: Frame;
+  registersMeta?: Record<any, any>;
+  showStackedFrames?: boolean;
 };
 
 function NativeFrame({
@@ -69,8 +88,14 @@ function NativeFrame({
   isOnlyFrame,
   event,
   components,
+  hiddenFrameCount,
+  isShowFramesToggleExpanded,
+  isSubFrame,
+  onShowFramesToggle,
   isExpanded,
   platform,
+  registersMeta,
+  frameMeta,
   emptySourceNotation = false,
   /**
    * Is the stack trace being previewed in a hovercard?
@@ -79,31 +104,36 @@ function NativeFrame({
 }: Props) {
   const traceEventDataSectionContext = useContext(TraceEventDataSectionContext);
 
-  const absolute = traceEventDataSectionContext?.activeDisplayOptions.includes(
-    DisplayOption.ABSOLUTE_ADDRESSES
+  const {sectionData} = useEventDetails();
+  const debugSectionConfig = sectionData[SectionKey.DEBUGMETA];
+  const [_isCollapsed, setIsCollapsed] = useSyncedLocalStorageState(
+    getFoldSectionKey(SectionKey.DEBUGMETA),
+    debugSectionConfig?.initialCollapse ?? false
+  );
+  const hasStreamlinedUI = useHasStreamlinedUI();
+
+  const absolute = traceEventDataSectionContext?.display.includes('absolute-addresses');
+
+  const fullStackTrace = traceEventDataSectionContext?.fullStackTrace;
+
+  const fullFunctionName = traceEventDataSectionContext?.display.includes(
+    'verbose-function-names'
   );
 
-  const fullStackTrace = traceEventDataSectionContext?.activeDisplayOptions.includes(
-    DisplayOption.FULL_STACK_TRACE
-  );
+  const absoluteFilePaths =
+    traceEventDataSectionContext?.display.includes('absolute-file-paths');
 
-  const fullFunctionName = traceEventDataSectionContext?.activeDisplayOptions.includes(
-    DisplayOption.VERBOSE_FUNCTION_NAMES
-  );
-
-  const absoluteFilePaths = traceEventDataSectionContext?.activeDisplayOptions.includes(
-    DisplayOption.ABSOLUTE_FILE_PATHS
-  );
-
-  const tooltipDelay = isHoverPreviewed ? STACKTRACE_PREVIEW_TOOLTIP_DELAY : undefined;
+  const tooltipDelay = isHoverPreviewed ? SLOW_TOOLTIP_DELAY : undefined;
   const foundByStackScanning = frame.trust === 'scan' || frame.trust === 'cfi-scan';
   const startingAddress = image ? image.image_addr : null;
   const packageClickable =
     !!frame.symbolicatorStatus &&
     frame.symbolicatorStatus !== SymbolicatorStatus.UNKNOWN_IMAGE &&
-    !isHoverPreviewed;
+    !isHoverPreviewed &&
+    // We know the debug section is rendered (only once streamline ui is enabled)
+    (hasStreamlinedUI ? !!debugSectionConfig : true);
 
-  const leadsToApp = !frame.inApp && ((nextFrame && nextFrame.inApp) || !nextFrame);
+  const leadsToApp = !frame.inApp && (nextFrame?.inApp || !nextFrame);
   const expandable =
     !leadsToApp || includeSystemFrames
       ? isExpandable({
@@ -126,6 +156,15 @@ function NativeFrame({
     frame.function !== frame.rawFunction;
 
   const [expanded, setExpanded] = useState(expandable ? isExpanded ?? false : false);
+  const [isHovering, setHovering] = useState(false);
+
+  const contextLine = (frame?.context || []).find(l => l[0] === frame.lineNo);
+  const hasStacktraceLink = frame.inApp && !!frame.filename && (isHovering || expanded);
+  const showSentryAppStacktraceLinkInFrame = hasStacktraceLink && components.length > 0;
+
+  const handleMouseEnter = () => setHovering(true);
+
+  const handleMouseLeave = () => setHovering(false);
 
   function getRelativeAddress() {
     if (!startingAddress) {
@@ -160,24 +199,35 @@ function NativeFrame({
     if (functionNameHiddenDetails && fullFunctionName && frame.rawFunction) {
       return {
         value: frame.rawFunction,
-        meta: getMeta(frame, 'rawFunction'),
+        meta: frameMeta?.rawFunction?.[''],
       };
     }
 
     if (frame.function) {
       return {
         value: frame.function,
-        meta: getMeta(frame, 'function'),
+        meta: frameMeta?.function?.[''],
       };
     }
 
     return undefined;
   }
 
+  // this is the status of image that belongs to this frame
   function getStatus() {
-    // this is the status of image that belongs to this frame
+    // If a matching debug image doesn't exist, fall back to symbolicator_status
     if (!image) {
-      return undefined;
+      switch (frame.symbolicatorStatus) {
+        case SymbolicatorStatus.SYMBOLICATED:
+          return 'success';
+        case SymbolicatorStatus.MISSING:
+        case SymbolicatorStatus.MALFORMED:
+          return 'error';
+        case SymbolicatorStatus.MISSING_SYMBOL:
+        case SymbolicatorStatus.UNKNOWN_IMAGE:
+        default:
+          return undefined;
+      }
     }
 
     const combinedStatus = combineStatus(image.debug_status, image.unwind_status);
@@ -192,6 +242,7 @@ function NativeFrame({
     }
   }
 
+  // This isn't possible when the page doesn't have the images loaded section
   function handleGoToImagesLoaded(e: MouseEvent) {
     e.stopPropagation(); // to prevent collapsing if collapsible
 
@@ -201,10 +252,18 @@ function NativeFrame({
           ? `${image.debug_id}!${frame.instructionAddr}`
           : frame.instructionAddr;
 
-      DebugMetaActions.updateFilter(searchTerm);
+      DebugMetaStore.updateFilter(searchTerm);
     }
 
-    scrollToElement('#images-loaded');
+    if (hasStreamlinedUI) {
+      // Expand the section
+      setIsCollapsed(false);
+    }
+
+    // Scroll to the section
+    document
+      .getElementById(SectionKey.DEBUGMETA)
+      ?.scrollIntoView({block: 'start', behavior: 'smooth'});
   }
 
   function handleToggleContext(e: MouseEvent) {
@@ -221,99 +280,88 @@ function NativeFrame({
   const status = getStatus();
 
   return (
-    <GridRow
-      inApp={frame.inApp}
-      expandable={expandable}
-      expanded={expanded}
-      data-test-id="stack-trace-frame"
-    >
+    <StackTraceFrame data-test-id="stack-trace-frame">
       <StrictClick onClick={handleToggleContext}>
-        <StrictClickContent>
-          <StatusCell>
-            {(status === 'error' || status === undefined) &&
-              (packageClickable ? (
-                <PackageStatusButton
-                  onClick={handleGoToImagesLoaded}
-                  title={t('Go to images loaded')}
-                  aria-label={t('Go to images loaded')}
-                  icon={
-                    status === 'error' ? (
-                      <IconQuestion size="sm" color="red300" />
-                    ) : (
-                      <IconWarning size="sm" color="red300" />
-                    )
-                  }
-                  size="zero"
-                  borderless
+        <RowHeader
+          expandable={expandable}
+          expanded={expanded}
+          isInAppFrame={frame.inApp}
+          isSubFrame={!!isSubFrame}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
+          {expandable ? <InteractionStateLayer /> : null}
+          <SymbolicatorIcon>
+            {status === 'error' ? (
+              <Tooltip
+                title={t(
+                  'This frame has missing debug files and could not be symbolicated'
+                )}
+              >
+                <IconFileBroken
+                  size="sm"
+                  color="errorText"
+                  data-test-id="symbolication-error-icon"
                 />
-              ) : status === 'error' ? (
-                <IconQuestion size="sm" color="red300" />
-              ) : (
-                <IconWarning size="sm" color="red300" />
-              ))}
-          </StatusCell>
-          <PackageCell>
+              </Tooltip>
+            ) : status === undefined ? (
+              <Tooltip
+                title={t(
+                  'This frame has an unknown problem and could not be symbolicated'
+                )}
+              >
+                <IconWarning
+                  size="sm"
+                  color="warningText"
+                  data-test-id="symbolication-warning-icon"
+                />
+              </Tooltip>
+            ) : null}
+          </SymbolicatorIcon>
+          <div>
             {!fullStackTrace && !expanded && leadsToApp && (
               <Fragment>
-                {!nextFrame ? t('Crashed in non-app') : t('Called from')}
-                {':'}&nbsp;
+                <PackageNote>
+                  {getLeadHint({event, hasNextFrame: defined(nextFrame)})}
+                </PackageNote>
               </Fragment>
             )}
-            <span>
-              <Tooltip
-                title={frame.package ?? t('Go to images loaded')}
-                delay={tooltipDelay}
-                disabled={frame.package ? false : !packageClickable}
-                containerDisplayMode="inline-flex"
-              >
-                <Package
-                  color={
-                    status === undefined || status === 'error'
-                      ? 'red300'
-                      : packageClickable
-                      ? 'blue300'
-                      : undefined
-                  }
-                  onClick={packageClickable ? handleGoToImagesLoaded : undefined}
-                >
-                  {frame.package ? trimPackage(frame.package) : `<${t('unknown')}>`}
-                </Package>
-              </Tooltip>
-            </span>
-          </PackageCell>
-          <AddressCell>
             <Tooltip
-              title={addressTooltip}
-              disabled={!(foundByStackScanning || inlineFrame)}
+              title={frame.package ?? t('Go to images loaded')}
+              position="bottom"
+              containerDisplayMode="inline-flex"
               delay={tooltipDelay}
             >
-              {!relativeAddress || absolute ? frame.instructionAddr : relativeAddress}
+              <Package>
+                {frame.package ? trimPackage(frame.package) : `<${t('unknown')}>`}
+              </Package>
             </Tooltip>
-          </AddressCell>
-          <GroupingCell>
-            {isUsedForGrouping && (
+          </div>
+          <GenericCellWrapper>
+            <AddressCell onClick={packageClickable ? handleGoToImagesLoaded : undefined}>
               <Tooltip
-                title={t('This frame appears in all other events related to this issue')}
-                containerDisplayMode="inline-flex"
+                title={addressTooltip}
+                disabled={!(foundByStackScanning || inlineFrame)}
+                delay={tooltipDelay}
               >
-                <IconInfo size="sm" color="gray300" />
+                {!relativeAddress || absolute ? frame.instructionAddr : relativeAddress}
               </Tooltip>
-            )}
-          </GroupingCell>
+            </AddressCell>
+          </GenericCellWrapper>
           <FunctionNameCell>
-            <FunctionName>
-              {functionName ? (
+            {functionName ? (
+              <Tooltip title={frame?.rawFunction ?? frame?.symbol} delay={tooltipDelay}>
                 <AnnotatedText value={functionName.value} meta={functionName.meta} />
-              ) : (
-                `<${t('unknown')}>`
-              )}
-            </FunctionName>
+              </Tooltip>
+            ) : (
+              `<${t('unknown')}>`
+            )}{' '}
             {frame.filename && (
               <Tooltip
                 title={frame.absPath}
                 disabled={!(defined(frame.absPath) && frame.absPath !== frame.filename)}
                 delay={tooltipDelay}
-                containerDisplayMode="inline-flex"
+                isHoverable
               >
                 <FileName>
                   {'('}
@@ -324,122 +372,151 @@ function NativeFrame({
               </Tooltip>
             )}
           </FunctionNameCell>
+          <GroupingCell>
+            {isUsedForGrouping && (
+              <Tooltip title={t('This frame is repeated in every event of this issue')}>
+                <IconRefresh size="sm" color="textColor" />
+              </Tooltip>
+            )}
+          </GroupingCell>
+          {hiddenFrameCount ? (
+            <ShowHideButton
+              analyticsEventName="Stacktrace Frames: toggled"
+              analyticsEventKey="stacktrace_frames.toggled"
+              analyticsParams={{
+                frame_count: hiddenFrameCount,
+                is_frame_expanded: isShowFramesToggleExpanded,
+              }}
+              size="xs"
+              borderless
+              onClick={e => {
+                onShowFramesToggle?.(e);
+              }}
+            >
+              {isShowFramesToggleExpanded
+                ? tn('Hide %s more frame', 'Hide %s more frames', hiddenFrameCount)
+                : tn('Show %s more frame', 'Show %s more frames', hiddenFrameCount)}
+            </ShowHideButton>
+          ) : null}
+          <GenericCellWrapper>
+            {hasStacktraceLink && (
+              <ErrorBoundary>
+                <StacktraceLink
+                  frame={frame}
+                  line={contextLine ? contextLine[1] : ''}
+                  event={event}
+                />
+              </ErrorBoundary>
+            )}
+            {showSentryAppStacktraceLinkInFrame && (
+              <ErrorBoundary mini>
+                <OpenInContextLine
+                  lineNo={frame.lineNo}
+                  filename={frame.filename || ''}
+                  components={components}
+                />
+              </ErrorBoundary>
+            )}
+            <TypeCell>
+              {frame.inApp ? <Tag type="info">{t('In App')}</Tag> : null}
+            </TypeCell>
+          </GenericCellWrapper>
           <ExpandCell>
             {expandable && (
               <ToggleButton
                 size="zero"
-                css={isDotnet(platform) && {display: 'block !important'}} // remove important once we get rid of css files
-                title={t('Toggle Context')}
+                borderless
                 aria-label={t('Toggle Context')}
-                tooltipProps={
-                  isHoverPreviewed ? {delay: STACKTRACE_PREVIEW_TOOLTIP_DELAY} : undefined
-                }
-                icon={<IconChevron size="8px" direction={expanded ? 'up' : 'down'} />}
+                tooltipProps={isHoverPreviewed ? {delay: SLOW_TOOLTIP_DELAY} : undefined}
+                icon={<Chevron size="medium" direction={expanded ? 'up' : 'down'} />}
               />
             )}
           </ExpandCell>
-        </StrictClickContent>
+        </RowHeader>
       </StrictClick>
-      <RegistersCell>
-        {expanded && (
-          <Registers
-            frame={frame}
-            event={event}
-            registers={registers}
-            components={components}
-            hasContextSource={hasContextSource(frame)}
-            hasContextVars={hasContextVars(frame)}
-            hasContextRegisters={hasContextRegisters(registers)}
-            emptySourceNotation={emptySourceNotation}
-            hasAssembly={hasAssembly(frame, platform)}
-            expandable={expandable}
-            isExpanded={expanded}
-          />
-        )}
-      </RegistersCell>
-    </GridRow>
+      {expanded && (
+        <Registers
+          frame={frame}
+          event={event}
+          registers={registers}
+          components={components}
+          hasContextSource={hasContextSource(frame)}
+          hasContextVars={hasContextVars(frame)}
+          hasContextRegisters={hasContextRegisters(registers)}
+          emptySourceNotation={emptySourceNotation}
+          hasAssembly={hasAssembly(frame, platform)}
+          isExpanded={expanded}
+          registersMeta={registersMeta}
+          frameMeta={frameMeta}
+          platform={platform}
+        />
+      )}
+    </StackTraceFrame>
   );
 }
 
 export default withSentryAppComponents(NativeFrame, {componentType: 'stacktrace-link'});
 
-const Cell = styled('div')`
-  padding: ${space(0.5)};
+const GenericCellWrapper = styled('div')`
   display: flex;
-  flex-wrap: wrap;
-  word-break: break-all;
-  align-items: flex-start;
 `;
 
-const StatusCell = styled(Cell)`
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
-    grid-column: 1/1;
-    grid-row: 1/1;
-  }
-`;
-
-const PackageCell = styled(Cell)`
-  color: ${p => p.theme.subText};
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
-    grid-column: 2/2;
-    grid-row: 1/1;
-    display: grid;
-    grid-template-columns: 1fr;
-    grid-template-rows: repeat(2, auto);
-  }
-`;
-
-const AddressCell = styled(Cell)`
+const AddressCell = styled('div')`
   font-family: ${p => p.theme.text.familyMono};
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
-    grid-column: 3/3;
-    grid-row: 1/1;
+  ${p => p.onClick && `cursor: pointer`};
+  ${p => p.onClick && `color:` + p.theme.linkColor};
+`;
+
+const FunctionNameCell = styled('div')`
+  word-break: break-all;
+
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
+    grid-column: 2/6;
   }
 `;
 
-const GroupingCell = styled(Cell)`
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
-    grid-column: 1/1;
-    grid-row: 2/2;
+const GroupingCell = styled('div')`
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
+    grid-row: 2/3;
   }
 `;
 
-const FunctionNameCell = styled(Cell)`
-  color: ${p => p.theme.textColor};
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
-    grid-column: 2/-1;
-    grid-row: 2/2;
+const TypeCell = styled('div')`
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
+    grid-column: 5/6;
+    grid-row: 1/2;
   }
 `;
 
-const ExpandCell = styled(Cell)``;
+const ExpandCell = styled('div')`
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
+    grid-column: 6/7;
+    grid-row: 1/2;
+  }
+`;
 
-const RegistersCell = styled('div')`
-  grid-column: 1/-1;
-  margin-left: -${space(0.5)};
-  margin-right: -${space(0.5)};
-  cursor: default;
+const ToggleButton = styled(Button)`
+  display: block;
+  color: ${p => p.theme.subText};
 `;
 
 const Registers = styled(Context)`
+  border-bottom: 1px solid ${p => p.theme.border};
   padding: 0;
   margin: 0;
 `;
 
-const ToggleButton = styled(Button)`
-  width: 16px;
-  height: 16px;
+const PackageNote = styled('div')`
+  color: ${p => p.theme.subText};
+  font-size: ${p => p.theme.fontSizeExtraSmall};
 `;
 
-const Package = styled('span')<{color?: Color}>`
-  border-bottom: 1px dashed ${p => p.theme.border};
-  ${p => p.color && `color: ${p.theme[p.color]}`};
-  ${p => p.onClick && `cursor: pointer;`}
-`;
-
-const FunctionName = styled('div')`
-  color: ${p => p.theme.headingColor};
-  margin-right: ${space(1)};
+const Package = styled('span')`
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  padding-right: 2px; /* Needed to prevent text cropping with italic font */
 `;
 
 const FileName = styled('span')`
@@ -447,42 +524,54 @@ const FileName = styled('span')`
   border-bottom: 1px dashed ${p => p.theme.border};
 `;
 
-const PackageStatusButton = styled(Button)`
-  padding: 0;
-  border: none;
-`;
-
-const GridRow = styled('div')<{expandable: boolean; expanded: boolean; inApp: boolean}>`
-  ${p => p.expandable && `cursor: pointer;`};
-  ${p => p.inApp && `background: ${p.theme.bodyBackground};`};
-  ${p =>
-    !p.inApp &&
-    css`
-      color: ${p.theme.subText};
-      ${FunctionName} {
-        color: ${p.theme.subText};
-      }
-      ${FunctionNameCell} {
-        color: ${p.theme.subText};
-      }
-    `};
-
+const RowHeader = styled('span')<{
+  expandable: boolean;
+  expanded: boolean;
+  isInAppFrame: boolean;
+  isSubFrame: boolean;
+}>`
+  position: relative;
   display: grid;
-  align-items: flex-start;
-  padding: ${space(0.5)};
-  :not(:last-child) {
-    border-bottom: 1px solid ${p => p.theme.border};
-  }
+  grid-template-columns: repeat(2, auto) 1fr repeat(2, auto) ${space(2)};
+  grid-template-rows: repeat(2, auto);
+  align-items: center;
+  align-content: center;
+  column-gap: ${space(1)};
+  background-color: ${p =>
+    !p.isInAppFrame && p.isSubFrame
+      ? `${p.theme.surface100}`
+      : `${p.theme.bodyBackground}`};
+  font-size: ${p => p.theme.fontSizeSmall};
+  padding: ${space(1)};
+  color: ${p => (!p.isInAppFrame ? p.theme.subText : '')};
+  font-style: ${p => (!p.isInAppFrame ? 'italic' : '')};
+  ${p => p.expandable && `cursor: pointer;`};
 
-  grid-template-columns: 24px 132px 138px 24px 1fr 24px;
-  grid-template-rows: 1fr;
-
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
-    grid-template-columns: 24px auto minmax(138px, 1fr) 24px;
-    grid-template-rows: repeat(2, auto);
+  @media (min-width: ${p => p.theme.breakpoints.small}) {
+    grid-template-columns: auto 150px 120px 4fr repeat(2, auto) ${space(2)};
+    padding: ${space(0.5)} ${space(1.5)};
+    min-height: 32px;
   }
 `;
 
-const StrictClickContent = styled('div')`
-  display: contents;
+const StackTraceFrame = styled('li')`
+  :not(:last-child) {
+    ${RowHeader} {
+      border-bottom: 1px solid ${p => p.theme.border};
+    }
+  }
+`;
+
+const SymbolicatorIcon = styled('div')`
+  width: ${p => p.theme.iconSizes.sm};
+`;
+
+const ShowHideButton = styled(Button)`
+  color: ${p => p.theme.subText};
+  font-style: italic;
+  font-weight: ${p => p.theme.fontWeightNormal};
+  padding: ${space(0.25)} ${space(0.5)};
+  &:hover {
+    color: ${p => p.theme.subText};
+  }
 `;

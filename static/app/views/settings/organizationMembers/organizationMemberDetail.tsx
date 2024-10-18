@@ -1,7 +1,7 @@
-import {Fragment} from 'react';
-import {browserHistory, RouteComponentProps} from 'react-router';
+import {Fragment, useEffect, useMemo, useState} from 'react';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
+import isEqual from 'lodash/isEqual';
 
 import {removeAuthenticator} from 'sentry/actionCreators/account';
 import {
@@ -10,29 +10,43 @@ import {
   addSuccessMessage,
 } from 'sentry/actionCreators/indicator';
 import {resendMemberInvite, updateMember} from 'sentry/actionCreators/members';
-import AutoSelectText from 'sentry/components/autoSelectText';
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import Confirm from 'sentry/components/confirm';
-import DateTime from 'sentry/components/dateTime';
+import {DateTime} from 'sentry/components/dateTime';
 import NotFound from 'sentry/components/errors/notFound';
-import Field from 'sentry/components/forms/field';
+import FieldGroup from 'sentry/components/forms/fieldGroup';
 import HookOrDefault from 'sentry/components/hookOrDefault';
 import ExternalLink from 'sentry/components/links/externalLink';
-import {Panel, PanelBody, PanelHeader, PanelItem} from 'sentry/components/panels';
-import Tooltip from 'sentry/components/tooltip';
+import LoadingError from 'sentry/components/loadingError';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
+import PanelItem from 'sentry/components/panels/panelItem';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
+import {Tooltip} from 'sentry/components/tooltip';
+import {IconRefresh} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import {inputStyles} from 'sentry/styles/input';
-import space from 'sentry/styles/space';
-import {Member, Organization, Team} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Member} from 'sentry/types/organization';
 import isMemberDisabledFromLimit from 'sentry/utils/isMemberDisabledFromLimit';
-import recreateRoute from 'sentry/utils/recreateRoute';
+import {
+  type ApiQueryKey,
+  setApiQueryData,
+  useApiQuery,
+  useMutation,
+  useQueryClient,
+} from 'sentry/utils/queryClient';
+import type RequestError from 'sentry/utils/requestError/requestError';
 import Teams from 'sentry/utils/teams';
-import withOrganization from 'sentry/utils/withOrganization';
-import AsyncView from 'sentry/views/asyncView';
+import useApi from 'sentry/utils/useApi';
+import {useNavigate} from 'sentry/utils/useNavigate';
+import useOrganization from 'sentry/utils/useOrganization';
+import {useParams} from 'sentry/utils/useParams';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
-import TeamSelect from 'sentry/views/settings/components/teamSelect';
+import TeamSelectForMember from 'sentry/views/settings/components/teamSelect/teamSelectForMember';
 
-import RoleSelect from './inviteMember/roleSelect';
+import OrganizationRoleSelect from './inviteMember/orgRoleSelect';
 
 const MULTIPLE_ORGS = t('Cannot be reset since user is in more than one organization');
 const NOT_ENROLLED = t('Not enrolled in two-factor authentication');
@@ -41,155 +55,166 @@ const TWO_FACTOR_REQUIRED = t(
   'Cannot be reset since two-factor is required for this organization'
 );
 
-type RouteParams = {
-  memberId: string;
-  orgId: string;
-};
-
-type Props = {
-  organization: Organization;
-} & RouteComponentProps<RouteParams, {}>;
-
-type State = {
-  member: Member | null;
-  roleList: Member['roles'];
-  selectedRole: Member['role'];
-} & AsyncView['state'];
-
 const DisabledMemberTooltip = HookOrDefault({
   hookName: 'component:disabled-member-tooltip',
   defaultComponent: ({children}) => <Fragment>{children}</Fragment>,
 });
 
-class OrganizationMemberDetail extends AsyncView<Props, State> {
-  getDefaultState(): State {
-    return {
-      ...super.getDefaultState(),
-      roleList: [],
-      selectedRole: '',
-      member: null,
-    };
-  }
-
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    const {organization, params} = this.props;
-    return [
-      ['member', `/organizations/${organization.slug}/members/${params.memberId}/`],
-    ];
-  }
-
-  redirectToMemberPage() {
-    const {location, params, routes} = this.props;
-    const members = recreateRoute('members/', {
-      location,
-      routes,
-      params,
-      stepBack: -2,
-    });
-    browserHistory.push(members);
-  }
-
-  handleSave = async () => {
-    const {organization, params} = this.props;
-
-    addLoadingMessage(t('Saving...'));
-    this.setState({busy: true});
-
-    try {
-      await updateMember(this.api, {
-        orgId: organization.slug,
-        memberId: params.memberId,
-        data: this.state.member,
-      });
-      addSuccessMessage(t('Saved'));
-      this.redirectToMemberPage();
-    } catch (resp) {
-      const errorMessage =
-        (resp && resp.responseJSON && resp.responseJSON.detail) || t('Could not save...');
-      addErrorMessage(errorMessage);
-    }
-    this.setState({busy: false});
-  };
-
-  handleInvite = async (regenerate: boolean) => {
-    const {organization, params} = this.props;
-
-    addLoadingMessage(t('Sending invite...'));
-
-    this.setState({busy: true});
-
-    try {
-      const data = await resendMemberInvite(this.api, {
-        orgId: organization.slug,
-        memberId: params.memberId,
-        regenerate,
-      });
-
-      addSuccessMessage(t('Sent invite!'));
-
-      if (regenerate) {
-        this.setState(state => ({member: {...state.member, ...data}}));
-      }
-    } catch (_err) {
-      addErrorMessage(t('Could not send invite'));
-    }
-
-    this.setState({busy: false});
-  };
-
-  handleAddTeam = (team: Team) => {
-    const {member} = this.state;
-    if (!member!.teams.includes(team.slug)) {
-      member!.teams.push(team.slug);
-    }
-    this.setState({member});
-  };
-
-  handleRemoveTeam = (removedTeam: string) => {
-    const {member} = this.state;
-
-    this.setState({
-      member: {
-        ...member!,
-        teams: member!.teams.filter(slug => slug !== removedTeam),
-      },
-    });
-  };
-
-  handle2faReset = async () => {
-    const {organization, router} = this.props;
-    const {user} = this.state.member!;
-
-    const requests = user.authenticators.map(auth =>
-      removeAuthenticator(this.api, user.id, auth.id)
+function MemberStatus({
+  member,
+  memberDeactivated,
+}: {
+  member: Member;
+  memberDeactivated: boolean;
+}) {
+  if (memberDeactivated) {
+    return (
+      <em>
+        <DisabledMemberTooltip>{t('Deactivated')}</DisabledMemberTooltip>
+      </em>
     );
+  }
+  if (member.expired) {
+    return <em>{t('Invitation Expired')}</em>;
+  }
+  if (member.pending) {
+    return <em>{t('Invitation Pending')}</em>;
+  }
+  return t('Active');
+}
 
-    try {
-      await Promise.all(requests);
-      router.push(`/settings/${organization.slug}/members/`);
-      addSuccessMessage(t('All authenticators have been removed'));
-    } catch (err) {
-      addErrorMessage(t('Error removing authenticators'));
-      Sentry.captureException(err);
+const getMemberQueryKey = (orgSlug: string, memberId: string): ApiQueryKey => [
+  `/organizations/${orgSlug}/members/${memberId}/`,
+];
+
+function OrganizationMemberDetailContent({member}: {member: Member}) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const organization = useOrganization();
+  const navigate = useNavigate();
+
+  const [orgRole, setOrgRole] = useState<Member['orgRole']>('');
+  const [teamRoles, setTeamRoles] = useState<Member['teamRoles']>([]);
+  const hasTeamRoles = organization.features.includes('team-roles');
+
+  useEffect(() => {
+    if (member) {
+      setOrgRole(member.orgRole);
+      setTeamRoles(member.teamRoles);
     }
+  }, [member]);
+
+  const {mutate: updatedMember, isPending: isSaving} = useMutation<Member, RequestError>({
+    mutationFn: () => {
+      return updateMember(api, {
+        orgId: organization.slug,
+        memberId: member.id,
+        data: {orgRole, teamRoles} as any,
+      });
+    },
+    onMutate: () => {
+      addLoadingMessage(t('Saving\u2026'));
+    },
+    onSuccess: data => {
+      addSuccessMessage(t('Saved'));
+      setApiQueryData<Member>(
+        queryClient,
+        getMemberQueryKey(organization.slug, member.id),
+        data
+      );
+    },
+    onError: error => {
+      addErrorMessage(
+        (error?.responseJSON?.detail as string) ?? t('Failed to update member')
+      );
+    },
+  });
+
+  const {mutate: inviteMember, isPending: isInviting} = useMutation<Member, RequestError>(
+    {
+      mutationFn: () => {
+        return resendMemberInvite(api, {
+          orgId: organization.slug,
+          memberId: member.id,
+          regenerate: true,
+        });
+      },
+      onSuccess: data => {
+        addSuccessMessage(t('Sent invite!'));
+
+        setApiQueryData<Member>(
+          queryClient,
+          getMemberQueryKey(organization.slug, member.id),
+          data
+        );
+      },
+      onError: () => {
+        addErrorMessage(t('Could not send invite'));
+      },
+    }
+  );
+
+  const {mutate: reset2fa, isPending: isResetting2fa} = useMutation<unknown>({
+    mutationFn: () => {
+      const {user} = member;
+      const promises =
+        user?.authenticators?.map(auth => removeAuthenticator(api, user.id, auth.id)) ??
+        [];
+      return Promise.all(promises);
+    },
+    onSuccess: () => {
+      addSuccessMessage(t('All authenticators have been removed'));
+      navigate(`/settings/${organization.slug}/members/`);
+    },
+    onError: error => {
+      addErrorMessage(t('Error removing authenticators'));
+      Sentry.captureException(error);
+    },
+  });
+
+  const onAddTeam = (teamSlug: string) => {
+    const newTeamRoles = [...teamRoles];
+    const i = newTeamRoles.findIndex(r => r.teamSlug === teamSlug);
+    if (i !== -1) {
+      return;
+    }
+
+    newTeamRoles.push({teamSlug, role: null});
+    setTeamRoles(newTeamRoles);
   };
 
-  showResetButton = () => {
-    const {organization} = this.props;
-    const {member} = this.state;
-    const {user} = member!;
+  const onRemoveTeam = (teamSlug: string) => {
+    const newTeamRoles = teamRoles.filter(r => r.teamSlug !== teamSlug);
+    setTeamRoles(newTeamRoles);
+  };
+
+  const onChangeTeamRole = (teamSlug: string, role: string) => {
+    if (!hasTeamRoles) {
+      return;
+    }
+
+    const newTeamRoles = [...teamRoles];
+    const i = newTeamRoles.findIndex(r => r.teamSlug === teamSlug);
+    if (i === -1) {
+      return;
+    }
+
+    newTeamRoles[i] = {...newTeamRoles[i], role};
+    setTeamRoles(newTeamRoles);
+  };
+
+  const showResetButton = useMemo(() => {
+    const {user} = member;
 
     if (!user || !user.authenticators || organization.require2FA) {
       return false;
     }
     const hasAuth = user.authenticators.length >= 1;
     return hasAuth && user.canReset2fa;
-  };
+  }, [member, organization.require2FA]);
 
-  getTooltip = (): string => {
-    const {organization} = this.props;
-    const {member} = this.state;
-    const {user} = member!;
+  const getTooltip = (): string => {
+    const {user} = member;
 
     if (!user) {
       return '';
@@ -211,189 +236,195 @@ class OrganizationMemberDetail extends AsyncView<Props, State> {
     return '';
   };
 
-  get memberDeactivated() {
-    return isMemberDisabledFromLimit(this.state.member);
-  }
-
-  renderMemberStatus(member: Member) {
-    if (this.memberDeactivated) {
-      return (
-        <em>
-          <DisabledMemberTooltip>{t('Deactivated')}</DisabledMemberTooltip>
-        </em>
-      );
-    }
-    if (member.expired) {
-      return <em>{t('Invitation Expired')}</em>;
-    }
-    if (member.pending) {
-      return <em>{t('Invitation Pending')}</em>;
-    }
-    return t('Active');
-  }
-
-  renderBody() {
-    const {organization} = this.props;
-    const {member} = this.state;
-
+  function hasFormChanged() {
     if (!member) {
-      return <NotFound />;
+      return false;
     }
 
-    const {access} = organization;
-    const inviteLink = member.invite_link;
-    const canEdit = access.includes('org:write') && !this.memberDeactivated;
+    if (orgRole !== member.orgRole || !isEqual(teamRoles, member.teamRoles)) {
+      return true;
+    }
 
-    const {email, expired, pending} = member;
-    const canResend = !expired;
-    const showAuth = !pending;
+    return false;
+  }
 
-    return (
-      <Fragment>
-        <SettingsPageHeader
-          title={
-            <Fragment>
-              <div>{member.name}</div>
-              <ExtraHeaderText>{t('Member Settings')}</ExtraHeaderText>
-            </Fragment>
-          }
-        />
+  const memberDeactivated = isMemberDisabledFromLimit(member);
+  const canEdit = organization.access.includes('org:write') && !memberDeactivated;
+  const isPartnershipUser = member.flags['partnership:restricted'] === true;
 
+  const {email, expired, pending} = member;
+  const canResend = !expired;
+  const showAuth = !pending;
+
+  const showResendButton = (member.pending || member.expired) && canResend;
+
+  return (
+    <Fragment>
+      <SentryDocumentTitle title={t('%s Member Settings', member.name || member.email)} />
+      <SettingsPageHeader
+        title={
+          <Fragment>
+            <div>{member.name}</div>
+            <ExtraHeaderText>{t('Member Settings')}</ExtraHeaderText>
+          </Fragment>
+        }
+      />
+
+      <Panel>
+        <PanelHeader hasButtons={showResendButton}>
+          {t('Basics')}
+
+          {showResendButton && (
+            <Button
+              data-test-id="resend-invite"
+              size="xs"
+              priority="primary"
+              icon={<IconRefresh />}
+              title={t('Generate a new invite link and send a new email.')}
+              busy={isInviting}
+              onClick={() => inviteMember()}
+            >
+              {t('Resend Invite')}
+            </Button>
+          )}
+        </PanelHeader>
+
+        <PanelBody>
+          <PanelItem>
+            <Details>
+              <div>
+                <DetailLabel>{t('Email')}</DetailLabel>
+                <div>
+                  <ExternalLink href={`mailto:${email}`}>{email}</ExternalLink>
+                </div>
+              </div>
+              <div>
+                <DetailLabel>{t('Status')}</DetailLabel>
+                <div data-test-id="member-status">
+                  <MemberStatus member={member} memberDeactivated={memberDeactivated} />
+                </div>
+              </div>
+              <div>
+                <DetailLabel>{t('Added')}</DetailLabel>
+                <div>
+                  <DateTime dateOnly date={member.dateCreated} />
+                </div>
+              </div>
+            </Details>
+          </PanelItem>
+        </PanelBody>
+      </Panel>
+
+      {showAuth && (
         <Panel>
-          <PanelHeader>{t('Basics')}</PanelHeader>
-
+          <PanelHeader>{t('Authentication')}</PanelHeader>
           <PanelBody>
-            <PanelItem>
-              <OverflowWrapper>
-                <Details>
-                  <div>
-                    <DetailLabel>{t('Email')}</DetailLabel>
-                    <div>
-                      <ExternalLink href={`mailto:${email}`}>{email}</ExternalLink>
-                    </div>
-                  </div>
-                  <div>
-                    <DetailLabel>{t('Status')}</DetailLabel>
-                    <div data-test-id="member-status">
-                      {this.renderMemberStatus(member)}
-                    </div>
-                  </div>
-                  <div>
-                    <DetailLabel>{t('Added')}</DetailLabel>
-                    <div>
-                      <DateTime dateOnly date={member.dateCreated} />
-                    </div>
-                  </div>
-                </Details>
-
-                {inviteLink && (
-                  <InviteSection>
-                    <div>
-                      <DetailLabel>{t('Invite Link')}</DetailLabel>
-                      <AutoSelectText>
-                        <CodeInput>{inviteLink}</CodeInput>
-                      </AutoSelectText>
-                      <p className="help-block">
-                        {t('This unique invite link may only be used by this member.')}
-                      </p>
-                    </div>
-                    <InviteActions>
-                      <Button onClick={() => this.handleInvite(true)}>
-                        {t('Generate New Invite')}
-                      </Button>
-                      {canResend && (
-                        <Button
-                          data-test-id="resend-invite"
-                          onClick={() => this.handleInvite(false)}
-                        >
-                          {t('Resend Invite')}
-                        </Button>
-                      )}
-                    </InviteActions>
-                  </InviteSection>
-                )}
-              </OverflowWrapper>
-            </PanelItem>
+            <FieldGroup
+              alignRight
+              flexibleControlStateSize
+              label={t('Reset two-factor authentication')}
+              help={t(
+                'Resetting two-factor authentication will remove all two-factor authentication methods for this member.'
+              )}
+            >
+              <Tooltip disabled={showResetButton} title={getTooltip()}>
+                <Confirm
+                  disabled={!showResetButton}
+                  message={tct(
+                    'Are you sure you want to disable all two-factor authentication methods for [name]?',
+                    {name: member.name ? member.name : 'this member'}
+                  )}
+                  onConfirm={() => reset2fa()}
+                >
+                  <Button priority="danger" busy={isResetting2fa}>
+                    {t('Reset two-factor authentication')}
+                  </Button>
+                </Confirm>
+              </Tooltip>
+            </FieldGroup>
           </PanelBody>
         </Panel>
+      )}
 
-        {showAuth && (
-          <Panel>
-            <PanelHeader>{t('Authentication')}</PanelHeader>
-            <PanelBody>
-              <Field
-                alignRight
-                flexibleControlStateSize
-                label={t('Reset two-factor authentication')}
-                help={t(
-                  'Resetting two-factor authentication will remove all two-factor authentication methods for this member.'
-                )}
-              >
-                <Tooltip
-                  data-test-id="reset-2fa-tooltip"
-                  disabled={this.showResetButton()}
-                  title={this.getTooltip()}
-                >
-                  <Confirm
-                    disabled={!this.showResetButton()}
-                    message={tct(
-                      'Are you sure you want to disable all two-factor authentication methods for [name]?',
-                      {name: member.name ? member.name : 'this member'}
-                    )}
-                    onConfirm={this.handle2faReset}
-                    data-test-id="reset-2fa-confirm"
-                  >
-                    <Button data-test-id="reset-2fa" priority="danger">
-                      {t('Reset two-factor authentication')}
-                    </Button>
-                  </Confirm>
-                </Tooltip>
-              </Field>
-            </PanelBody>
-          </Panel>
-        )}
+      <OrganizationRoleSelect
+        enforceAllowed={false}
+        enforceRetired={hasTeamRoles}
+        disabled={!canEdit || isPartnershipUser}
+        roleList={organization.orgRoleList}
+        roleSelected={orgRole}
+        setSelected={(newOrgRole: Member['orgRole']) => {
+          setOrgRole(newOrgRole);
+        }}
+        helpText={
+          isPartnershipUser
+            ? t('You cannot make changes to this partner-provisioned user.')
+            : undefined
+        }
+      />
 
-        <RoleSelect
-          enforceAllowed={false}
-          disabled={!canEdit}
-          roleList={member.roles}
-          selectedRole={member.role}
-          setRole={slug => this.setState({member: {...member, role: slug}})}
-        />
-
-        <Teams slugs={member.teams}>
-          {({teams, initiallyLoaded}) => (
-            <TeamSelect
-              organization={organization}
-              selectedTeams={teams}
-              disabled={!canEdit}
-              onAddTeam={this.handleAddTeam}
-              onRemoveTeam={this.handleRemoveTeam}
-              loadingTeams={!initiallyLoaded}
-            />
-          )}
-        </Teams>
-
-        <Footer>
-          <Button
-            priority="primary"
-            busy={this.state.busy}
-            onClick={this.handleSave}
+      <Teams slugs={member.teams}>
+        {({initiallyLoaded}) => (
+          <TeamSelectForMember
             disabled={!canEdit}
-          >
-            {t('Save Member')}
-          </Button>
-        </Footer>
-      </Fragment>
-    );
-  }
+            organization={organization}
+            member={member}
+            selectedOrgRole={orgRole}
+            selectedTeamRoles={teamRoles}
+            onChangeTeamRole={onChangeTeamRole}
+            onAddTeam={onAddTeam}
+            onRemoveTeam={onRemoveTeam}
+            loadingTeams={!initiallyLoaded}
+          />
+        )}
+      </Teams>
+
+      <Footer>
+        <Button
+          priority="primary"
+          busy={isSaving}
+          onClick={() => updatedMember()}
+          disabled={!canEdit || !hasFormChanged()}
+        >
+          {t('Save Member')}
+        </Button>
+      </Footer>
+    </Fragment>
+  );
 }
 
-export default withOrganization(OrganizationMemberDetail);
+function OrganizationMemberDetail() {
+  const params = useParams<{memberId: string}>();
+  const organization = useOrganization();
+
+  const {
+    data: member,
+    isPending,
+    isError,
+    refetch,
+  } = useApiQuery<Member>(getMemberQueryKey(organization.slug, params.memberId), {
+    staleTime: 0,
+  });
+
+  if (isPending) {
+    return <LoadingIndicator />;
+  }
+
+  if (isError) {
+    return <LoadingError onRetry={refetch} />;
+  }
+
+  if (!member) {
+    return <NotFound />;
+  }
+
+  return <OrganizationMemberDetailContent member={member} />;
+}
+
+export default OrganizationMemberDetail;
 
 const ExtraHeaderText = styled('div')`
   color: ${p => p.theme.gray300};
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
   font-size: ${p => p.theme.fontSizeLarge};
 `;
 
@@ -404,39 +435,16 @@ const Details = styled('div')`
   gap: ${space(2)};
   width: 100%;
 
-  @media (max-width: ${p => p.theme.breakpoints[0]}) {
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
     grid-auto-flow: row;
     grid-template-columns: auto;
   }
 `;
 
 const DetailLabel = styled('div')`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   margin-bottom: ${space(0.5)};
   color: ${p => p.theme.textColor};
-`;
-
-const OverflowWrapper = styled('div')`
-  overflow: hidden;
-  flex: 1;
-`;
-
-const InviteSection = styled('div')`
-  border-top: 1px solid ${p => p.theme.border};
-  margin-top: ${space(2)};
-  padding-top: ${space(2)};
-`;
-
-const CodeInput = styled('code')`
-  ${p => inputStyles(p)}; /* Have to do this for typescript :( */
-`;
-
-const InviteActions = styled('div')`
-  display: grid;
-  gap: ${space(1)};
-  grid-auto-flow: column;
-  justify-content: flex-end;
-  margin-top: ${space(2)};
 `;
 
 const Footer = styled('div')`

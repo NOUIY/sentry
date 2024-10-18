@@ -1,10 +1,13 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
+import pytest
 from django.test.client import RequestFactory
 from django.urls import reverse
 
-from sentry.models import Release
-from tests.apidocs.util import APIDocsTestCase
+from fixtures.apidocs_test_case import APIDocsTestCase
+from sentry.models.release import Release
+
+pytestmark = pytest.mark.sentry_metrics
 
 
 class OrganizationReleasesDocsTest(APIDocsTestCase):
@@ -15,6 +18,8 @@ class OrganizationReleasesDocsTest(APIDocsTestCase):
 
         team1 = self.create_team(organization=org)
         team2 = self.create_team(organization=org)
+        self.create_team_membership(team1, user=user)
+        self.create_team_membership(team2, user=user)
 
         self.project1 = self.create_project(teams=[team1], organization=org)
         self.project2 = self.create_project(teams=[team2], organization=org2)
@@ -23,17 +28,21 @@ class OrganizationReleasesDocsTest(APIDocsTestCase):
         self.login_as(user=user)
 
         release1 = Release.objects.create(
-            organization_id=org.id, version="1", date_added=datetime(2013, 8, 13, 3, 8, 24, 880386)
+            organization_id=org.id,
+            version="1",
+            date_added=datetime(2013, 8, 13, 3, 8, 24, 880386, tzinfo=UTC),
         )
         release1.add_project(self.project1)
 
         release2 = Release.objects.create(
-            organization_id=org2.id, version="2", date_added=datetime(2013, 8, 14, 3, 8, 24, 880386)
+            organization_id=org2.id,
+            version="2",
+            date_added=datetime(2013, 8, 14, 3, 8, 24, 880386, tzinfo=UTC),
         )
         release2.add_project(self.project2)
 
         self.url = reverse(
-            "sentry-api-0-organization-releases", kwargs={"organization_slug": org.slug}
+            "sentry-api-0-organization-releases", kwargs={"organization_id_or_slug": org.slug}
         )
 
     def test_get(self):

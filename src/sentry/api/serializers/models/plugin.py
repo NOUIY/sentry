@@ -4,7 +4,7 @@ from django.utils.text import slugify
 
 from sentry import features
 from sentry.api.serializers import Serializer
-from sentry.models import ProjectOption
+from sentry.models.options.project_option import ProjectOption
 from sentry.models.project import Project
 from sentry.utils.assets import get_asset_url
 from sentry.utils.http import absolute_uri
@@ -36,7 +36,7 @@ class PluginSerializer(Serializer):
     def __init__(self, project=None):
         self.project = project
 
-    def serialize(self, obj, attrs, user):
+    def serialize(self, obj, attrs, user, **kwargs):
         from sentry.api.endpoints.project_releases_token import _get_webhook_url
 
         doc = ""
@@ -119,12 +119,22 @@ class PluginWithConfigSerializer(PluginSerializer):
     def __init__(self, project=None):
         self.project = project
 
-    def serialize(self, obj, attrs, user):
+    def get_attrs(self, item_list, user, **kwargs):
+        return {
+            item: {
+                "config": [
+                    serialize_field(self.project, item, c)
+                    for c in item.get_config(
+                        project=self.project, user=user, add_additional_fields=True
+                    )
+                ]
+            }
+            for item in item_list
+        }
+
+    def serialize(self, obj, attrs, user, **kwargs):
         d = super().serialize(obj, attrs, user)
-        d["config"] = [
-            serialize_field(self.project, obj, c)
-            for c in obj.get_config(project=self.project, user=user, add_additial_fields=True)
-        ]
+        d["config"] = attrs.get("config")
         return d
 
 

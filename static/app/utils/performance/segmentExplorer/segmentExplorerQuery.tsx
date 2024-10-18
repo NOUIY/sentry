@@ -1,10 +1,10 @@
-import {EventQuery} from 'sentry/actionCreators/events';
-import {LocationQuery} from 'sentry/utils/discover/eventView';
-import GenericDiscoverQuery, {
+import type {EventQuery} from 'sentry/actionCreators/events';
+import type {LocationQuery} from 'sentry/utils/discover/eventView';
+import type {
   DiscoverQueryProps,
   GenericChildrenProps,
 } from 'sentry/utils/discover/genericDiscoverQuery';
-import withApi from 'sentry/utils/withApi';
+import GenericDiscoverQuery from 'sentry/utils/discover/genericDiscoverQuery';
 
 /**
  * An individual row in a Segment explorer result
@@ -86,4 +86,4 @@ function SegmentExplorerQuery(props: QueryProps) {
   );
 }
 
-export default withApi(SegmentExplorerQuery);
+export default SegmentExplorerQuery;

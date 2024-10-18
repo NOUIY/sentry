@@ -1,7 +1,13 @@
 from django.urls import reverse
 
-from sentry.models import Commit, Release, ReleaseCommit, Repository
-from sentry.testutils import APITestCase
+from sentry.models.commit import Commit
+from sentry.models.release import Release
+from sentry.models.releasecommit import ReleaseCommit
+from sentry.models.repository import Repository
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class OrganizationReleasePreviousCommitsTest(APITestCase):
@@ -43,7 +49,10 @@ class OrganizationReleasePreviousCommitsTest(APITestCase):
         new_release.add_project(self.project2)
         self.url = reverse(
             "sentry-api-0-organization-release-previous-with-commits",
-            kwargs={"organization_slug": self.organization.slug, "version": new_release.version},
+            kwargs={
+                "organization_id_or_slug": self.organization.slug,
+                "version": new_release.version,
+            },
         )
 
     def test_previous_release_has_commits(self):
@@ -62,7 +71,10 @@ class OrganizationReleasePreviousCommitsTest(APITestCase):
         new_release.add_project(self.project2)
         url = reverse(
             "sentry-api-0-organization-release-previous-with-commits",
-            kwargs={"organization_slug": self.organization.slug, "version": new_release.version},
+            kwargs={
+                "organization_id_or_slug": self.organization.slug,
+                "version": new_release.version,
+            },
         )
         response = self.client.get(url)
         assert response.status_code == 200, response.content
@@ -74,7 +86,7 @@ class OrganizationReleasePreviousCommitsTest(APITestCase):
 
         url = reverse(
             "sentry-api-0-organization-release-previous-with-commits",
-            kwargs={"organization_slug": self.organization.slug, "version": release.version},
+            kwargs={"organization_id_or_slug": self.organization.slug, "version": release.version},
         )
 
         response = self.client.get(url)

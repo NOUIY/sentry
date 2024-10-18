@@ -1,143 +1,358 @@
 import * as Sentry from '@sentry/react';
-import {Transaction} from '@sentry/types';
+import type {Span} from '@sentry/types';
 
+import type {Image} from 'sentry/types/debugImage';
+
+import type {Frame} from '../frame';
 import {
-  isChromeTraceArrayFormat,
-  isChromeTraceFormat,
-  isChromeTraceObjectFormat,
   isEventedProfile,
   isJSProfile,
   isSampledProfile,
   isSchema,
+  isSentryContinuousProfile,
+  isSentryContinuousProfileChunk,
+  isSentrySampledProfile,
 } from '../guards/profile';
 
-import {parseChromeTraceArrayFormat} from './chromeTraceProfile';
+import {ContinuousProfile} from './continuousProfile';
 import {EventedProfile} from './eventedProfile';
 import {JSSelfProfile} from './jsSelfProfile';
-import {Profile} from './profile';
+import type {Profile} from './profile';
 import {SampledProfile} from './sampledProfile';
-import {createFrameIndex, wrapWithSpan} from './utils';
+import {SentrySampledProfile} from './sentrySampledProfile';
+import {
+  createContinuousProfileFrameIndex,
+  createFrameIndex,
+  createSentrySampleProfileFrameIndex,
+  wrapWithSpan,
+} from './utils';
 
 export interface ImportOptions {
-  transaction: Transaction | undefined;
+  span: Span | undefined;
+  type: 'flamegraph' | 'flamechart';
+  activeThreadId?: string | null;
+  continuous?: boolean;
+  frameFilter?: (frame: Frame) => boolean;
+  profileIds?:
+    | Profiling.Schema['shared']['profiles']
+    | Profiling.Schema['shared']['profile_ids'];
 }
 
 export interface ProfileGroup {
   activeProfileIndex: number;
+  measurements: Partial<Profiling.Measurements>;
+  metadata: Partial<Profiling.Schema['metadata']>;
   name: string;
   profiles: Profile[];
   traceID: string;
+  transactionID: string | null;
+  type: 'transaction' | 'loading';
+  images?: Image[];
+}
+
+export interface ContinuousProfileGroup {
+  activeProfileIndex: number;
+  measurements: Partial<Profiling.ContinuousMeasurements>;
+  metadata: Partial<Profiling.Schema['metadata']>;
+  name: string;
+  profiles: ContinuousProfile[];
+  traceID: string;
+  transactionID: string | null;
+  type: 'continuous' | 'loading';
+  images?: Image[];
 }
 
 export function importProfile(
-  input: Profiling.Schema | JSSelfProfiling.Trace | ChromeTrace.ProfileType,
-  traceID: string
-): ProfileGroup {
-  const transaction = Sentry.startTransaction({
-    op: 'import',
-    name: 'profiles.import',
+  input: Readonly<Profiling.ProfileInput>,
+  traceID: string,
+  activeThreadId: string | null,
+  type: 'flamegraph' | 'flamechart',
+  frameFilter?: (frame: Frame) => boolean
+): ProfileGroup | ContinuousProfileGroup {
+  return Sentry.withScope(scope => {
+    const span = Sentry.startInactiveSpan({
+      op: 'import',
+      name: 'profiles.import',
+    });
+
+    try {
+      if (isSentryContinuousProfileChunk(input)) {
+        scope.setTag('profile.type', 'sentry-continuous');
+        return importSentryContinuousProfileChunk(input, traceID, {
+          span,
+          type,
+          frameFilter,
+          activeThreadId,
+          continuous: true,
+        });
+      }
+      if (isJSProfile(input)) {
+        scope.setTag('profile.type', 'js-self-profile');
+        return importJSSelfProfile(input, traceID, {span, type});
+      }
+
+      if (isSentrySampledProfile(input)) {
+        scope.setTag('profile.type', 'sentry-sampled');
+        return importSentrySampledProfile(input, {span, type, frameFilter});
+      }
+
+      if (isSchema(input)) {
+        scope.setTag('profile.type', 'schema');
+        return importSchema(input, traceID, {span, type, frameFilter});
+      }
+
+      throw new Error('Unsupported trace format');
+    } catch (error) {
+      span?.setStatus({code: 2, message: 'internal_error'});
+      throw error;
+    } finally {
+      span?.end();
+    }
   });
-
-  try {
-    if (isJSProfile(input)) {
-      // In some cases, the SDK may return transaction as undefined and we dont want to throw there.
-      if (transaction) {
-        transaction.setTag('profile.type', 'js-self-profile');
-      }
-      return importJSSelfProfile(input, traceID, {transaction});
-    }
-
-    if (isChromeTraceFormat(input)) {
-      // In some cases, the SDK may return transaction as undefined and we dont want to throw there.
-      if (transaction) {
-        transaction.setTag('profile.type', 'chrometrace');
-      }
-      return importChromeTrace(input, traceID, {transaction});
-    }
-
-    if (isSchema(input)) {
-      // In some cases, the SDK may return transaction as undefined and we dont want to throw there.
-      if (transaction) {
-        transaction.setTag('profile.type', 'schema');
-      }
-      return importSchema(input, traceID, {transaction});
-    }
-
-    throw new Error('Unsupported trace format');
-  } catch (error) {
-    if (transaction) {
-      transaction.setStatus('internal_error');
-    }
-    throw error;
-  } finally {
-    if (transaction) {
-      transaction.finish();
-    }
-  }
 }
 
 function importJSSelfProfile(
-  input: JSSelfProfiling.Trace,
+  input: Readonly<JSSelfProfiling.Trace>,
   traceID: string,
   options: ImportOptions
 ): ProfileGroup {
-  const frameIndex = createFrameIndex(input.frames);
+  const frameIndex = createFrameIndex('javascript', input.frames);
+  const profile = importSingleProfile(input, frameIndex, options);
 
   return {
+    type: 'transaction',
     traceID,
     name: traceID,
+    transactionID: null,
     activeProfileIndex: 0,
-    profiles: [importSingleProfile(input, frameIndex, options)],
+    profiles: [profile],
+    measurements: {},
+    metadata: {
+      platform: 'javascript',
+    },
   };
 }
 
-function importChromeTrace(
-  input: ChromeTrace.ProfileType,
-  traceID: string,
+function importSentrySampledProfile(
+  input: Readonly<Profiling.SentrySampledProfile>,
   options: ImportOptions
 ): ProfileGroup {
-  if (isChromeTraceObjectFormat(input)) {
-    throw new Error('Chrometrace object format is not yet supported');
+  const frameIndex = createSentrySampleProfileFrameIndex(
+    input.profile.frames,
+    input.platform
+  );
+  const samplesByThread: Record<
+    string,
+    Profiling.SentrySampledProfile['profile']['samples']
+  > = {};
+
+  for (let i = 0; i < input.profile.samples.length; i++) {
+    const sample = input.profile.samples[i];
+    if (!samplesByThread[sample.thread_id]) {
+      samplesByThread[sample.thread_id] = [];
+    }
+    samplesByThread[sample.thread_id].push(sample);
   }
 
-  if (isChromeTraceArrayFormat(input)) {
-    return parseChromeTraceArrayFormat(input, traceID, options);
+  for (const key in samplesByThread) {
+    samplesByThread[key].sort(
+      (a, b) => a.elapsed_since_start_ns - b.elapsed_since_start_ns
+    );
   }
 
-  throw new Error('Failed to parse trace input format');
-}
+  let activeProfileIndex = 0;
+  const profiles: Profile[] = [];
 
-function importSchema(
-  input: Profiling.Schema,
-  traceID: string,
-  options: ImportOptions
-): ProfileGroup {
-  const frameIndex = createFrameIndex(input.shared.frames);
+  for (const key in samplesByThread) {
+    const profile: Profiling.SentrySampledProfile = {
+      ...input,
+      profile: {
+        ...input.profile,
+        samples: samplesByThread[key],
+      },
+    };
+
+    if (key === String(input.transaction.active_thread_id)) {
+      activeProfileIndex = profiles.length;
+    }
+
+    profiles.push(
+      wrapWithSpan(
+        options.span,
+        () =>
+          SentrySampledProfile.FromProfile(profile, frameIndex, {
+            type: options.type,
+            frameFilter: options.frameFilter,
+          }),
+        {
+          op: 'profile.import',
+          description: 'sampled',
+        }
+      )
+    );
+  }
 
   return {
+    type: 'transaction',
+    transactionID: input.transaction.id,
+    traceID: input.transaction.trace_id,
+    name: input.transaction.name,
+    activeProfileIndex,
+    measurements: input.measurements ?? {},
+    metadata: {
+      deviceLocale: input.device.locale,
+      deviceManufacturer: input.device.manufacturer,
+      deviceModel: input.device.model,
+      deviceOSName: input.os.name,
+      deviceOSVersion: input.os.version,
+      environment: input.environment,
+      platform: input.platform,
+      profileID: input.event_id,
+      projectID: input.project_id,
+      release: input.release,
+      received: input.received,
+
+      // these don't really work for multiple transactions
+      transactionID: input.transaction.id,
+      transactionName: input.transaction.name,
+      traceID: input.transaction.trace_id,
+    },
+    profiles,
+    images: input.debug_meta?.images,
+  };
+}
+
+export function importSchema(
+  input: Readonly<Profiling.Schema>,
+  traceID: string,
+  options: ImportOptions
+): ProfileGroup {
+  const frameIndex = createFrameIndex(
+    input.metadata.platform === 'node'
+      ? 'node'
+      : input.metadata.platform === 'javascript'
+        ? 'javascript'
+        : 'mobile',
+    input.shared.frames
+  );
+
+  return {
+    type: 'transaction',
     traceID,
-    name: input.transactionName,
+    transactionID: input.metadata.transactionID ?? null,
+    name: input.metadata?.transactionName ?? traceID,
     activeProfileIndex: input.activeProfileIndex ?? 0,
+    metadata: input.metadata ?? {},
+    measurements: input.measurements ?? {},
     profiles: input.profiles.map(profile =>
-      importSingleProfile(profile, frameIndex, options)
+      importSingleProfile(profile, frameIndex, {
+        ...options,
+        profileIds: input.shared.profile_ids ?? input.shared.profiles,
+      })
     ),
   };
 }
 
+export function importSentryContinuousProfileChunk(
+  input: Readonly<Profiling.SentryContinousProfileChunk>,
+  traceID: string,
+  options: ImportOptions
+): ContinuousProfileGroup {
+  const frameIndex = createContinuousProfileFrameIndex(
+    input.profile.frames,
+    input.platform
+  );
+
+  const samplesByThread: Record<
+    string,
+    Profiling.SentryContinousProfileChunk['profile']['samples']
+  > = {};
+
+  for (let i = 0; i < input.profile.samples.length; i++) {
+    const sample = input.profile.samples[i];
+    if (!samplesByThread[sample.thread_id]) {
+      samplesByThread[sample.thread_id] = [];
+    }
+    samplesByThread[sample.thread_id].push(sample);
+  }
+
+  for (const key in samplesByThread) {
+    samplesByThread[key].sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  const profiles: ContinuousProfile[] = [];
+  let activeProfileIndex = 0;
+
+  for (const key in samplesByThread) {
+    const profile: Profiling.ContinuousProfile = {
+      ...input,
+      ...input.profile,
+      samples: samplesByThread[key],
+    };
+
+    if (options.activeThreadId && key === options.activeThreadId) {
+      activeProfileIndex = profiles.length;
+    }
+
+    profiles.push(
+      wrapWithSpan(
+        options.span,
+        () => ContinuousProfile.FromProfile(profile, frameIndex),
+        {
+          op: 'profile.import',
+          description: 'continuous',
+        }
+      )
+    );
+  }
+
+  return {
+    traceID,
+    name: '',
+    type: 'continuous',
+    transactionID: null,
+    activeProfileIndex,
+    profiles,
+    measurements: input.measurements ?? {},
+    metadata: {
+      platform: input.platform,
+      projectID: input.project_id,
+    },
+  };
+}
+
 function importSingleProfile(
-  profile: Profiling.ProfileTypes,
-  frameIndex: ReturnType<typeof createFrameIndex>,
-  {transaction}: ImportOptions
+  profile:
+    | Profiling.ContinuousProfile
+    | Profiling.EventedProfile
+    | Profiling.SampledProfile
+    | JSSelfProfiling.Trace,
+  frameIndex:
+    | ReturnType<typeof createFrameIndex>
+    | ReturnType<typeof createContinuousProfileFrameIndex>
+    | ReturnType<typeof createSentrySampleProfileFrameIndex>,
+  {span, type, frameFilter, profileIds}: ImportOptions
 ): Profile {
+  if (isSentryContinuousProfile(profile)) {
+    // In some cases, the SDK may return spans as undefined and we dont want to throw there.
+    if (!span) {
+      return ContinuousProfile.FromProfile(profile, frameIndex);
+    }
+
+    return wrapWithSpan(span, () => ContinuousProfile.FromProfile(profile, frameIndex), {
+      op: 'profile.import',
+      description: 'continuous-profile',
+    });
+  }
   if (isEventedProfile(profile)) {
-    // In some cases, the SDK may return transaction as undefined and we dont want to throw there.
-    if (!transaction) {
-      return EventedProfile.FromProfile(profile, frameIndex);
+    // In some cases, the SDK may return spans as undefined and we dont want to throw there.
+    if (!span) {
+      return EventedProfile.FromProfile(profile, frameIndex, {type, frameFilter});
     }
 
     return wrapWithSpan(
-      transaction,
-      () => EventedProfile.FromProfile(profile, frameIndex),
+      span,
+      () => EventedProfile.FromProfile(profile, frameIndex, {type, frameFilter}),
       {
         op: 'profile.import',
         description: 'evented',
@@ -145,14 +360,19 @@ function importSingleProfile(
     );
   }
   if (isSampledProfile(profile)) {
-    // In some cases, the SDK may return transaction as undefined and we dont want to throw there.
-    if (!transaction) {
-      return SampledProfile.FromProfile(profile, frameIndex);
+    // In some cases, the SDK may return spans as undefined and we dont want to throw there.
+    if (!span) {
+      return SampledProfile.FromProfile(profile, frameIndex, {
+        type,
+        frameFilter,
+        profileIds,
+      });
     }
 
     return wrapWithSpan(
-      transaction,
-      () => SampledProfile.FromProfile(profile, frameIndex),
+      span,
+      () =>
+        SampledProfile.FromProfile(profile, frameIndex, {type, frameFilter, profileIds}),
       {
         op: 'profile.import',
         description: 'sampled',
@@ -160,14 +380,27 @@ function importSingleProfile(
     );
   }
   if (isJSProfile(profile)) {
-    // In some cases, the SDK may return transaction as undefined and we dont want to throw there.
-    if (!transaction) {
-      return JSSelfProfile.FromProfile(profile, createFrameIndex(profile.frames));
+    // In some cases, the SDK may return spans as undefined and we dont want to throw there.
+    if (!span) {
+      return JSSelfProfile.FromProfile(
+        profile,
+        createFrameIndex('javascript', profile.frames),
+        {
+          type,
+        }
+      );
     }
 
     return wrapWithSpan(
-      transaction,
-      () => JSSelfProfile.FromProfile(profile, createFrameIndex(profile.frames)),
+      span,
+      () =>
+        JSSelfProfile.FromProfile(
+          profile,
+          createFrameIndex('javascript', profile.frames),
+          {
+            type,
+          }
+        ),
       {
         op: 'profile.import',
         description: 'js-self-profile',
@@ -213,10 +446,10 @@ function readFileAsString(file: File): Promise<string> {
   });
 }
 
-export async function importDroppedProfile(
+export async function parseDroppedProfile(
   file: File,
   parsers: JSONParser[] = TRACE_JSON_PARSERS
-): Promise<ProfileGroup> {
+): Promise<Profiling.ProfileInput> {
   const fileContents = await readFileAsString(file);
 
   for (const parser of parsers) {
@@ -227,7 +460,7 @@ export async function importDroppedProfile(
         throw new TypeError('Input JSON is not an object');
       }
 
-      return importProfile(json, file.name);
+      return json;
     }
   }
 

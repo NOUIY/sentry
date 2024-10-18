@@ -1,4 +1,4 @@
-import {Config} from 'sentry/types';
+import type {Config} from 'sentry/types/system';
 
 import {initializeLocale} from './initializeLocale';
 
@@ -12,5 +12,5 @@ export async function initializeMain(config: Config) {
   // This is dynamically imported because we need to make sure locale is configured
   // before proceeding.
   const {initializeApp} = await import('./initializeApp');
-  await initializeApp(config);
+  initializeApp(config);
 }

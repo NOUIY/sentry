@@ -1,9 +1,12 @@
-from base64 import b64encode
-
 from django.urls import reverse
 
-from sentry.models import ApiKey
-from sentry.testutils import APITestCase
+from sentry.models.apikey import ApiKey
+from sentry.silo.base import SiloMode
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.silo import assume_test_silo_mode
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class OrganizationProjectsTestBase(APITestCase):
@@ -16,14 +19,17 @@ class OrganizationProjectsTestBase(APITestCase):
         ]
 
     def test_api_key(self):
-        key = ApiKey.objects.create(organization=self.organization, scope_list=["org:read"])
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            key = ApiKey.objects.create(
+                organization_id=self.organization.id, scope_list=["org:read"]
+            )
 
         project = self.create_project(teams=[self.team])
 
         path = reverse(self.endpoint, args=[self.organization.slug])
         response = self.client.get(
             path,
-            HTTP_AUTHORIZATION=b"Basic " + b64encode(f"{key.key}:".encode()),
+            HTTP_AUTHORIZATION=self.create_basic_auth_header(key.key),
         )
         self.check_valid_response(response, [project])
 
@@ -39,6 +45,22 @@ class OrganizationProjectsTest(OrganizationProjectsTestBase):
         response = self.get_success_response(self.organization.slug)
         self.check_valid_response(response, [project])
         assert self.client.session["activeorg"] == self.organization.slug
+
+    def test_superuser(self):
+        superuser = self.create_user(is_superuser=True)
+        self.login_as(user=superuser, superuser=True)
+        project = self.create_project(teams=[self.team])
+
+        response = self.get_success_response(self.organization.slug)
+        self.check_valid_response(response, [project])
+
+    def test_staff(self):
+        staff_user = self.create_user(is_staff=True)
+        self.login_as(user=staff_user, staff=True)
+        project = self.create_project(teams=[self.team])
+
+        response = self.get_success_response(self.organization.slug)
+        self.check_valid_response(response, [project])
 
     def test_with_stats(self):
         projects = [self.create_project(teams=[self.team])]
@@ -86,6 +108,13 @@ class OrganizationProjectsTest(OrganizationProjectsTestBase):
             self.organization.slug, qs_params={"query": f"id:{project_bar.id} id:{project_foo.id}"}
         )
         self.check_valid_response(response, [project_bar, project_foo])
+
+    def test_search_by_ids_invalid(self):
+        response = self.get_error_response(self.organization.slug, qs_params={"query": "id:"})
+        assert response.status_code == 400
+
+        response = self.get_error_response(self.organization.slug, qs_params={"query": "id:bababa"})
+        assert response.status_code == 400
 
     def test_search_by_slugs(self):
         project_bar = self.create_project(teams=[self.team], name="bar", slug="bar")
@@ -193,6 +222,30 @@ class OrganizationProjectsTest(OrganizationProjectsTestBase):
         )
         # Verify projects that were returned were foo_users projects
         self.check_valid_response(response, foo_user_projects)
+
+    def test_expand_context_options(self):
+        self.project1 = self.create_project(slug="project-1", name="project 1", teams=[self.team])
+        self.project2 = self.create_project(slug="project-2", name="project 2", teams=[self.team])
+        self.project1.update_option("quotas:spike-protection-disabled", True)
+        self.project1.update_option("sentry:token", 1)
+        self.project1.update_option("sentry:random", "hi")
+
+        response = self.get_success_response(self.organization.slug, qs_params={"options": "true"})
+        assert "options" not in response.data[0]
+        assert "options" not in response.data[1]
+
+        response = self.get_success_response(
+            self.organization.slug,
+            qs_params={
+                "options": ["quotas:spike-protection-disabled", "sentry:token", "sentry:random"]
+            },
+        )
+
+        assert response.data[0]["options"] == {
+            "quotas:spike-protection-disabled": True,
+            "sentry:token": 1,
+        }
+        assert not response.data[1].get("options")
 
 
 class OrganizationProjectsCountTest(APITestCase):

@@ -1,19 +1,23 @@
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 import sortBy from 'lodash/sortBy';
 
 import Feature from 'sentry/components/acl/feature';
 import FeatureDisabled from 'sentry/components/acl/featureDisabled';
-import InputControl from 'sentry/components/forms/controls/input';
 import RangeSlider from 'sentry/components/forms/controls/rangeSlider';
 import Form from 'sentry/components/forms/form';
 import FormField from 'sentry/components/forms/formField';
-import {Panel, PanelAlert, PanelBody, PanelHeader} from 'sentry/components/panels';
+import InputControl from 'sentry/components/input';
+import Panel from 'sentry/components/panels/panel';
+import PanelAlert from 'sentry/components/panels/panelAlert';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
 import {t, tct, tn} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {ProjectKey} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
-import {getExactDuration} from 'sentry/utils/formatters';
-import {ProjectKey} from 'sentry/views/settings/project/projectKeys/types';
+import {getExactDuration} from 'sentry/utils/duration/getExactDuration';
 
 const PREDEFINED_RATE_LIMIT_VALUES = [
   0, 60, 300, 900, 3600, 7200, 14400, 21600, 43200, 86400,
@@ -27,11 +31,11 @@ type RateLimitValue = {
 type Props = {
   data: ProjectKey;
   disabled: boolean;
+  organization: Organization;
 } & Pick<
   RouteComponentProps<
     {
       keyId: string;
-      orgId: string;
       projectId: string;
     },
     {}
@@ -39,7 +43,7 @@ type Props = {
   'params'
 >;
 
-function KeyRateLimitsForm({data, disabled, params}: Props) {
+function KeyRateLimitsForm({data, disabled, organization, params}: Props) {
   function handleChangeWindow(
     onChange: (value: RateLimitValue, event: React.ChangeEvent<HTMLInputElement>) => void,
     onBlur: (value: RateLimitValue, event: React.ChangeEvent<HTMLInputElement>) => void,
@@ -87,8 +91,8 @@ function KeyRateLimitsForm({data, disabled, params}: Props) {
     return PREDEFINED_RATE_LIMIT_VALUES;
   }
 
-  const {keyId, orgId, projectId} = params;
-  const apiEndpoint = `/projects/${orgId}/${projectId}/keys/${keyId}/`;
+  const {keyId, projectId} = params;
+  const apiEndpoint = `/projects/${organization.slug}/${projectId}/keys/${keyId}/`;
 
   const disabledAlert = ({features}) => (
     <FeatureDisabled
@@ -101,14 +105,14 @@ function KeyRateLimitsForm({data, disabled, params}: Props) {
   return (
     <Form saveOnBlur apiEndpoint={apiEndpoint} apiMethod="PUT" initialData={data}>
       <Feature
-        features={['projects:rate-limits']}
+        features="projects:rate-limits"
         hookName="feature-disabled:rate-limits"
         renderDisabled={({children, ...props}) =>
           typeof children === 'function' &&
           children({...props, renderDisabled: disabledAlert})
         }
       >
-        {({hasFeature, features, organization, project, renderDisabled}) => (
+        {({hasFeature, features, project, renderDisabled}) => (
           <Panel>
             <PanelHeader>{t('Rate Limits')}</PanelHeader>
 
@@ -139,8 +143,7 @@ function KeyRateLimitsForm({data, disabled, params}: Props) {
                 validate={({form}) => {
                   // TODO(TS): is validate actually doing anything because it's an unexpected prop
                   const isValid =
-                    form &&
-                    form.rateLimit &&
+                    form?.rateLimit &&
                     typeof form.rateLimit.count !== 'undefined' &&
                     typeof form.rateLimit.window !== 'undefined';
 

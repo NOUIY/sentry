@@ -2,7 +2,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test.client import RequestFactory
 from django.urls import reverse
 
-from tests.apidocs.util import APIDocsTestCase
+from fixtures.apidocs_test_case import APIDocsTestCase
 
 
 class ProjectReleaseFilesListDocsTest(APIDocsTestCase):
@@ -24,8 +24,8 @@ class ProjectReleaseFilesListDocsTest(APIDocsTestCase):
         self.url = reverse(
             "sentry-api-0-project-release-files",
             kwargs={
-                "project_slug": project.slug,
-                "organization_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+                "organization_id_or_slug": project.organization.slug,
                 "version": release.version,
             },
         )

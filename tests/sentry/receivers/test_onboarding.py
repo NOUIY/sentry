@@ -1,19 +1,25 @@
+from datetime import UTC, datetime
+from unittest.mock import patch
+
+import pytest
 from django.utils import timezone
 
-from sentry.models import (
-    Integration,
+from sentry.api.invite_helper import ApiInviteHelper
+from sentry.models.options.organization_option import OrganizationOption
+from sentry.models.organizationonboardingtask import (
     OnboardingTask,
     OnboardingTaskStatus,
     OrganizationOnboardingTask,
-    OrganizationOption,
-    Rule,
 )
-from sentry.plugins.bases import IssueTrackingPlugin
+from sentry.models.project import Project
+from sentry.models.rule import Rule
+from sentry.organizations.services.organization import organization_service
+from sentry.plugins.bases.issue import IssueTrackingPlugin
 from sentry.signals import (
     alert_rule_created,
     event_processed,
-    first_event_pending,
     first_event_received,
+    first_replay_received,
     first_transaction_received,
     integration_added,
     issue_tracker_used,
@@ -22,14 +28,21 @@ from sentry.signals import (
     plugin_enabled,
     project_created,
 )
-from sentry.testutils import TestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.silo.base import SiloMode
+from sentry.testutils.cases import TestCase
+from sentry.testutils.helpers.datetime import before_now
+from sentry.testutils.outbox import outbox_runner
+from sentry.testutils.silo import assume_test_silo_mode
+from sentry.testutils.skips import requires_snuba
 from sentry.utils.samples import load_data
+
+pytestmark = [requires_snuba]
 
 
 class OrganizationOnboardingTaskTest(TestCase):
+    @assume_test_silo_mode(SiloMode.CONTROL)
     def create_integration(self, provider, external_id=9999):
-        return Integration.objects.create(
+        return self.create_provider_integration(
             provider=provider,
             name="test",
             external_id=external_id,
@@ -44,30 +57,6 @@ class OrganizationOnboardingTaskTest(TestCase):
         task = OrganizationOnboardingTask.objects.get(
             organization=project.organization, task=OnboardingTask.FIRST_EVENT
         )
-        assert task.status == OnboardingTaskStatus.COMPLETE
-        assert task.project_id == project.id
-        assert task.date_completed == project.first_event
-
-    def test_existing_pending_task(self):
-        now = timezone.now()
-        project = self.create_project(first_event=now)
-
-        first_event_pending.send(project=project, user=self.user, sender=type(project))
-
-        task = OrganizationOnboardingTask.objects.get(
-            organization=project.organization, task=OnboardingTask.FIRST_EVENT
-        )
-
-        assert task.status == OnboardingTaskStatus.PENDING
-        assert task.project_id == project.id
-
-        event = self.store_event(data={}, project_id=project.id)
-        first_event_received.send(project=project, event=event, sender=type(project))
-
-        task = OrganizationOnboardingTask.objects.get(
-            organization=project.organization, task=OnboardingTask.FIRST_EVENT
-        )
-
         assert task.status == OnboardingTaskStatus.COMPLETE
         assert task.project_id == project.id
         assert task.date_completed == project.first_event
@@ -96,7 +85,7 @@ class OrganizationOnboardingTaskTest(TestCase):
             data={
                 "event_id": "a" * 32,
                 "platform": "javascript",
-                "timestamp": iso_format(before_now(minutes=1)),
+                "timestamp": before_now(minutes=1).isoformat(),
                 "tags": {
                     "sentry:release": "e1b5d1900526feaf20fe2bc9cad83d392136030a",
                     "sentry:user": "id:41656",
@@ -157,18 +146,6 @@ class OrganizationOnboardingTaskTest(TestCase):
         )
         assert task is not None
 
-    def test_first_event_pending(self):
-        now = timezone.now()
-        project = self.create_project(first_event=now)
-        first_event_pending.send(project=project, user=self.user, sender=type(project))
-
-        task = OrganizationOnboardingTask.objects.get(
-            organization=project.organization,
-            task=OnboardingTask.FIRST_EVENT,
-            status=OnboardingTaskStatus.PENDING,
-        )
-        assert task is not None
-
     def test_first_event_received(self):
         now = timezone.now()
         project = self.create_project(first_event=now)
@@ -218,7 +195,7 @@ class OrganizationOnboardingTaskTest(TestCase):
         project = self.create_project()
 
         event_data = load_data("transaction")
-        min_ago = iso_format(before_now(minutes=1))
+        min_ago = before_now(minutes=1).isoformat()
         event_data.update({"start_timestamp": min_ago, "timestamp": min_ago})
 
         event = self.store_event(data=event_data, project_id=project.id)
@@ -238,7 +215,9 @@ class OrganizationOnboardingTaskTest(TestCase):
 
     def test_member_invited(self):
         user = self.create_user(email="test@example.org")
-        member = self.create_member(organization=self.organization, teams=[self.team], user=user)
+        member = self.create_member(
+            organization=self.organization, teams=[self.team], email=user.email
+        )
         member_invited.send(member=member, user=user, sender=type(member))
 
         task = OrganizationOnboardingTask.objects.get(
@@ -250,8 +229,36 @@ class OrganizationOnboardingTaskTest(TestCase):
 
     def test_member_joined(self):
         user = self.create_user(email="test@example.org")
-        member = self.create_member(organization=self.organization, teams=[self.team], user=user)
-        member_joined.send(member=member, organization=self.organization, sender=type(member))
+
+        with pytest.raises(OrganizationOnboardingTask.DoesNotExist):
+            OrganizationOnboardingTask.objects.get(
+                organization=self.organization,
+                task=OnboardingTask.INVITE_MEMBER,
+                status=OnboardingTaskStatus.COMPLETE,
+            )
+
+        om = self.create_member(
+            organization=self.organization, teams=[self.team], email="someemail@example.com"
+        )
+        invite = organization_service.get_invite_by_id(
+            organization_member_id=om.id, organization_id=om.organization_id
+        )
+        assert invite is not None
+        helper = ApiInviteHelper(
+            self.make_request(user=user),
+            invite,
+            None,
+        )
+
+        with pytest.raises(OrganizationOnboardingTask.DoesNotExist):
+            OrganizationOnboardingTask.objects.get(
+                organization=self.organization,
+                task=OnboardingTask.INVITE_MEMBER,
+                status=OnboardingTaskStatus.COMPLETE,
+            )
+
+        with assume_test_silo_mode(SiloMode.CONTROL), outbox_runner():
+            helper.accept_invite(user=user)
 
         task = OrganizationOnboardingTask.objects.get(
             organization=self.organization,
@@ -261,15 +268,28 @@ class OrganizationOnboardingTaskTest(TestCase):
         assert task is not None
 
         user2 = self.create_user(email="test@example.com")
-        member2 = self.create_member(organization=self.organization, teams=[self.team], user=user2)
-        member_joined.send(member=member2, organization=self.organization, sender=type(member2))
+        om2 = self.create_member(
+            organization=self.organization, teams=[self.team], email="blah@example.com"
+        )
+        invite = organization_service.get_invite_by_id(
+            organization_member_id=om2.id, organization_id=om2.organization_id
+        )
+        assert invite is not None
+        helper = ApiInviteHelper(
+            self.make_request(user=user2),
+            invite,
+            None,
+        )
+
+        with assume_test_silo_mode(SiloMode.CONTROL), outbox_runner():
+            helper.accept_invite(user=user2)
 
         task = OrganizationOnboardingTask.objects.get(
             organization=self.organization,
             task=OnboardingTask.INVITE_MEMBER,
             status=OnboardingTaskStatus.COMPLETE,
         )
-        assert task.data["invited_member_id"] == member.id
+        assert task.data["invited_member_id"] == om.id
 
     def test_issue_tracker_onboarding(self):
         plugin_enabled.send(
@@ -300,7 +320,7 @@ class OrganizationOnboardingTaskTest(TestCase):
 
     def test_alert_added(self):
         alert_rule_created.send(
-            rule=Rule(id=1),
+            rule_id=Rule(id=1).id,
             project=self.project,
             user=self.user,
             rule_type="issue",
@@ -316,10 +336,10 @@ class OrganizationOnboardingTaskTest(TestCase):
 
     def test_integration_added(self):
         integration_added.send(
-            integration=self.create_integration("slack", 1234),
-            organization=self.organization,
-            user=self.user,
-            sender=type(self.organization),
+            integration_id=self.create_integration("slack", 1234).id,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            sender=None,
         )
         task = OrganizationOnboardingTask.objects.get(
             organization=self.organization,
@@ -331,10 +351,10 @@ class OrganizationOnboardingTaskTest(TestCase):
 
         # Adding a second integration
         integration_added.send(
-            integration=self.create_integration("github", 4567),
-            organization=self.organization,
-            user=self.user,
-            sender=type(self.organization),
+            integration_id=self.create_integration("github", 4567).id,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            sender=None,
         )
         task = OrganizationOnboardingTask.objects.get(
             organization=self.organization,
@@ -348,10 +368,10 @@ class OrganizationOnboardingTaskTest(TestCase):
         # Installing an integration a second time doesn't produce
         # duplicated providers in the list
         integration_added.send(
-            integration=self.create_integration("slack", 4747),
-            organization=self.organization,
-            user=self.user,
-            sender=type(self.organization),
+            integration_id=self.create_integration("slack", 4747).id,
+            organization_id=self.organization.id,
+            user_id=self.user.id,
+            sender=None,
         )
         task = OrganizationOnboardingTask.objects.get(
             organization=self.organization,
@@ -364,7 +384,7 @@ class OrganizationOnboardingTaskTest(TestCase):
 
     def test_metric_added(self):
         alert_rule_created.send(
-            rule=Rule(id=1),
+            rule_id=Rule(id=1).id,
             project=self.project,
             user=self.user,
             rule_type="metric",
@@ -378,7 +398,8 @@ class OrganizationOnboardingTaskTest(TestCase):
         )
         assert task is not None
 
-    def test_onboarding_complete(self):
+    @patch("sentry.analytics.record")
+    def test_onboarding_complete(self, record_analytics):
         now = timezone.now()
         user = self.create_user(email="test@example.org")
         project = self.create_project(first_event=now)
@@ -391,7 +412,7 @@ class OrganizationOnboardingTaskTest(TestCase):
             data={
                 "event_id": "a" * 32,
                 "platform": "javascript",
-                "timestamp": iso_format(before_now(minutes=1)),
+                "timestamp": before_now(minutes=1).isoformat(),
                 "tags": {
                     "sentry:release": "e1b5d1900526feaf20fe2bc9cad83d392136030a",
                     "sentry:user": "id:41656",
@@ -418,7 +439,7 @@ class OrganizationOnboardingTaskTest(TestCase):
         )
 
         event_data = load_data("transaction")
-        min_ago = iso_format(before_now(minutes=1))
+        min_ago = before_now(minutes=1).isoformat()
         event_data.update({"start_timestamp": min_ago, "timestamp": min_ago})
 
         transaction = self.store_event(data=event_data, project_id=project.id)
@@ -436,7 +457,12 @@ class OrganizationOnboardingTaskTest(TestCase):
         first_event_received.send(
             project=second_project, event=second_event, sender=type(second_project)
         )
-        member_joined.send(member=member, organization=self.organization, sender=type(member))
+        member_joined.send(
+            organization_member_id=member.id,
+            organization_id=self.organization.id,
+            user_id=member.user_id,
+            sender=None,
+        )
         plugin_enabled.send(
             plugin=IssueTrackingPlugin(),
             project=project,
@@ -450,13 +476,13 @@ class OrganizationOnboardingTaskTest(TestCase):
             sender=type(IssueTrackingPlugin),
         )
         integration_added.send(
-            integration=self.create_integration("slack"),
-            organization=self.organization,
-            user=user,
-            sender=type(project),
+            integration_id=self.create_integration("slack").id,
+            organization_id=self.organization.id,
+            user_id=user.id,
+            sender=None,
         )
         alert_rule_created.send(
-            rule=Rule(id=1),
+            rule_id=Rule(id=1).id,
             project=self.project,
             user=self.user,
             rule_type="issue",
@@ -464,13 +490,14 @@ class OrganizationOnboardingTaskTest(TestCase):
             is_api_token=False,
         )
         alert_rule_created.send(
-            rule=Rule(id=1),
+            rule_id=Rule(id=1).id,
             project=self.project,
             user=self.user,
             rule_type="metric",
             sender=type(Rule),
             is_api_token=False,
         )
+        first_replay_received.send(project=project, sender=type(project))
 
         assert (
             OrganizationOption.objects.filter(
@@ -478,3 +505,393 @@ class OrganizationOnboardingTaskTest(TestCase):
             ).count()
             == 1
         )
+
+        record_analytics.assert_called_with(
+            "onboarding.complete",
+            user_id=self.organization.default_owner_id,
+            organization_id=self.organization.id,
+            referrer="onboarding_tasks",
+        )
+
+    @patch("sentry.analytics.record")
+    def test_first_event_without_minified_stack_trace_received(self, record_analytics):
+        """
+        Test that an analytics event is NOT recorded when
+        there no event with minified stack trace is received
+        """
+        now = timezone.now()
+        project = self.create_project(first_event=now)
+        project_created.send(project=project, user=self.user, sender=type(project))
+        data = load_data("javascript")
+        self.store_event(
+            data=data,
+            project_id=project.id,
+        )
+
+        with pytest.raises(AssertionError):
+            record_analytics.assert_called_with(
+                "first_event_with_minified_stack_trace_for_project.sent",
+                user_id=self.user.id,
+                organization_id=project.organization_id,
+                project_id=project.id,
+                platform="javascript",
+                url="http://localhost:3000",
+            )
+
+    @patch("sentry.analytics.record")
+    def test_first_event_with_minified_stack_trace_received(self, record_analytics):
+        """
+        Test that an analytics event is recorded when
+        a first event with minified stack trace is received
+        """
+        now = timezone.now()
+        project = self.create_project(first_event=now, platform="VueJS")
+        project_created.send(project=project, user=self.user, sender=type(project))
+        url = "http://localhost:3000"
+        event = load_data("javascript")
+        event["tags"] = [("url", url)]
+        event["exception"] = {
+            "values": [
+                {
+                    **event["exception"]["values"][0],
+                    "raw_stacktrace": {
+                        "frames": [
+                            {
+                                "function": "o",
+                                "filename": "/_static/dist/sentry/chunks/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.255071ceadabfb67483c.js",
+                                "abs_path": "https://s1.sentry-cdn.com/_static/dist/sentry/chunks/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.255071ceadabfb67483c.js",
+                                "lineno": 2,
+                                "colno": 37098,
+                                "pre_context": [
+                                    "/*! For license information please see vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd. {snip}"
+                                ],
+                                "context_line": "{snip} .apply(this,arguments);const i=o.map((e=>c(e,t)));return e.apply(this,i)}catch(e){throw l(),(0,i.$e)((n=>{n.addEventProcessor((e=>(t.mechani {snip}",
+                                "post_context": [
+                                    "//# sourceMappingURL=../sourcemaps/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.fe32 {snip}"
+                                ],
+                                "in_app": False,
+                            },
+                        ],
+                    },
+                }
+            ]
+        }
+
+        self.store_event(
+            project_id=project.id,
+            data=event,
+        )
+
+        record_analytics.assert_called_with(
+            "first_event_with_minified_stack_trace_for_project.sent",
+            user_id=self.user.id,
+            organization_id=project.organization_id,
+            project_id=project.id,
+            platform=event["platform"],
+            project_platform="VueJS",
+            url=url,
+        )
+
+    @patch("sentry.analytics.record")
+    def test_analytic_triggered_only_once_if_multiple_events_with_minified_stack_trace_received(
+        self, record_analytics
+    ):
+        """
+        Test that an analytic event is triggered only once when
+        multiple events with minified stack trace are received
+        """
+        now = timezone.now()
+        project = self.create_project(first_event=now)
+        project_created.send(project=project, user=self.user, sender=type(project))
+        url = "http://localhost:3000"
+        event = load_data("javascript")
+        event["tags"] = [("url", url)]
+        event["exception"] = {
+            "values": [
+                {
+                    **event["exception"]["values"][0],
+                    "raw_stacktrace": {
+                        "frames": [
+                            {
+                                "function": "o",
+                                "filename": "/_static/dist/sentry/chunks/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.255071ceadabfb67483c.js",
+                                "abs_path": "https://s1.sentry-cdn.com/_static/dist/sentry/chunks/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.255071ceadabfb67483c.js",
+                                "lineno": 2,
+                                "colno": 37098,
+                                "pre_context": [
+                                    "/*! For license information please see vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd. {snip}"
+                                ],
+                                "context_line": "{snip} .apply(this,arguments);const i=o.map((e=>c(e,t)));return e.apply(this,i)}catch(e){throw l(),(0,i.$e)((n=>{n.addEventProcessor((e=>(t.mechani {snip}",
+                                "post_context": [
+                                    "//# sourceMappingURL=../sourcemaps/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.fe32 {snip}"
+                                ],
+                                "in_app": False,
+                            },
+                        ],
+                    },
+                }
+            ]
+        }
+
+        # Store first event
+        self.store_event(
+            project_id=project.id,
+            data=event,
+        )
+
+        # Store second event
+        self.store_event(
+            project_id=project.id,
+            data=event,
+        )
+
+        count = 0
+        for call_arg in record_analytics.call_args_list:
+            if "first_event_with_minified_stack_trace_for_project.sent" in call_arg[0]:
+                count += 1
+
+        assert count == 1
+
+    @patch("sentry.analytics.record")
+    def test_old_project_sending_minified_stack_trace_event(self, record_analytics):
+        """
+        Test that an analytics event is NOT recorded when
+        the project creation date is older than the date we defined (START_DATE_TRACKING_FIRST_EVENT_WITH_MINIFIED_STACK_TRACE_PER_PROJ).
+
+        In this test we also check  if the has_minified_stack_trace is being set to "True" in old projects
+        """
+        old_date = datetime(2022, 12, 10, tzinfo=UTC)
+        project = self.create_project(first_event=old_date, date_added=old_date)
+        project_created.send(project=project, user=self.user, sender=type(project))
+        url = "http://localhost:3000"
+        event = load_data("javascript")
+        event["tags"] = [("url", url)]
+        event["exception"] = {
+            "values": [
+                {
+                    **event["exception"]["values"][0],
+                    "raw_stacktrace": {
+                        "frames": [
+                            {
+                                "function": "o",
+                                "filename": "/_static/dist/sentry/chunks/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.255071ceadabfb67483c.js",
+                                "abs_path": "https://s1.sentry-cdn.com/_static/dist/sentry/chunks/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.255071ceadabfb67483c.js",
+                                "lineno": 2,
+                                "colno": 37098,
+                                "pre_context": [
+                                    "/*! For license information please see vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd. {snip}"
+                                ],
+                                "context_line": "{snip} .apply(this,arguments);const i=o.map((e=>c(e,t)));return e.apply(this,i)}catch(e){throw l(),(0,i.$e)((n=>{n.addEventProcessor((e=>(t.mechani {snip}",
+                                "post_context": [
+                                    "//# sourceMappingURL=../sourcemaps/vendors-node_modules_emotion_is-prop-valid_node_modules_emotion_memoize_dist_memoize_browser_-4fe4bd.fe32 {snip}"
+                                ],
+                                "in_app": False,
+                            },
+                        ],
+                    },
+                }
+            ]
+        }
+
+        def _project_has_minified_stack_trace(p: Project) -> bool:
+            return p.flags.has_minified_stack_trace
+
+        assert not _project_has_minified_stack_trace(project)
+
+        # Store event
+        self.store_event(
+            project_id=project.id,
+            data=event,
+        )
+
+        project.refresh_from_db()
+
+        assert _project_has_minified_stack_trace(project)
+
+        # The analytic's event "first_event_with_minified_stack_trace_for_project" shall not be sent
+        count = 0
+        for call_arg in record_analytics.call_args_list:
+            if "first_event_with_minified_stack_trace_for_project.sent" in call_arg[0]:
+                count += 1
+
+        assert count == 0
+
+    @patch("sentry.analytics.record")
+    def test_first_event_without_sourcemaps_received(self, record_analytics):
+        """
+        Test that an analytics event is NOT recorded when
+        no event with sourcemaps is received
+        """
+        now = timezone.now()
+        project = self.create_project(first_event=now)
+        project_created.send(project=project, user=self.user, sender=type(project))
+        data = load_data("javascript")
+        data["exception"] = {
+            "values": [
+                {
+                    "stacktrace": {"frames": [{"data": {}}]},
+                    "type": "TypeError",
+                }
+            ]
+        }
+        event = self.store_event(
+            project_id=project.id,
+            data=data,
+        )
+
+        event_processed.send(project=project, event=event, sender=type(project))
+
+        count = 0
+        for call_arg in record_analytics.call_args_list:
+            if "first_sourcemaps_for_project.sent" in call_arg[0]:
+                count += 1
+
+        assert count == 0
+
+    @patch("sentry.analytics.record")
+    def test_first_event_with_sourcemaps_received(self, record_analytics):
+        """
+        Test that an analytics event is recorded when
+        a first event with sourcemaps is received
+        """
+        now = timezone.now()
+        project = self.create_project(first_event=now, platform="VueJS")
+        project_created.send(project=project, user=self.user, sender=type(project))
+        url = "http://localhost:3000"
+        data = load_data("javascript")
+        data["tags"] = [("url", url)]
+        data["exception"] = {
+            "values": [
+                {
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "data": {
+                                    "sourcemap": "https://media.sentry.io/_static/29e365f8b0d923bc123e8afa38d890c3/sentry/dist/vendor.js.map"
+                                }
+                            }
+                        ]
+                    },
+                    "type": "TypeError",
+                }
+            ]
+        }
+
+        event = self.store_event(
+            project_id=project.id,
+            data=data,
+        )
+        event_processed.send(project=project, event=event, sender=type(project))
+
+        record_analytics.assert_called_with(
+            "first_sourcemaps_for_project.sent",
+            user_id=self.user.id,
+            organization_id=project.organization_id,
+            project_id=project.id,
+            platform=event.platform,
+            project_platform="VueJS",
+            url=url,
+        )
+
+    @patch("sentry.analytics.record")
+    def test_analytic_triggered_only_once_if_multiple_events_with_sourcemaps_received(
+        self, record_analytics
+    ):
+        """
+        Test that an analytic event is triggered only once when
+        multiple events with sourcemaps are received
+        """
+        now = timezone.now()
+        project = self.create_project(first_event=now)
+        project_created.send(project=project, user=self.user, sender=type(project))
+        url = "http://localhost:3000"
+        data = load_data("javascript")
+        data["tags"] = [("url", url)]
+        data["exception"] = {
+            "values": [
+                {
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "data": {
+                                    "sourcemap": "https://media.sentry.io/_static/29e365f8b0d923bc123e8afa38d890c3/sentry/dist/vendor.js.map"
+                                }
+                            }
+                        ]
+                    },
+                    "type": "TypeError",
+                }
+            ]
+        }
+
+        # Store first event
+        event_1 = self.store_event(
+            project_id=project.id,
+            data=data,
+        )
+        event_processed.send(project=project, event=event_1, sender=type(project))
+
+        # Store second event
+        event_2 = self.store_event(
+            project_id=project.id,
+            data=data,
+        )
+        event_processed.send(project=project, event=event_2, sender=type(project))
+
+        count = 0
+        for call_arg in record_analytics.call_args_list:
+            if "first_sourcemaps_for_project.sent" in call_arg[0]:
+                count += 1
+
+        assert count == 1
+
+    @patch("sentry.analytics.record")
+    def test_old_project_sending_sourcemap_event(self, record_analytics):
+        """
+        Test that an analytics event is NOT recorded when
+        the project creation date is older than the date we defined (START_DATE_TRACKING_FIRST_EVENT_WITH_SOURCEMAPS_PER_PROJ).
+
+        In this test we also check  if the has_sourcemaps is being set to "True" in old projects
+        """
+        old_date = datetime(2022, 12, 10, tzinfo=UTC)
+        project = self.create_project(first_event=old_date, date_added=old_date)
+        project_created.send(project=project, user=self.user, sender=type(project))
+        url = "http://localhost:3000"
+        data = load_data("javascript")
+        data["tags"] = [("url", url)]
+        data["exception"] = {
+            "values": [
+                {
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "data": {
+                                    "sourcemap": "https://media.sentry.io/_static/29e365f8b0d923bc123e8afa38d890c3/sentry/dist/vendor.js.map"
+                                }
+                            }
+                        ]
+                    },
+                    "type": "TypeError",
+                }
+            ]
+        }
+
+        def _project_has_sourcemaps(p: Project) -> bool:
+            return project.flags.has_sourcemaps
+
+        assert not _project_has_sourcemaps(project)
+
+        event = self.store_event(project_id=project.id, data=data)
+        event_processed.send(project=project, event=event, sender=type(project))
+
+        project.refresh_from_db()
+
+        assert _project_has_sourcemaps(project)
+
+        # The analytic's event "first_event_with_minified_stack_trace_for_project" shall not be sent
+        count = 0
+        for call_arg in record_analytics.call_args_list:
+            if "first_sourcemaps_for_project.sent" in call_arg[0]:
+                count += 1
+
+        assert count == 0

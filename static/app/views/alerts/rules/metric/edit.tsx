@@ -1,17 +1,21 @@
-import {RouteComponentProps} from 'react-router';
+import {useCallback, useEffect} from 'react';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
+import LoadingError from 'sentry/components/loadingError';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {metric} from 'sentry/utils/analytics';
-import routeTitleGen from 'sentry/utils/routeTitle';
+import {useApiQuery} from 'sentry/utils/queryClient';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import RuleForm from 'sentry/views/alerts/rules/metric/ruleForm';
-import {MetricRule} from 'sentry/views/alerts/rules/metric/types';
-import AsyncView from 'sentry/views/asyncView';
+import type {MetricRule} from 'sentry/views/alerts/rules/metric/types';
 
 type RouteParams = {
-  orgId: string;
   projectId: string;
   ruleId: string;
 };
@@ -23,88 +27,84 @@ type Props = {
   userTeamIds: string[];
 } & RouteComponentProps<RouteParams, {}>;
 
-type State = {
-  actions: Map<string, any>;
-  rule: MetricRule; // This is temp
-} & AsyncView['state'];
+export function MetricRulesEdit({
+  organization,
+  params,
+  project,
+  userTeamIds,
+  onChangeTitle,
+  ...props
+}: Props) {
+  const navigate = useNavigate();
 
-class MetricRulesEdit extends AsyncView<Props, State> {
-  getDefaultState() {
-    return {
-      ...super.getDefaultState(),
-      actions: new Map(),
-    };
-  }
+  const {
+    isPending,
+    isError,
+    data: rule,
+    error,
+  } = useApiQuery<MetricRule>(
+    [`/organizations/${organization.slug}/alert-rules/${params.ruleId}/`],
+    {
+      staleTime: 0,
+      retry: false,
+    }
+  );
 
-  getTitle(): string {
-    const {organization, project} = this.props;
-    const {rule} = this.state;
-    const ruleName = rule?.name;
+  useEffect(() => {
+    if (!isPending && rule) {
+      onChangeTitle(rule.name ?? '');
+    }
+  }, [onChangeTitle, isPending, rule]);
 
-    return routeTitleGen(
-      ruleName ? t('Alert %s', ruleName) : '',
-      organization.slug,
-      false,
-      project?.slug
+  useEffect(() => {
+    if (isError && error?.responseText) {
+      try {
+        const {detail} = JSON.parse(error.responseText);
+        if (detail) {
+          addErrorMessage(detail);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+  }, [isError, error]);
+
+  const handleSubmitSuccess = useCallback(() => {
+    metric.endSpan({name: 'saveAlertRule'});
+    navigate(
+      normalizeUrl({
+        pathname: `/organizations/${organization.slug}/alerts/rules/details/${params.ruleId}/`,
+      })
     );
+  }, [params.ruleId, navigate, organization.slug]);
+
+  if (isPending) {
+    return <LoadingIndicator />;
   }
 
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    const {orgId, ruleId} = this.props.params;
-
-    return [['rule', `/organizations/${orgId}/alert-rules/${ruleId}/`]];
-  }
-
-  onRequestSuccess({stateKey, data}) {
-    if (stateKey === 'rule' && data.name) {
-      this.props.onChangeTitle(data.name);
-    }
-  }
-
-  onLoadAllEndpointsSuccess() {
-    const {rule} = this.state;
-    if (rule?.errors) {
-      (rule?.errors || []).map(({detail}) => addErrorMessage(detail, {append: true}));
-    }
-  }
-
-  handleSubmitSuccess = () => {
-    const {router} = this.props;
-    const {orgId, ruleId} = this.props.params;
-
-    metric.endTransaction({name: 'saveAlertRule'});
-    router.push({
-      pathname: `/organizations/${orgId}/alerts/rules/details/${ruleId}/`,
-    });
-  };
-
-  renderError(error?: Error, disableLog = false): React.ReactNode {
-    const {errors} = this.state;
-    const notFound = Object.values(errors).find(resp => resp && resp.status === 404);
-    if (notFound) {
+  if (isError) {
+    if (error?.status === 404) {
       return (
         <Alert type="error" showIcon>
           {t('This alert rule could not be found.')}
         </Alert>
       );
     }
-    return super.renderError(error, disableLog);
+
+    return <LoadingError />;
   }
 
-  renderBody() {
-    const {ruleId} = this.props.params;
-    const {rule} = this.state;
-
-    return (
-      <RuleForm
-        {...this.props}
-        ruleId={ruleId}
-        rule={rule}
-        onSubmitSuccess={this.handleSubmitSuccess}
-        disableProjectSelector
-      />
-    );
-  }
+  return (
+    <RuleForm
+      {...props}
+      params={params}
+      project={project}
+      userTeamIds={userTeamIds}
+      organization={organization}
+      ruleId={params.ruleId}
+      rule={rule}
+      onSubmitSuccess={handleSubmitSuccess}
+      disableProjectSelector
+    />
+  );
 }
-
-export default MetricRulesEdit;

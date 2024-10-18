@@ -1,28 +1,30 @@
 import {t} from 'sentry/locale';
 
-import {EventExtraData, EventExtraDataType} from './types';
+import type {EventExtraData} from './types';
+import {EventExtraDataType} from './types';
 
 type Output = {
   subject: string;
   value?: React.ReactNode;
 };
 
-const getEventExtraDataKnownDataDetails = (
-  data: EventExtraData,
-  key: EventExtraDataType
-): Output => {
-  switch (key) {
+export function getEventExtraDataKnownDataDetails({
+  data,
+  type,
+}: {
+  data: EventExtraData;
+  type: EventExtraDataType;
+}): Output {
+  switch (type) {
     case EventExtraDataType.CRASHED_PROCESS:
       return {
         subject: t('Crashed Process'),
-        value: data[key],
+        value: data[type],
       };
     default:
       return {
-        subject: key,
-        value: data[key],
+        subject: type,
+        value: data[type],
       };
   }
-};
-
-export default getEventExtraDataKnownDataDetails;
+}

@@ -1,27 +1,28 @@
 import {Fragment, useEffect} from 'react';
-import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {promptsCheck, promptsUpdate} from 'sentry/actionCreators/prompts';
 import Feature from 'sentry/components/acl/feature';
-import Alert from 'sentry/components/alert';
-import AsyncComponent from 'sentry/components/asyncComponent';
-import Button from 'sentry/components/button';
+import {Alert} from 'sentry/components/alert';
+import {LinkButton} from 'sentry/components/button';
 import CreateAlertButton from 'sentry/components/createAlertButton';
+import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import * as Layout from 'sentry/components/layouts/thirds';
 import ExternalLink from 'sentry/components/links/externalLink';
 import PageFiltersContainer from 'sentry/components/organizations/pageFilters/container';
 import Pagination from 'sentry/components/pagination';
-import {PanelTable} from 'sentry/components/panels';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import {space} from 'sentry/styles/space';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {trackAnalytics} from 'sentry/utils/analytics';
 import Projects from 'sentry/utils/projects';
 
 import FilterBar from '../../filterBar';
-import {Incident} from '../../types';
+import type {Incident} from '../../types';
 import {getQueryStatus, getTeamParams} from '../../utils';
 import AlertHeader from '../header';
 import Onboarding from '../onboarding';
@@ -31,7 +32,7 @@ import AlertListRow from './row';
 const DOCS_URL =
   'https://docs.sentry.io/workflow/alerts-notifications/alerts/?_ga=2.21848383.580096147.1592364314-1444595810.1582160976';
 
-type Props = RouteComponentProps<{orgId: string}, {}> & {
+type Props = RouteComponentProps<{}, {}> & {
   organization: Organization;
 };
 
@@ -49,16 +50,19 @@ type State = {
   hasAlertRule?: boolean;
 };
 
-class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state']> {
-  getEndpoints(): ReturnType<AsyncComponent['getEndpoints']> {
-    const {params, location} = this.props;
+class IncidentsList extends DeprecatedAsyncComponent<
+  Props,
+  State & DeprecatedAsyncComponent['state']
+> {
+  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
+    const {organization, location} = this.props;
     const {query} = location;
     const status = getQueryStatus(query.status);
 
     return [
       [
         'incidentList',
-        `/organizations/${params?.orgId}/incidents/`,
+        `/organizations/${organization.slug}/incidents/`,
         {
           query: {
             ...query,
@@ -87,10 +91,10 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
 
     // Check if they have rules or not, to know which empty state message to
     // display
-    const {params, location, organization} = this.props;
+    const {location, organization} = this.props;
 
     const alertRules = await this.api.requestPromise(
-      `/organizations/${params?.orgId}/alert-rules/`,
+      `/organizations/${organization.slug}/alert-rules/`,
       {
         method: 'GET',
         query: location.query,
@@ -107,7 +111,7 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
 
     // Check if they have already seen the prompt for the alert stream
     const prompt = await promptsCheck(this.api, {
-      organizationId: organization.id,
+      organization,
       feature: 'alert_stream',
     });
 
@@ -117,8 +121,8 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
       // Prompt has not been seen, mark the prompt as seen immediately so they
       // don't see it again
       promptsUpdate(this.api, {
+        organization,
         feature: 'alert_stream',
-        organizationId: organization.id,
         status: 'dismissed',
       });
     }
@@ -129,7 +133,7 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
   get projectsFromIncidents() {
     const {incidentList} = this.state;
 
-    return [...new Set(incidentList?.map(({projects}) => projects).flat())];
+    return [...new Set(incidentList?.flatMap(({projects}) => projects))];
   }
 
   handleChangeSearch = (title: string) => {
@@ -181,13 +185,13 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
 
     const actions = (
       <Fragment>
-        <Button size="small" external href={DOCS_URL}>
+        <LinkButton size="sm" external href={DOCS_URL}>
           {t('View Features')}
-        </Button>
+        </LinkButton>
         <CreateAlertButton
           organization={organization}
           iconProps={{size: 'xs'}}
-          size="small"
+          size="sm"
           priority="primary"
           referrer="alert_stream"
         >
@@ -205,10 +209,7 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
 
   renderList() {
     const {loading, incidentList, incidentListPageLinks, hasAlertRule} = this.state;
-    const {
-      params: {orgId},
-      organization,
-    } = this.props;
+    const {organization} = this.props;
 
     const checkingForAlertRules =
       incidentList?.length === 0 && hasAlertRule === undefined;
@@ -237,7 +238,7 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
               t('Team'),
             ]}
           >
-            <Projects orgId={orgId} slugs={this.projectsFromIncidents}>
+            <Projects orgId={organization.slug} slugs={this.projectsFromIncidents}>
               {({initiallyLoaded, projects}) =>
                 incidentList.map(incident => (
                   <AlertListRow
@@ -245,7 +246,6 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
                     projectsLoaded={initiallyLoaded}
                     projects={projects as Project[]}
                     incident={incident}
-                    orgId={orgId}
                     organization={organization}
                   />
                 ))
@@ -259,22 +259,12 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
   }
 
   renderBody() {
-    const {params, organization, router, location} = this.props;
-    const {orgId} = params;
+    const {organization, router, location} = this.props;
 
     return (
-      <SentryDocumentTitle title={t('Alerts')} orgSlug={orgId}>
-        <PageFiltersContainer
-          organization={organization}
-          showDateSelector={false}
-          hideGlobalHeader
-        >
-          <AlertHeader
-            organization={organization}
-            router={router}
-            activeTab="stream"
-            projectSlugs={this.projectsFromIncidents}
-          />
+      <SentryDocumentTitle title={t('Alerts')} orgSlug={organization.slug}>
+        <PageFiltersContainer>
+          <AlertHeader router={router} activeTab="stream" />
           <Layout.Body>
             <Layout.Main fullWidth>
               {!this.tryRenderOnboarding() && (
@@ -302,7 +292,7 @@ class IncidentsList extends AsyncComponent<Props, State & AsyncComponent['state'
 
 function IncidentsListContainer(props: Props) {
   useEffect(() => {
-    trackAdvancedAnalyticsEvent('alert_stream.viewed', {
+    trackAnalytics('alert_stream.viewed', {
       organization: props.organization,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -318,7 +308,7 @@ function IncidentsListContainer(props: Props) {
 
   return (
     <Feature
-      features={['incidents']}
+      features="incidents"
       hookName="feature-disabled:alerts-page"
       renderDisabled={renderDisabled}
     >
@@ -329,6 +319,10 @@ function IncidentsListContainer(props: Props) {
 
 const StyledPanelTable = styled(PanelTable)`
   font-size: ${p => p.theme.fontSizeMedium};
+
+  & > div {
+    padding: ${space(1.5)} ${space(2)};
+  }
 `;
 
 const StyledAlert = styled(Alert)`

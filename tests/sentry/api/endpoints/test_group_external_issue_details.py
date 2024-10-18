@@ -1,5 +1,5 @@
-from sentry.models import PlatformExternalIssue
-from sentry.testutils import APITestCase
+from sentry.sentry_apps.models.platformexternalissue import PlatformExternalIssue
+from sentry.testutils.cases import APITestCase
 
 
 class GroupExternalIssueDetailsEndpointTest(APITestCase):

@@ -1,12 +1,9 @@
-import {RouteComponentProps} from 'react-router';
-import styled from '@emotion/styled';
-
 import Feature from 'sentry/components/acl/feature';
-import NoProjectMessage from 'sentry/components/noProjectMessage';
+import * as Layout from 'sentry/components/layouts/thirds';
 import PageFiltersContainer from 'sentry/components/organizations/pageFilters/container';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import {PageContent} from 'sentry/styles/organization';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
 import {defined} from 'sentry/utils';
 import {decodeScalar} from 'sentry/utils/queryString';
 import useOrganization from 'sentry/utils/useOrganization';
@@ -14,12 +11,7 @@ import useProjects from 'sentry/utils/useProjects';
 
 import {getTransactionName} from '../../../utils';
 import {NoAccess, redirectToPerformanceHomepage} from '../../pageLayout';
-import {
-  generateSpansEventView,
-  parseSpanSlug,
-  SPAN_RELATIVE_PERIODS,
-  SPAN_RETENTION_DAYS,
-} from '../utils';
+import {generateSpansEventView, parseSpanSlug} from '../utils';
 
 import SpanDetailsContent from './content';
 
@@ -52,33 +44,25 @@ export default function SpanDetails(props: Props) {
       projectSlug={project?.slug}
     >
       <Feature
-        features={['performance-view', 'performance-suspect-spans-view']}
+        features="performance-view"
         organization={organization}
         renderDisabled={NoAccess}
       >
         <PageFiltersContainer
-          lockedMessageSubject={t('transaction')}
           shouldForceProject={defined(project)}
           forceProject={project}
           specificProjectSlugs={defined(project) ? [project.slug] : []}
-          disableMultipleProjectSelection
-          showProjectSettingsLink
-          relativeDateOptions={SPAN_RELATIVE_PERIODS}
-          maxPickableDays={SPAN_RETENTION_DAYS}
-          hideGlobalHeader
         >
-          <StyledPageContent>
-            <NoProjectMessage organization={organization}>
-              <SpanDetailsContent
-                location={location}
-                organization={organization}
-                eventView={eventView}
-                project={project}
-                transactionName={transactionName}
-                spanSlug={spanSlug}
-              />
-            </NoProjectMessage>
-          </StyledPageContent>
+          <Layout.Page>
+            <SpanDetailsContent
+              location={location}
+              organization={organization}
+              eventView={eventView}
+              project={project}
+              transactionName={transactionName}
+              spanSlug={spanSlug}
+            />
+          </Layout.Page>
         </PageFiltersContainer>
       </Feature>
     </SentryDocumentTitle>
@@ -95,7 +79,3 @@ function getDocumentTitle(transactionName: string): string {
 
   return [t('Summary'), t('Performance')].join(' - ');
 }
-
-const StyledPageContent = styled(PageContent)`
-  padding: 0;
-`;

@@ -1,6 +1,9 @@
 from django.urls import reverse
 
-from sentry.testutils import APITestCase
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class ProjectCreateSampleTransactionTest(APITestCase):
@@ -14,7 +17,10 @@ class ProjectCreateSampleTransactionTest(APITestCase):
 
         url = reverse(
             "sentry-api-0-project-create-sample-transaction",
-            kwargs={"organization_slug": project.organization.slug, "project_slug": project.slug},
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+            },
         )
         response = self.client.post(url, format="json")
 
@@ -28,7 +34,10 @@ class ProjectCreateSampleTransactionTest(APITestCase):
 
         url = reverse(
             "sentry-api-0-project-create-sample-transaction",
-            kwargs={"organization_slug": project.organization.slug, "project_slug": project.slug},
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+            },
         )
         response = self.client.post(url, format="json")
 
@@ -40,7 +49,10 @@ class ProjectCreateSampleTransactionTest(APITestCase):
 
         url = reverse(
             "sentry-api-0-project-create-sample-transaction",
-            kwargs={"organization_slug": project.organization.slug, "project_slug": project.slug},
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+            },
         )
         response = self.client.post(url, format="json")
 
@@ -52,7 +64,10 @@ class ProjectCreateSampleTransactionTest(APITestCase):
 
         url = reverse(
             "sentry-api-0-project-create-sample-transaction",
-            kwargs={"organization_slug": project.organization.slug, "project_slug": project.slug},
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+            },
         )
         response = self.client.post(url, format="json")
 
@@ -64,9 +79,30 @@ class ProjectCreateSampleTransactionTest(APITestCase):
 
         url = reverse(
             "sentry-api-0-project-create-sample-transaction",
-            kwargs={"organization_slug": project.organization.slug, "project_slug": project.slug},
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+            },
         )
         response = self.client.post(url, format="json")
 
+        assert response.status_code == 200
+        assert response.data["title"] == "/productstore"
+
+    def test_path_traversal_attempt(self):
+
+        project = self.create_project(teams=[self.team], name="foo", platform="../../../etc/passwd")
+
+        url = reverse(
+            "sentry-api-0-project-create-sample-transaction",
+            kwargs={
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
+            },
+        )
+        response = self.client.post(url, format="json")
+
+        # Why a 200 and not something like a 400? The current implementation will default to a
+        # `react-transaction` if no matching platform is found.
         assert response.status_code == 200
         assert response.data["title"] == "/productstore"

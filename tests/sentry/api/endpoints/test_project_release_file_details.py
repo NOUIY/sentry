@@ -1,12 +1,25 @@
+import io
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from hashlib import sha1
 
 from django.urls import reverse
 
-from sentry.api.endpoints.project_release_file_details import INVALID_UPDATE_MESSAGE
-from sentry.models import File, Release, ReleaseFile
+from sentry.api.endpoints.project_release_file_details import (
+    INVALID_UPDATE_MESSAGE,
+    ClosesDependentFiles,
+)
 from sentry.models.distribution import Distribution
-from sentry.testutils import APITestCase
+from sentry.models.files.file import File
+from sentry.models.release import Release
+from sentry.models.releasefile import ReleaseFile
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.helpers.response import close_streaming_response
+
+
+def test_closes_depnedent_files_is_iterable():
+    # django (but not django.test) requires a file response to be iterable
+    f = ClosesDependentFiles(io.BytesIO(b"hello\nworld\n"))
+    assert list(f) == [b"hello\n", b"world\n"]
 
 
 class ReleaseFileDetailsTest(APITestCase):
@@ -28,8 +41,8 @@ class ReleaseFileDetailsTest(APITestCase):
         url = reverse(
             "sentry-api-0-project-release-file-details",
             kwargs={
-                "organization_slug": project.organization.slug,
-                "project_slug": project.slug,
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
                 "version": release.version,
                 "file_id": releasefile.id,
             },
@@ -50,7 +63,7 @@ class ReleaseFileDetailsTest(APITestCase):
 
         from io import BytesIO
 
-        f = File.objects.create(name="applicatiosn.js", type="release.file")
+        f = File.objects.create(name="applications.js", type="release.file")
         f.putfile(BytesIO(b"File contents here"))
 
         releasefile = ReleaseFile.objects.create(
@@ -64,8 +77,8 @@ class ReleaseFileDetailsTest(APITestCase):
         url = reverse(
             "sentry-api-0-project-release-file-details",
             kwargs={
-                "organization_slug": project.organization.slug,
-                "project_slug": project.slug,
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
                 "version": release.version,
                 "file_id": releasefile.id,
             },
@@ -82,12 +95,13 @@ class ReleaseFileDetailsTest(APITestCase):
         assert response.get("Content-Disposition") == 'attachment; filename="appli catios n.js"'
         assert response.get("Content-Length") == str(f.size)
         assert response.get("Content-Type") == "application/octet-stream"
-        assert b"File contents here" == b"".join(response.streaming_content)
+        assert b"File contents here" == close_streaming_response(response)
 
         # Download as a superuser
         self.login_as(user=self.user)
         response = self.client.get(url + "?download=1")
         assert response.get("Content-Type") == "application/octet-stream"
+        assert b"File contents here" == close_streaming_response(response)
 
         # # Download as a user without sufficient role
         self.organization.update_option("sentry:debug_files_role", "owner")
@@ -107,8 +121,8 @@ class ReleaseFileDetailsTest(APITestCase):
         url = reverse(
             "sentry-api-0-project-release-file-details",
             kwargs={
-                "organization_slug": self.project.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.project.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "version": self.release.version,
                 "file_id": file_id,
             },
@@ -156,7 +170,7 @@ class ReleaseFileDetailsTest(APITestCase):
 
         response = self._get(id, "?download=1")
         assert response.status_code == 200
-        body = b"".join(response.streaming_content)
+        body = close_streaming_response(response)
         assert sha1(body).hexdigest() == checksum
 
     def test_archived_with_dist(self):
@@ -190,8 +204,8 @@ class ReleaseFileUpdateTest(APITestCase):
         url = reverse(
             "sentry-api-0-project-release-file-details",
             kwargs={
-                "organization_slug": project.organization.slug,
-                "project_slug": project.slug,
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
                 "version": release.version,
                 "file_id": releasefile.id,
             },
@@ -210,13 +224,13 @@ class ReleaseFileUpdateTest(APITestCase):
         self.login_as(user=self.user)
         self.create_release_archive()
 
-        id = urlsafe_b64encode(b"_~/index.js")
+        id = urlsafe_b64encode(b"_~/index.js").decode()
 
         url = reverse(
             "sentry-api-0-project-release-file-details",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "version": self.release.version,
                 "file_id": id,
             },
@@ -252,8 +266,8 @@ class ReleaseFileDeleteTest(APITestCase):
         url = reverse(
             "sentry-api-0-project-release-file-details",
             kwargs={
-                "organization_slug": project.organization.slug,
-                "project_slug": project.slug,
+                "organization_id_or_slug": project.organization.slug,
+                "project_id_or_slug": project.slug,
                 "version": release.version,
                 "file_id": releasefile.id,
             },
@@ -276,8 +290,8 @@ class ReleaseFileDeleteTest(APITestCase):
         url = lambda id: reverse(
             "sentry-api-0-project-release-file-details",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "version": self.release.version,
                 "file_id": id,
             },
@@ -288,10 +302,10 @@ class ReleaseFileDeleteTest(APITestCase):
         assert response.status_code == 204
         assert self.release.count_artifacts() == 1
 
-        response = self.client.delete(url(urlsafe_b64encode(b"invalid_id")))
+        response = self.client.delete(url(urlsafe_b64encode(b"invalid_id").decode()))
         assert response.status_code == 404
         assert self.release.count_artifacts() == 1
 
-        response = self.client.delete(url(urlsafe_b64encode(b"_~/does_not_exist.js")))
+        response = self.client.delete(url(urlsafe_b64encode(b"_~/does_not_exist.js").decode()))
         assert response.status_code == 404
         assert self.release.count_artifacts() == 1

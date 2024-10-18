@@ -1,23 +1,24 @@
 import {Component, createRef} from 'react';
+import type {Theme} from '@emotion/react';
 import {withTheme} from '@emotion/react';
 import type {PieSeriesOption} from 'echarts';
 
-import {ReactEchartsRef, Series} from 'sentry/types/echarts';
-import type {Theme} from 'sentry/utils/theme';
+import type {ReactEchartsRef, Series} from 'sentry/types/echarts';
 
 import Legend from './components/legend';
 import PieSeries from './series/pieSeries';
+import type {BaseChartProps} from './baseChart';
 import BaseChart from './baseChart';
 
-type ChartProps = Omit<React.ComponentProps<typeof BaseChart>, 'css'>;
+export interface PieChartSeries
+  extends Series,
+    Omit<PieSeriesOption, 'id' | 'color' | 'data'> {}
 
-export type PieChartSeries = Series & Omit<PieSeriesOption, 'data' | 'name'>;
-
-type Props = Omit<ChartProps, 'series'> & {
+interface Props extends Omit<BaseChartProps, 'series'> {
   series: PieChartSeries[];
   theme: Theme;
   selectOnRender?: boolean;
-};
+}
 
 class PieChart extends Component<Props> {
   componentDidMount() {
@@ -100,8 +101,7 @@ class PieChart extends Component<Props> {
       <BaseChart
         ref={this.chart}
         colors={
-          firstSeries &&
-          firstSeries.data && [...theme.charts.getColorPalette(firstSeries.data.length)]
+          firstSeries?.data && [...theme.charts.getColorPalette(firstSeries.data.length)]
         }
         // when legend highlights it does NOT pass dataIndex :(
         onHighlight={({name}) => {
@@ -151,7 +151,7 @@ class PieChart extends Component<Props> {
               '<div class="tooltip-series">',
               `<div><span class="tooltip-label">${data.marker}<strong>${data.name}</strong></span> ${data.percent}%</div>`,
               '</div>',
-              `<div class="tooltip-date">${data.value}</div>`,
+              `<div class="tooltip-footer">${data.value}</div>`,
               '</div>',
               '<div class="tooltip-arrow"></div>',
             ].join('');

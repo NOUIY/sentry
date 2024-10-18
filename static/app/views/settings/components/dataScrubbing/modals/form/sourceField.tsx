@@ -1,13 +1,14 @@
 import {Component, createRef, Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import InputField from 'sentry/components/forms/inputField';
+import TextField from 'sentry/components/forms/fields/textField';
 import TextOverflow from 'sentry/components/textOverflow';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
 
-import {SourceSuggestion, SourceSuggestionType} from '../../types';
+import type {SourceSuggestion} from '../../types';
+import {SourceSuggestionType} from '../../types';
 import {binarySuggestions, unarySuggestions} from '../../utils';
 
 import SourceSuggestionExamples from './sourceSuggestionExamples';
@@ -95,8 +96,8 @@ class SourceField extends Component<Props, State> {
       }
     }
 
-    const filteredSuggestions = valuesToBeFiltered.filter(
-      s => s.value.toLowerCase().indexOf(value.toLowerCase()) > -1
+    const filteredSuggestions = valuesToBeFiltered.filter(s =>
+      s.value.toLowerCase().includes(value.toLowerCase())
     );
 
     return filteredSuggestions;
@@ -273,6 +274,11 @@ class SourceField extends Component<Props, State> {
 
     if (lastFieldValue?.type === 'string' && !lastFieldValue?.value) {
       fieldValues[fieldValues.length - 1] = suggestion;
+      return fieldValues;
+    }
+
+    if (suggestion.type === 'value' && lastFieldValue?.value !== suggestion.value) {
+      return [suggestion];
     }
 
     return fieldValues;
@@ -323,7 +329,7 @@ class SourceField extends Component<Props, State> {
     });
   };
 
-  handleClickSuggestionItem = (suggestion: SourceSuggestion) => () => {
+  handleClickSuggestionItem = (suggestion: SourceSuggestion) => {
     const fieldValues = this.getNewFieldValues(suggestion);
     this.setState(
       {
@@ -339,20 +345,20 @@ class SourceField extends Component<Props, State> {
   handleKeyDown = (_value: string, event: React.KeyboardEvent<HTMLInputElement>) => {
     event.persist();
 
-    const {keyCode} = event;
+    const {key} = event;
     const {activeSuggestion, suggestions} = this.state;
 
-    if (keyCode === 8 || keyCode === 32) {
+    if (key === 'Backspace' || key === ' ') {
       this.toggleSuggestions(true);
       return;
     }
 
-    if (keyCode === 13) {
-      this.handleClickSuggestionItem(suggestions[activeSuggestion])();
+    if (key === 'Enter') {
+      this.handleClickSuggestionItem(suggestions[activeSuggestion]);
       return;
     }
 
-    if (keyCode === 38) {
+    if (key === 'ArrowUp') {
       if (activeSuggestion === 0) {
         return;
       }
@@ -362,7 +368,7 @@ class SourceField extends Component<Props, State> {
       return;
     }
 
-    if (keyCode === 40) {
+    if (key === 'ArrowDown') {
       if (activeSuggestion === suggestions.length - 1) {
         return;
       }
@@ -383,9 +389,8 @@ class SourceField extends Component<Props, State> {
 
     return (
       <Wrapper ref={this.selectorField} hideCaret={hideCaret}>
-        <StyledInput
+        <StyledTextField
           data-test-id="source-field"
-          type="text"
           label={t('Source')}
           name="source"
           placeholder={t('Enter a custom attribute, variable or header name')}
@@ -413,7 +418,10 @@ class SourceField extends Component<Props, State> {
               {suggestions.slice(0, 50).map((suggestion, index) => (
                 <Suggestion
                   key={suggestion.value}
-                  onClick={this.handleClickSuggestionItem(suggestion)}
+                  onClick={event => {
+                    event.preventDefault();
+                    this.handleClickSuggestionItem(suggestion);
+                  }}
                   active={index === activeSuggestion}
                   tabIndex={-1}
                 >
@@ -448,7 +456,7 @@ const Wrapper = styled('div')<{hideCaret?: boolean}>`
   ${p => p.hideCaret && `caret-color: transparent;`}
 `;
 
-const StyledInput = styled(InputField)`
+const StyledTextField = styled(TextField)`
   z-index: 1002;
   :focus {
     outline: none;
@@ -492,6 +500,7 @@ const SuggestionDescription = styled('div')`
   display: flex;
   overflow: hidden;
   color: ${p => p.theme.gray300};
+  line-height: 1.2;
 `;
 
 const SuggestionsOverlay = styled('div')`

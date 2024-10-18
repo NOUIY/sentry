@@ -1,9 +1,10 @@
 import logging
-from typing import Any, MutableMapping
+from collections.abc import MutableMapping
+from typing import Any
 
 from sentry import tagstore
 from sentry.eventstore.models import Event
-from sentry.integrations import FeatureDescription, IntegrationFeatures
+from sentry.integrations.base import FeatureDescription, IntegrationFeatures
 from sentry.plugins.bases.data_forwarding import DataForwardingPlugin
 from sentry.shared_integrations.exceptions import ApiError, ApiHostError, ApiTimeoutError
 from sentry.utils import metrics
@@ -67,7 +68,7 @@ class SplunkPlugin(CorePluginMixin, DataForwardingPlugin):
     def get_client(self):
         return SplunkApiClient(self.project_instance, self.project_token)
 
-    def get_config(self, project, **kwargs):
+    def get_config(self, project, user=None, initial=None, add_additional_fields: bool = False):
         return [
             {
                 "name": "instance",
@@ -101,7 +102,7 @@ class SplunkPlugin(CorePluginMixin, DataForwardingPlugin):
         if host:
             return host
 
-        user_interface = event.interfaces.get("sentry.interfaces.User")
+        user_interface = event.interfaces.get("user")
         if user_interface:
             host = user_interface.ip_address
             if host:
@@ -119,7 +120,9 @@ class SplunkPlugin(CorePluginMixin, DataForwardingPlugin):
             "environment": event.get_tag("environment") or "",
             "type": event.get_event_type(),
         }
-        props["tags"] = [[k.format(tagstore.get_standardized_key(k)), v] for k, v in event.tags]
+        props["tags"] = [
+            [k.format(tagstore.backend.get_standardized_key(k)), v] for k, v in event.tags
+        ]
         for key, value in event.interfaces.items():
             if key == "request":
                 headers = value.headers
@@ -175,11 +178,7 @@ class SplunkPlugin(CorePluginMixin, DataForwardingPlugin):
         if super().is_ratelimited(event):
             metrics.incr(
                 "integrations.splunk.forward-event.rate-limited",
-                tags={
-                    "project_id": event.project_id,
-                    "organization_id": event.project.organization_id,
-                    "event_type": event.get_event_type(),
-                },
+                tags={"event_type": event.get_event_type()},
             )
             return True
         return False
@@ -197,11 +196,7 @@ class SplunkPlugin(CorePluginMixin, DataForwardingPlugin):
         if not (self.project_token and self.project_index and self.project_instance):
             metrics.incr(
                 "integrations.splunk.forward-event.unconfigured",
-                tags={
-                    "project_id": event.project_id,
-                    "organization_id": event.project.organization_id,
-                    "event_type": event.get_event_type(),
-                },
+                tags={"event_type": event.get_event_type()},
             )
             return False
 
@@ -215,14 +210,7 @@ class SplunkPlugin(CorePluginMixin, DataForwardingPlugin):
             client.request(payload)
         except Exception as exc:
             metric = "integrations.splunk.forward-event.error"
-            metrics.incr(
-                metric,
-                tags={
-                    "project_id": event.project_id,
-                    "organization_id": event.project.organization_id,
-                    "event_type": event.get_event_type(),
-                },
-            )
+            metrics.incr(metric, tags={"event_type": event.get_event_type()})
             logger.info(
                 metric,
                 extra={
@@ -237,19 +225,14 @@ class SplunkPlugin(CorePluginMixin, DataForwardingPlugin):
                 # These two are already handled by the API client, Just log and return.
                 isinstance(exc, (ApiHostError, ApiTimeoutError))
                 # Most 4xxs are not errors or actionable for us do not re-raise.
-                or (401 <= exc.code <= 404)
+                or (exc.code is not None and (401 <= exc.code <= 404))
                 # 502s are too noisy.
                 or exc.code == 502
             ):
                 return False
-            raise exc
+            raise
 
         metrics.incr(
-            "integrations.splunk.forward-event.success",
-            tags={
-                "project_id": event.project_id,
-                "organization_id": event.project.organization_id,
-                "event_type": event.get_event_type(),
-            },
+            "integrations.splunk.forward-event.success", tags={"event_type": event.get_event_type()}
         )
         return True

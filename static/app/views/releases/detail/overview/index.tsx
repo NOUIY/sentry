@@ -1,54 +1,54 @@
 import {Fragment} from 'react';
-import {browserHistory, RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
-import {Location, LocationDescriptor, Query} from 'history';
-import moment from 'moment';
+import type {Location, LocationDescriptor} from 'history';
+import moment from 'moment-timezone';
 
 import {restoreRelease} from 'sentry/actionCreators/release';
 import {Client} from 'sentry/api';
 import Feature from 'sentry/components/acl/feature';
 import SessionsRequest from 'sentry/components/charts/sessionsRequest';
-import {DateTimeObject} from 'sentry/components/charts/utils';
-import DateTime from 'sentry/components/dateTime';
+import type {DateTimeObject} from 'sentry/components/charts/utils';
+import {DateTime} from 'sentry/components/dateTime';
 import PerformanceCardTable from 'sentry/components/discover/performanceCardTable';
-import TransactionsList, {
-  DropdownOption,
-} from 'sentry/components/discover/transactionsList';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
-import {Body, Main, Side} from 'sentry/components/layouts/thirds';
+import type {DropdownOption} from 'sentry/components/discover/transactionsList';
+import TransactionsList from 'sentry/components/discover/transactionsList';
+import * as Layout from 'sentry/components/layouts/thirds';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
-import {ChangeData} from 'sentry/components/organizations/timeRangeSelector';
-import PageTimeRangeSelector from 'sentry/components/pageTimeRangeSelector';
-import {DEFAULT_RELATIVE_PERIODS} from 'sentry/constants';
+import type {ChangeData} from 'sentry/components/timeRangeSelector';
+import {TimeRangeSelector} from 'sentry/components/timeRangeSelector';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {
-  NewQuery,
-  Organization,
-  PageFilters,
-  ReleaseProject,
-  SessionFieldWithOperation,
-} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {PageFilters} from 'sentry/types/core';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {NewQuery, Organization} from 'sentry/types/organization';
+import {SessionFieldWithOperation} from 'sentry/types/organization';
+import type {ReleaseProject} from 'sentry/types/release';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {getUtcDateString} from 'sentry/utils/dates';
-import {TableDataRow} from 'sentry/utils/discover/discoverQuery';
+import type {TableDataRow} from 'sentry/utils/discover/discoverQuery';
 import EventView from 'sentry/utils/discover/eventView';
-import {MobileVital, WebVital} from 'sentry/utils/discover/fields';
-import {formatVersion} from 'sentry/utils/formatters';
+import {MobileVital, SpanOpBreakdown, WebVital} from 'sentry/utils/fields';
 import {decodeScalar} from 'sentry/utils/queryString';
 import routeTitleGen from 'sentry/utils/routeTitle';
+import {formatVersion} from 'sentry/utils/versions/formatVersion';
 import withApi from 'sentry/utils/withApi';
 import withOrganization from 'sentry/utils/withOrganization';
 import withPageFilters from 'sentry/utils/withPageFilters';
-import AsyncView from 'sentry/views/asyncView';
-import {DisplayModes} from 'sentry/views/performance/transactionSummary/transactionOverview/charts';
-import {transactionSummaryRouteWithQuery} from 'sentry/views/performance/transactionSummary/utils';
-import {TrendChangeType, TrendView} from 'sentry/views/performance/trends/types';
+import DeprecatedAsyncView from 'sentry/views/deprecatedAsyncView';
+import {
+  DisplayModes,
+  transactionSummaryRouteWithQuery,
+} from 'sentry/views/performance/transactionSummary/utils';
+import type {TrendView} from 'sentry/views/performance/trends/types';
+import {TrendChangeType} from 'sentry/views/performance/trends/types';
 import {
   platformToPerformanceType,
-  PROJECT_PERFORMANCE_TYPE,
+  ProjectPerformanceType,
 } from 'sentry/views/performance/utils';
 
-import {getReleaseParams, isReleaseArchived, ReleaseBounds} from '../../utils';
+import type {ReleaseBounds} from '../../utils';
+import {getReleaseParams, isReleaseArchived, searchReleaseVersion} from '../../utils';
 import {ReleaseContext} from '..';
 
 import CommitAuthorBreakdown from './sidebar/commitAuthorBreakdown';
@@ -84,7 +84,7 @@ type Props = RouteComponentProps<RouteParams, {}> & {
   selection: PageFilters;
 };
 
-class ReleaseOverview extends AsyncView<Props> {
+class ReleaseOverview extends DeprecatedAsyncView<Props> {
   getTitle() {
     const {params, organization} = this.props;
     return routeTitleGen(
@@ -127,7 +127,7 @@ class ReleaseOverview extends AsyncView<Props> {
       id: undefined,
       version: 2,
       name: `Release ${formatVersion(version)}`,
-      query: `event.type:transaction release:${version}`,
+      query: `event.type:transaction ${searchReleaseVersion(version)}`,
       fields: ['transaction', 'failure_count()', 'epm()', 'p50()'],
       orderby: '-failure_count',
       range: statsPeriod || undefined,
@@ -195,7 +195,7 @@ class ReleaseOverview extends AsyncView<Props> {
     baseQuery: NewQuery
   ): EventView {
     const eventView =
-      performanceType === PROJECT_PERFORMANCE_TYPE.FRONTEND
+      performanceType === ProjectPerformanceType.FRONTEND
         ? (EventView.fromSavedQuery({
             ...baseQuery,
             fields: [
@@ -204,30 +204,35 @@ class ReleaseOverview extends AsyncView<Props> {
               `p75(${WebVital.FID})`,
               `p75(${WebVital.LCP})`,
               `p75(${WebVital.CLS})`,
-              'p75(spans.http)',
-              'p75(spans.browser)',
-              'p75(spans.resource)',
+              `p75(${SpanOpBreakdown.SPANS_HTTP})`,
+              `p75(${SpanOpBreakdown.SPANS_BROWSER})`,
+              `p75(${SpanOpBreakdown.SPANS_RESOURCE})`,
             ],
           }) as EventView)
-        : performanceType === PROJECT_PERFORMANCE_TYPE.BACKEND
-        ? (EventView.fromSavedQuery({
-            ...baseQuery,
-            fields: [...baseQuery.fields, 'apdex()', 'p75(spans.http)', 'p75(spans.db)'],
-          }) as EventView)
-        : performanceType === PROJECT_PERFORMANCE_TYPE.MOBILE
-        ? (EventView.fromSavedQuery({
-            ...baseQuery,
-            fields: [
-              ...baseQuery.fields,
-              `p75(${MobileVital.AppStartCold})`,
-              `p75(${MobileVital.AppStartWarm})`,
-              `p75(${MobileVital.FramesSlow})`,
-              `p75(${MobileVital.FramesFrozen})`,
-            ],
-          }) as EventView)
-        : (EventView.fromSavedQuery({
-            ...baseQuery,
-          }) as EventView);
+        : performanceType === ProjectPerformanceType.BACKEND
+          ? (EventView.fromSavedQuery({
+              ...baseQuery,
+              fields: [
+                ...baseQuery.fields,
+                'apdex()',
+                'p75(spans.http)',
+                'p75(spans.db)',
+              ],
+            }) as EventView)
+          : performanceType === ProjectPerformanceType.MOBILE
+            ? (EventView.fromSavedQuery({
+                ...baseQuery,
+                fields: [
+                  ...baseQuery.fields,
+                  `p75(${MobileVital.APP_START_COLD})`,
+                  `p75(${MobileVital.APP_START_WARM})`,
+                  `p75(${MobileVital.FRAMES_SLOW})`,
+                  `p75(${MobileVital.FRAMES_FROZEN})`,
+                ],
+              }) as EventView)
+            : (EventView.fromSavedQuery({
+                ...baseQuery,
+              }) as EventView);
 
     return eventView;
   }
@@ -430,6 +435,13 @@ class ReleaseOverview extends AsyncView<Props> {
             shouldFilterSessionsInTimeWindow: true,
           };
 
+          const defaultDateTimeSelected = !period && !start && !end;
+
+          const releaseBoundsLabel =
+            releaseBounds.type === 'clamped'
+              ? t('Clamped Release Period')
+              : t('Entire Release Period');
+
           return (
             <SessionsRequest {...sessionsRequestProps}>
               {({
@@ -438,7 +450,10 @@ class ReleaseOverview extends AsyncView<Props> {
                 errored: allReleasesErrored,
                 response: allReleases,
               }) => (
-                <SessionsRequest {...sessionsRequestProps} query={`release:"${version}"`}>
+                <SessionsRequest
+                  {...sessionsRequestProps}
+                  query={searchReleaseVersion(version)}
+                >
                   {({
                     loading: thisReleaseLoading,
                     reloading: thisReleaseReloading,
@@ -449,8 +464,8 @@ class ReleaseOverview extends AsyncView<Props> {
                     const reloading = allReleasesReloading || thisReleaseReloading;
                     const errored = allReleasesErrored || thisReleaseErrored;
                     return (
-                      <Body>
-                        <Main>
+                      <Layout.Body>
+                        <Layout.Main>
                           {isReleaseArchived(release) && (
                             <ReleaseArchivedNotice
                               onRestore={() => this.handleRestore(project, refetchData)}
@@ -458,37 +473,38 @@ class ReleaseOverview extends AsyncView<Props> {
                           )}
                           <ReleaseDetailsPageFilters>
                             <EnvironmentPageFilter />
-                            <StyledPageTimeRangeSelector
-                              organization={organization}
-                              relative={period ?? ''}
+                            <TimeRangeSelector
+                              relative={
+                                period ??
+                                (defaultDateTimeSelected ? RELEASE_PERIOD_KEY : null)
+                              }
                               start={start ?? null}
                               end={end ?? null}
                               utc={utc ?? null}
-                              onUpdate={this.handleDateChange}
-                              relativeOptions={
+                              onChange={this.handleDateChange}
+                              menuTitle={t('Filter Time Range')}
+                              triggerLabel={
+                                defaultDateTimeSelected ? releaseBoundsLabel : null
+                              }
+                              relativeOptions={({defaultOptions, arbitraryOptions}) =>
                                 releaseBounds.type !== 'ancient'
                                   ? {
                                       [RELEASE_PERIOD_KEY]: (
                                         <Fragment>
-                                          {releaseBounds.type === 'clamped'
-                                            ? t('Clamped Release Period')
-                                            : t('Entire Release Period')}{' '}
-                                          (
-                                          <DateTime
-                                            date={releaseBounds.releaseStart}
-                                            timeAndDate
-                                          />{' '}
-                                          -{' '}
-                                          <DateTime
-                                            date={releaseBounds.releaseEnd}
-                                            timeAndDate
-                                          />
-                                          )
+                                          {releaseBoundsLabel}
+                                          <br />
+                                          <ReleaseBoundsDescription
+                                            primary={defaultDateTimeSelected}
+                                          >
+                                            <DateTime date={releaseBounds.releaseStart} />
+                                            –<DateTime date={releaseBounds.releaseEnd} />
+                                          </ReleaseBoundsDescription>
                                         </Fragment>
                                       ),
-                                      ...DEFAULT_RELATIVE_PERIODS,
+                                      ...defaultOptions,
+                                      ...arbitraryOptions,
                                     }
-                                  : DEFAULT_RELATIVE_PERIODS
+                                  : {...defaultOptions, ...arbitraryOptions}
                               }
                               defaultPeriod={
                                 releaseBounds.type !== 'ancient'
@@ -507,7 +523,6 @@ class ReleaseOverview extends AsyncView<Props> {
                               }}
                             />
                           </ReleaseDetailsPageFilters>
-
                           {(hasDiscover || hasPerformance || hasHealthData) && (
                             <ReleaseComparisonChart
                               release={release}
@@ -524,18 +539,15 @@ class ReleaseOverview extends AsyncView<Props> {
                               hasHealthData={hasHealthData}
                             />
                           )}
-
                           <ReleaseIssues
                             organization={organization}
-                            selection={selection}
                             version={version}
                             location={location}
                             releaseBounds={releaseBounds}
                             queryFilterDescription={t('In this release')}
                             withChart
                           />
-
-                          <Feature features={['performance-view']}>
+                          <Feature features="performance-view">
                             {hasReleaseComparisonPerformance ? (
                               <PerformanceCardTable
                                 organization={organization}
@@ -558,11 +570,12 @@ class ReleaseOverview extends AsyncView<Props> {
                                 }
                                 titles={titles}
                                 generateLink={generateLink}
+                                supportsInvestigationRule={false}
                               />
                             )}
                           </Feature>
-                        </Main>
-                        <Side>
+                        </Layout.Main>
+                        <Layout.Side>
                           <ReleaseStats
                             organization={organization}
                             release={release}
@@ -583,7 +596,6 @@ class ReleaseOverview extends AsyncView<Props> {
                           <ProjectReleaseDetails
                             release={release}
                             releaseMeta={releaseMeta}
-                            orgSlug={organization.slug}
                             projectSlug={project.slug}
                           />
                           {commitCount > 0 && (
@@ -619,8 +631,8 @@ class ReleaseOverview extends AsyncView<Props> {
                               projectId={project.id}
                             />
                           )}
-                        </Side>
-                      </Body>
+                        </Layout.Side>
+                      </Layout.Body>
                     );
                   }}
                 </SessionsRequest>
@@ -642,7 +654,7 @@ function generateTransactionLink(
   return (
     organization: Organization,
     tableRow: TableDataRow,
-    _query: Query
+    _location: Location
   ): LocationDescriptor => {
     const {transaction} = tableRow;
     const trendTransaction = ['regression', 'improved'].includes(value);
@@ -722,10 +734,16 @@ const ReleaseDetailsPageFilters = styled('div')`
   grid-template-columns: minmax(0, max-content) 1fr;
   gap: ${space(2)};
   margin-bottom: ${space(2)};
+
+  @media (max-width: ${p => p.theme.breakpoints.small}) {
+    grid-template-columns: auto;
+  }
 `;
 
-const StyledPageTimeRangeSelector = styled(PageTimeRangeSelector)`
-  height: 40px;
+const ReleaseBoundsDescription = styled('span')<{primary: boolean}>`
+  font-size: ${p => p.theme.fontSizeSmall};
+  color: ${p => (p.primary ? p.theme.activeText : p.theme.subText)};
 `;
 
+ReleaseOverview.contextType = ReleaseContext;
 export default withApi(withPageFilters(withOrganization(ReleaseOverview)));

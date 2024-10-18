@@ -2,24 +2,25 @@ import {Component} from 'react';
 import styled from '@emotion/styled';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
+import {fetchOrganizationDetails} from 'sentry/actionCreators/organizations';
 import {joinTeam, leaveTeam} from 'sentry/actionCreators/teams';
-import TeamActions from 'sentry/actions/teamActions';
-import {Client} from 'sentry/api';
-import Button from 'sentry/components/button';
+import type {Client} from 'sentry/api';
+import {Button} from 'sentry/components/button';
 import IdBadge from 'sentry/components/idBadge';
 import Link from 'sentry/components/links/link';
-import {PanelItem} from 'sentry/components/panels';
+import PanelItem from 'sentry/components/panels/panelItem';
 import {t, tct, tn} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Team} from 'sentry/types';
+import TeamStore from 'sentry/stores/teamStore';
+import {space} from 'sentry/styles/space';
+import type {Organization, Team} from 'sentry/types/organization';
 import withApi from 'sentry/utils/withApi';
+import {getButtonHelpText} from 'sentry/views/settings/organizationTeams/utils';
 
 type Props = {
   api: Client;
   openMembership: boolean;
   organization: Organization;
   team: Team;
-  urlPrefix: string;
 };
 
 type State = {
@@ -33,7 +34,15 @@ class AllTeamsRow extends Component<Props, State> {
     error: false,
   };
 
-  handleRequestAccess = async () => {
+  reloadProjects() {
+    const {api, organization} = this.props;
+    // After a change in teams has happened, refresh the project store
+    fetchOrganizationDetails(api, organization.slug, {
+      loadProjects: true,
+    });
+  }
+
+  handleRequestAccess = () => {
     const {team} = this.props;
 
     try {
@@ -48,7 +57,7 @@ class AllTeamsRow extends Component<Props, State> {
       });
 
       // Update team so that `isPending` is true
-      TeamActions.updateSuccess(team.slug, {
+      TeamStore.onUpdateSuccess(team.slug, {
         ...team,
         isPending: true,
       });
@@ -57,10 +66,10 @@ class AllTeamsRow extends Component<Props, State> {
     }
   };
 
-  handleJoinTeam = () => {
+  handleJoinTeam = async () => {
     const {team} = this.props;
 
-    this.joinTeam({
+    await this.joinTeam({
       successMessage: tct('You have joined [team]', {
         team: `#${team.slug}`,
       }),
@@ -68,6 +77,8 @@ class AllTeamsRow extends Component<Props, State> {
         team: `#${team.slug}`,
       }),
     });
+
+    this.reloadProjects();
   };
 
   joinTeam = ({
@@ -136,6 +147,9 @@ class AllTeamsRow extends Component<Props, State> {
               team: `#${team.slug}`,
             })
           );
+
+          // Reload ProjectsStore
+          this.reloadProjects();
         },
         error: () => {
           this.setState({
@@ -152,8 +166,24 @@ class AllTeamsRow extends Component<Props, State> {
     );
   };
 
+  getTeamRoleName = () => {
+    const {organization, team} = this.props;
+    const {teamRoleList} = organization;
+    const roleName = teamRoleList.find(r => r.id === team.teamRole)?.name;
+
+    return roleName;
+  };
+
   render() {
-    const {team, urlPrefix, openMembership} = this.props;
+    const {team, openMembership, organization} = this.props;
+    const urlPrefix = `/settings/${organization.slug}/teams/`;
+
+    // TODO(team-roles): team admins can also manage membership
+    // org:admin is a unique scope that only org owners have
+    const isIdpProvisioned = team.flags['idp:provisioned'];
+
+    const buttonHelpText = getButtonHelpText(isIdpProvisioned);
+
     const display = (
       <IdBadge
         team={team}
@@ -166,27 +196,38 @@ class AllTeamsRow extends Component<Props, State> {
     // for your role + org open membership
     const canViewTeam = team.hasAccess;
 
+    const teamRoleName = this.getTeamRoleName();
+    const isDisabled = isIdpProvisioned;
+
     return (
       <TeamPanelItem>
-        <TeamNameWrapper>
+        <div>
           {canViewTeam ? (
-            <TeamLink to={`${urlPrefix}teams/${team.slug}/`}>{display}</TeamLink>
+            <TeamLink data-test-id="team-link" to={`${urlPrefix}${team.slug}/`}>
+              {display}
+            </TeamLink>
           ) : (
             display
           )}
-        </TeamNameWrapper>
-        <Spacer>
+        </div>
+        <DisplayRole isHidden={teamRoleName === null}>{teamRoleName}</DisplayRole>
+        <div>
           {this.state.loading ? (
-            <Button size="small" disabled>
+            <Button size="sm" disabled>
               ...
             </Button>
           ) : team.isMember ? (
-            <Button size="small" onClick={this.handleLeaveTeam}>
+            <Button
+              size="sm"
+              onClick={this.handleLeaveTeam}
+              disabled={isDisabled}
+              title={buttonHelpText}
+            >
               {t('Leave Team')}
             </Button>
           ) : team.isPending ? (
             <Button
-              size="small"
+              size="sm"
               disabled
               title={t(
                 'Your request to join this team is being reviewed by organization owners'
@@ -195,15 +236,25 @@ class AllTeamsRow extends Component<Props, State> {
               {t('Request Pending')}
             </Button>
           ) : openMembership ? (
-            <Button size="small" onClick={this.handleJoinTeam}>
+            <Button
+              size="sm"
+              onClick={this.handleJoinTeam}
+              disabled={isDisabled}
+              title={buttonHelpText}
+            >
               {t('Join Team')}
             </Button>
           ) : (
-            <Button size="small" onClick={this.handleRequestAccess}>
+            <Button
+              size="sm"
+              onClick={this.handleRequestAccess}
+              disabled={isDisabled}
+              title={buttonHelpText}
+            >
               {t('Request Access')}
             </Button>
           )}
-        </Spacer>
+        </div>
       </TeamPanelItem>
     );
   }
@@ -212,7 +263,7 @@ class AllTeamsRow extends Component<Props, State> {
 const TeamLink = styled(Link)`
   display: inline-block;
 
-  &.focus-visible {
+  &:focus-visible {
     margin: -${space(1)};
     padding: ${space(1)};
     background: #f2eff5;
@@ -224,15 +275,21 @@ const TeamLink = styled(Link)`
 export {AllTeamsRow};
 export default withApi(AllTeamsRow);
 
+export const GRID_TEMPLATE = `
+  display: grid;
+  grid-template-columns: minmax(150px, 4fr) minmax(0px, 100px) 125px minmax(150px, 1fr);
+  gap: ${space(1)};
+`;
+
 const TeamPanelItem = styled(PanelItem)`
-  padding: 0;
+  ${GRID_TEMPLATE}
   align-items: center;
+
+  > div:last-child {
+    margin-left: auto;
+  }
 `;
 
-const Spacer = styled('div')`
-  padding: ${space(2)};
-`;
-
-const TeamNameWrapper = styled(Spacer)`
-  flex: 1;
+const DisplayRole = styled('div')<{isHidden: boolean}>`
+  display: ${props => (props.isHidden ? 'none' : 'block')};
 `;

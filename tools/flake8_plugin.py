@@ -1,113 +1,160 @@
+from __future__ import annotations
+
 import ast
-from collections import namedtuple
-from functools import partial
+from collections.abc import Generator
+from typing import Any
 
-
-class SentryVisitor(ast.NodeVisitor):
-    NODE_WINDOW_SIZE = 4
-
-    def __init__(self):
-        self.errors = []
-
-    def visit_ImportFrom(self, node):
-        if node.module in S003.modules:
-            for nameproxy in node.names:
-                if nameproxy.name in S003.names:
-                    self.errors.append(S003(node.lineno, node.col_offset))
-                    break
-
-    def visit_Import(self, node):
-        for alias in node.names:
-            if alias.name.split(".", 1)[0] in S003.modules:
-                self.errors.append(S003(node.lineno, node.col_offset))
-
-    def visit_Call(self, node):
-        if isinstance(node.func, ast.Attribute):
-            for bug in (S004,):
-                if node.func.attr in bug.methods:
-                    call_path = ".".join(self.compose_call_path(node.func.value))
-                    if call_path in bug.invalid_paths:
-                        self.errors.append(bug(node.lineno, node.col_offset))
-                    break
-        self.generic_visit(node)
-
-    def visit_Attribute(self, node):
-        if node.attr in S001.methods:
-            self.errors.append(S001(node.lineno, node.col_offset, vars=(node.attr,)))
-
-    def visit_Name(self, node):
-        if node.id == "print":
-            self.check_print(node)
-
-    def visit_Print(self, node):
-        self.check_print(node)
-
-    def check_print(self, node):
-        self.errors.append(S002(lineno=node.lineno, col=node.col_offset))
-
-    def compose_call_path(self, node):
-        if isinstance(node, ast.Attribute):
-            yield from self.compose_call_path(node.value)
-            yield node.attr
-        elif isinstance(node, ast.Name):
-            yield node.id
-
-
-class SentryCheck:
-    name = "sentry-flake8"
-    version = "0"
-
-    def __init__(self, tree: ast.AST) -> None:
-        self.tree = tree
-
-    def run(self):
-        visitor = SentryVisitor()
-        visitor.visit(self.tree)
-
-        for e in visitor.errors:
-            yield self.adapt_error(e)
-
-    @classmethod
-    def adapt_error(cls, e):
-        """Adapts the extended error namedtuple to be compatible with Flake8."""
-        return e._replace(message=e.message.format(*e.vars))[:4]
-
-
-error = namedtuple("error", "lineno col message type vars")
-Error = partial(partial, error, message="", type=SentryCheck, vars=())
-
-S001 = Error(
-    message="S001: Avoid using the {} mock call as it is "
+S001_fmt = (
+    "S001 Avoid using the {} mock call as it is "
     "confusing and prone to causing invalid test "
     "behavior."
 )
-S001.methods = {
-    "assert_calls",
-    "assert_not_called",
-    "assert_called",
-    "assert_called_once",
-    "not_called",
-    "called_once",
-    "called_once_with",
-}
+S001_methods = frozenset(("not_called", "called_once", "called_once_with"))
 
-S002 = Error(message="S002: print functions or statements are not allowed.")
+S002_msg = "S002 print functions or statements are not allowed."
 
-S003 = Error(message="S003: Use ``from sentry.utils import json`` instead.")
-S003.modules = {"json", "simplejson"}
-S003.names = {
-    "load",
-    "loads",
-    "dump",
-    "dumps",
-    "JSONEncoder",
-    "JSONDecodeError",
-    "_default_encoder",
-}
+S003_msg = "S003 Use ``from sentry.utils import json`` instead."
+S003_modules = frozenset(("json", "simplejson"))
 
-S004 = Error(
-    message="S004: ``cgi.escape`` and ``html.escape`` should not be used. Use "
-    "sentry.utils.html.escape instead."
-)
-S004.methods = {"escape"}
-S004.invalid_paths = {"cgi", "html"}
+S004_msg = "S004 Use `pytest.raises` instead for better debuggability."
+S004_methods = frozenset(("assertRaises", "assertRaisesRegex"))
+
+S005_msg = "S005 Do not import models from sentry.models but the actual module"
+
+S006_msg = "S006 Do not use force_bytes / force_str -- test the types directly"
+
+S007_msg = "S007 Do not import sentry.testutils into production code."
+
+S008_msg = "S008 Use stdlib datetime.timezone.utc instead of pytz.utc / pytz.UTC"
+
+S009_msg = "S009 Use `raise` with no arguments to reraise exceptions"
+
+S010_msg = "S010 Except handler does nothing and should be removed"
+
+S011_msg = "S011 Use override_options(...) instead to ensure proper cleanup"
+
+
+class SentryVisitor(ast.NodeVisitor):
+    def __init__(self, filename: str) -> None:
+        self.errors: list[tuple[int, int, str]] = []
+        self.filename = filename
+
+        self._except_vars: list[str | None] = []
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module and not node.level:
+            if node.module.split(".")[0] in S003_modules:
+                self.errors.append((node.lineno, node.col_offset, S003_msg))
+            elif node.module == "sentry.models":
+                self.errors.append((node.lineno, node.col_offset, S005_msg))
+            elif (
+                "tests/" in self.filename
+                and node.module == "django.utils.encoding"
+                and any(x.name in {"force_bytes", "force_str"} for x in node.names)
+            ):
+                self.errors.append((node.lineno, node.col_offset, S006_msg))
+            elif (
+                "tests/" not in self.filename
+                and "fixtures/" not in self.filename
+                and "sentry/testutils/" not in self.filename
+                and "sentry.testutils" in node.module
+            ):
+                self.errors.append((node.lineno, node.col_offset, S007_msg))
+
+            if node.module == "pytz" and any(x.name.lower() == "utc" for x in node.names):
+                self.errors.append((node.lineno, node.col_offset, S008_msg))
+
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.name.split(".")[0] in S003_modules:
+                self.errors.append((node.lineno, node.col_offset, S003_msg))
+            elif (
+                "tests/" not in self.filename
+                and "fixtures/" not in self.filename
+                and "sentry/testutils/" not in self.filename
+                and "sentry.testutils" in alias.name
+            ):
+                self.errors.append((node.lineno, node.col_offset, S007_msg))
+
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in S001_methods:
+            self.errors.append((node.lineno, node.col_offset, S001_fmt.format(node.attr)))
+        elif node.attr in S004_methods:
+            self.errors.append((node.lineno, node.col_offset, S004_msg))
+        elif (
+            isinstance(node.value, ast.Name)
+            and node.value.id == "pytz"
+            and node.attr.lower() == "utc"
+        ):
+            self.errors.append((node.lineno, node.col_offset, S008_msg))
+
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id == "print":
+            self.errors.append((node.lineno, node.col_offset, S002_msg))
+
+        self.generic_visit(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        self._except_vars.append(node.name)
+        try:
+            self.generic_visit(node)
+        finally:
+            self._except_vars.pop()
+
+    def visit_Raise(self, node: ast.Raise) -> None:
+        if (
+            self._except_vars
+            and isinstance(node.exc, ast.Name)
+            and node.exc.id == self._except_vars[-1]
+        ):
+            self.errors.append((node.lineno, node.col_offset, S009_msg))
+        self.generic_visit(node)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        if (
+            node.handlers
+            and len(node.handlers[-1].body) == 1
+            and isinstance(node.handlers[-1].body[0], ast.Raise)
+            and node.handlers[-1].body[0].exc is None
+        ):
+            self.errors.append((node.handlers[-1].lineno, node.handlers[-1].col_offset, S010_msg))
+
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            # override_settings(...)
+            (isinstance(node.func, ast.Name) and node.func.id == "override_settings")
+            or
+            # self.settings(...)
+            (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+                and node.func.attr == "settings"
+            )
+        ):
+            for keyword in node.keywords:
+                if keyword.arg == "SENTRY_OPTIONS":
+                    self.errors.append((keyword.lineno, keyword.col_offset, S011_msg))
+
+        self.generic_visit(node)
+
+
+class SentryCheck:
+    def __init__(self, tree: ast.AST, filename: str) -> None:
+        self.tree = tree
+        self.filename = filename
+
+    def run(self) -> Generator[tuple[int, int, str, type[Any]]]:
+        visitor = SentryVisitor(self.filename)
+        visitor.visit(self.tree)
+
+        for e in visitor.errors:
+            yield (*e, type(self))

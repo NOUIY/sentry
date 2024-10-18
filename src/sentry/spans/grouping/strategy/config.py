@@ -1,11 +1,14 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Sequence
+from typing import Any
 
 from sentry.spans.grouping.result import SpanGroupingResults
 from sentry.spans.grouping.strategy.base import (
     CallableStrategy,
     SpanGroupingStrategy,
+    loose_normalized_db_span_in_condition_strategy,
     normalized_db_span_in_condition_strategy,
+    parametrize_db_span_strategy,
     remove_http_client_query_string_strategy,
     remove_redis_command_arguments_strategy,
 )
@@ -28,7 +31,7 @@ class SpanGroupingConfig:
         return SpanGroupingResults(self.id, results)
 
 
-CONFIGURATIONS: Dict[str, SpanGroupingConfig] = {}
+CONFIGURATIONS: dict[str, SpanGroupingConfig] = {}
 
 
 def register_configuration(config_id: str, strategies: Sequence[CallableStrategy]) -> None:
@@ -39,13 +42,30 @@ def register_configuration(config_id: str, strategies: Sequence[CallableStrategy
     CONFIGURATIONS[config_id] = SpanGroupingConfig(config_id, strategy)
 
 
-DEFAULT_CONFIG_ID = "default:2021-08-25"
-
+DEFAULT_CONFIG_ID = "default:2022-10-27"
 
 register_configuration(
     "default:2021-08-25",
     strategies=[
         normalized_db_span_in_condition_strategy,
+        remove_http_client_query_string_strategy,
+        remove_redis_command_arguments_strategy,
+    ],
+)
+
+register_configuration(
+    "default:2022-10-04",
+    strategies=[
+        loose_normalized_db_span_in_condition_strategy,
+        remove_http_client_query_string_strategy,
+        remove_redis_command_arguments_strategy,
+    ],
+)
+
+register_configuration(
+    "default:2022-10-27",
+    strategies=[
+        parametrize_db_span_strategy,
         remove_http_client_query_string_strategy,
         remove_redis_command_arguments_strategy,
     ],

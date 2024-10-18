@@ -1,23 +1,25 @@
-from itertools import chain, combinations
-from typing import Iterable, List
-from unittest.mock import patch
+from datetime import timedelta
 
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 from snuba_sdk import Column, Condition, Function, Op
 
-from sentry.release_health.duplex import compare_results
-from sentry.release_health.metrics import MetricsReleaseHealthBackend
+from sentry.exceptions import InvalidParams
 from sentry.release_health.metrics_sessions_v2 import (
     SessionStatus,
     _extract_status_filter_from_conditions,
 )
-from sentry.release_health.sessions import SessionsReleaseHealthBackend
-from sentry.snuba.sessions_v2 import InvalidParams
 from sentry.testutils.cases import APITestCase, SnubaTestCase
-from tests.snuba.api.endpoints.test_organization_sessions import result_sorted
+from sentry.testutils.helpers.datetime import freeze_time
+
+pytestmark = pytest.mark.sentry_metrics
+
+ONE_DAY_AGO = timezone.now() - timedelta(days=1)
+MOCK_DATETIME = ONE_DAY_AGO.replace(hour=10, minute=0, second=0, microsecond=0)
 
 
+@freeze_time(MOCK_DATETIME)
 class MetricsSessionsV2Test(APITestCase, SnubaTestCase):
     def setUp(self):
         super().setUp()
@@ -42,14 +44,14 @@ class MetricsSessionsV2Test(APITestCase, SnubaTestCase):
         self.login_as(user=user or self.user)
         url = reverse(
             "sentry-api-0-organization-sessions",
-            kwargs={"organization_slug": (org or self.organization1).slug},
+            kwargs={"organization_id_or_slug": (org or self.organization1).slug},
         )
         return self.client.get(url, query, format="json")
 
-    def get_sessions_data(self, groupby: List[str], interval):
+    def get_sessions_data(self, groupby: list[str], interval):
         response = self.do_request(
             {
-                "organization_slug": [self.organization1],
+                "organization_id_or_slug": [self.organization1],
                 "project": [self.project1.id],
                 "field": ["sum(session)"],
                 "groupBy": groupby,
@@ -58,40 +60,6 @@ class MetricsSessionsV2Test(APITestCase, SnubaTestCase):
         )
         assert response.status_code == 200
         return response.data
-
-    def test_sessions_metrics_equal_num_keys(self):
-        """
-        Tests whether the number of keys in the metrics implementation of
-        sessions data is the same as in the sessions implementation.
-
-        """
-        interval_days = "1d"
-        groupbyes = _session_groupby_powerset()
-
-        for groupby in groupbyes:
-            with patch(
-                "sentry.api.endpoints.organization_sessions.release_health",
-                SessionsReleaseHealthBackend(),
-            ):
-                sessions_data = result_sorted(self.get_sessions_data(groupby, interval_days))
-
-            with patch(
-                "sentry.api.endpoints.organization_sessions.release_health",
-                MetricsReleaseHealthBackend(),
-            ):
-                metrics_data = result_sorted(self.get_sessions_data(groupby, interval_days))
-
-            errors = compare_results(
-                sessions=sessions_data,
-                metrics=metrics_data,
-                rollup=interval_days * 24 * 60 * 60,  # days to seconds
-            )
-            assert len(errors) == 0
-
-
-def _session_groupby_powerset() -> Iterable[str]:
-    keys = ["project", "release", "environment", "session.status"]
-    return chain.from_iterable((combinations(keys, size)) for size in range(len(keys) + 1))
 
 
 @pytest.mark.parametrize(

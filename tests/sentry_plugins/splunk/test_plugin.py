@@ -1,14 +1,16 @@
+from functools import cached_property
+
+import orjson
+import pytest
 import responses
-from exam import fixture
 
 from sentry.shared_integrations.exceptions import ApiError
-from sentry.testutils import PluginTestCase
-from sentry.utils import json
+from sentry.testutils.cases import PluginTestCase
 from sentry_plugins.splunk.plugin import SplunkPlugin
 
 
 class SplunkPluginTest(PluginTestCase):
-    @fixture
+    @cached_property
     def plugin(self):
         return SplunkPlugin()
 
@@ -33,7 +35,7 @@ class SplunkPluginTest(PluginTestCase):
             self.plugin.post_process(event)
 
         request = responses.calls[0].request
-        payload = json.loads(request.body)
+        payload = orjson.loads(request.body)
         assert payload == self.plugin.get_event_payload(event)
         headers = request.headers
         assert headers["Authorization"] == "Splunk 12345678-1234-1234-1234-1234567890AB"
@@ -71,7 +73,7 @@ class SplunkPluginTest(PluginTestCase):
             data={"message": "Hello world", "level": "warning"}, project_id=self.project.id
         )
         with self.options({"system.url-prefix": "http://example.com"}):
-            with self.assertRaises(ApiError):
+            with pytest.raises(ApiError):
                 self.plugin.post_process(event)
 
     def test_http_payload(self):

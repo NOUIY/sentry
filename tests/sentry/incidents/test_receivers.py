@@ -1,16 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-import pytz
-
-from sentry.incidents.models import (
-    AlertRuleTrigger,
+from sentry.incidents.models.alert_rule import AlertRuleTrigger
+from sentry.incidents.models.incident import (
     Incident,
     IncidentStatus,
     IncidentTrigger,
     TriggerStatus,
 )
-from sentry.models import Organization
-from sentry.testutils import TestCase
+from sentry.models.organization import Organization
+from sentry.testutils.cases import TestCase
 
 
 class AddProjectToIncludeAllRulesTest(TestCase):
@@ -51,8 +49,8 @@ class PreSaveIncidentTriggerTest(TestCase):
             status=IncidentStatus.WARNING.value,
             type=2,
             title="a custom incident title",
-            date_started=datetime.utcnow().replace(tzinfo=pytz.utc),
-            date_detected=datetime.utcnow().replace(tzinfo=pytz.utc),
+            date_started=datetime.now(timezone.utc),
+            date_detected=datetime.now(timezone.utc),
             alert_rule=alert_rule,
         )
         incident_trigger = IncidentTrigger.objects.create(

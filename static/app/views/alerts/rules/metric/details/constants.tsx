@@ -1,5 +1,5 @@
 import {t} from 'sentry/locale';
-import {SelectValue} from 'sentry/types';
+import type {SelectValue} from 'sentry/types/core';
 import {TimePeriod, TimeWindow} from 'sentry/views/alerts/rules/metric/types';
 
 export const SELECTOR_RELATIVE_PERIODS = {
@@ -43,4 +43,12 @@ export type TimePeriodType = {
   usingPeriod: boolean;
   custom?: boolean;
   utc?: boolean;
+};
+
+// A La models/alert_rule.py::AlertRuleStatus
+export const ALERT_RULE_STATUS = {
+  PENDING: 0,
+  SNAPSHOT: 4,
+  DISABLED: 5,
+  NOT_ENOUGH_DATA: 6,
 };

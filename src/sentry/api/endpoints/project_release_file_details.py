@@ -1,5 +1,4 @@
 import posixpath
-from typing import Optional
 from zipfile import ZipFile
 
 from django.http.response import FileResponse
@@ -8,15 +7,17 @@ from rest_framework.exceptions import ParseError
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from sentry.api.api_publish_status import ApiPublishStatus
+from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.project import ProjectEndpoint, ProjectReleasePermission
 from sentry.api.endpoints.debug_files import has_download_permission
 from sentry.api.endpoints.project_release_files import pseudo_releasefile
 from sentry.api.exceptions import ResourceDoesNotExist
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.release_file import decode_release_file_id
-from sentry.models import Release, ReleaseFile
 from sentry.models.distribution import Distribution
-from sentry.models.releasefile import delete_from_artifact_index, read_artifact_index
+from sentry.models.release import Release
+from sentry.models.releasefile import ReleaseFile, delete_from_artifact_index, read_artifact_index
 
 #: Cannot update release artifacts in release archives
 INVALID_UPDATE_MESSAGE = "Can only update release files with integer IDs"
@@ -26,7 +27,7 @@ class ReleaseFileSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200, required=True)
 
 
-def _entry_from_index(release: Release, dist: Optional[Distribution], url: str) -> ReleaseFile:
+def _entry_from_index(release: Release, dist: Distribution | None, url: str) -> ReleaseFile:
     index = read_artifact_index(release, dist)
     if index is None:
         raise ResourceDoesNotExist
@@ -36,9 +37,32 @@ def _entry_from_index(release: Release, dist: Optional[Distribution], url: str) 
         raise ResourceDoesNotExist
 
 
-def _get_from_index(release: Release, dist: Optional[Distribution], url: str) -> ReleaseFile:
+def _get_from_index(release: Release, dist: Distribution | None, url: str) -> ReleaseFile:
     entry = _entry_from_index(release, dist, url)
     return pseudo_releasefile(url, entry, dist)
+
+
+class ClosesDependentFiles:
+    def __init__(self, f, *closables) -> None:
+        self._f = f
+        self._closables = closables
+
+    def close(self):
+        self._f.close()
+        for closable in self._closables:
+            closable.close()
+
+    def __iter__(self):
+        return self._f
+
+    def __getattr__(self, attr):
+        return getattr(self._f, attr)
+
+    def __dir__(self):
+        ret = list(super().__dir__())
+        ret.extend(dir(self._f))
+        ret.sort()
+        return ret
 
 
 class ReleaseFileDetailsMixin:
@@ -67,12 +91,12 @@ class ReleaseFileDetailsMixin:
 
         # Do not use ReleaseFileCache here, we view download as a singular event
         archive_file = ReleaseFile.objects.get(release_id=release.id, ident=archive_ident)
-        archive = ZipFile(archive_file.file.getfile())
-        fp = archive.open(entry["filename"])
+        archive_file_fp = archive_file.file.getfile()
+        fp = ZipFile(archive_file_fp).open(entry["filename"])
         headers = entry.get("headers", {})
 
         response = FileResponse(
-            fp,
+            ClosesDependentFiles(fp, archive_file_fp),
             content_type=headers.get("content-type", "application/octet-stream"),
         )
         response["Content-Length"] = entry["size"]
@@ -167,7 +191,7 @@ class ReleaseFileDetailsMixin:
 
         file = releasefile.file
 
-        # TODO(dcramer): this doesnt handle a failure from file.deletefile() to
+        # TODO(dcramer): this doesnt handle a failure from file.delete() to
         # the actual deletion of the db row
         releasefile.delete()
         file.delete()
@@ -175,7 +199,13 @@ class ReleaseFileDetailsMixin:
         return Response(status=204)
 
 
+@region_silo_endpoint
 class ProjectReleaseFileDetailsEndpoint(ProjectEndpoint, ReleaseFileDetailsMixin):
+    publish_status = {
+        "DELETE": ApiPublishStatus.UNKNOWN,
+        "GET": ApiPublishStatus.UNKNOWN,
+        "PUT": ApiPublishStatus.UNKNOWN,
+    }
     permission_classes = (ProjectReleasePermission,)
 
     def get(self, request: Request, project, version, file_id) -> Response:
@@ -187,9 +217,9 @@ class ProjectReleaseFileDetailsEndpoint(ProjectEndpoint, ReleaseFileDetailsMixin
         not actually return the contents of the file, just the associated
         metadata.
 
-        :pparam string organization_slug: the slug of the organization the
+        :pparam string organization_id_or_slug: the id or slug of the organization the
                                           release belongs to.
-        :pparam string project_slug: the slug of the project to retrieve the
+        :pparam string project_id_or_slug: the id or slug of the project to retrieve the
                                      file of.
         :pparam string version: the version identifier of the release.
         :pparam string file_id: the ID of the file to retrieve.
@@ -217,9 +247,9 @@ class ProjectReleaseFileDetailsEndpoint(ProjectEndpoint, ReleaseFileDetailsMixin
         Update metadata of an existing file.  Currently only the name of
         the file can be changed.
 
-        :pparam string organization_slug: the slug of the organization the
+        :pparam string organization_id_or_slug: the id or slug of the organization the
                                           release belongs to.
-        :pparam string project_slug: the slug of the project to update the
+        :pparam string project_id_or_slug: the id or slug of the project to update the
                                      file of.
         :pparam string version: the version identifier of the release.
         :pparam string file_id: the ID of the file to update.
@@ -246,9 +276,9 @@ class ProjectReleaseFileDetailsEndpoint(ProjectEndpoint, ReleaseFileDetailsMixin
         This will also remove the physical file from storage, except if it is
         stored as part of an artifact bundle.
 
-        :pparam string organization_slug: the slug of the organization the
+        :pparam string organization_id_or_slug: the id or slug of the organization the
                                           release belongs to.
-        :pparam string project_slug: the slug of the project to delete the
+        :pparam string project_id_or_slug: the id or slug of the project to delete the
                                      file of.
         :pparam string version: the version identifier of the release.
         :pparam string file_id: the ID of the file to delete.

@@ -1,32 +1,34 @@
 import {Frame} from './frame';
-import {WeightedNode} from './weightedNode';
 
-export class CallTreeNode extends WeightedNode {
+export class CallTreeNode {
   readonly frame: Frame;
 
   private locked = false;
+  count: number = 0;
+  isRoot: boolean;
 
-  parent: CallTreeNode | null;
-  recursive: CallTreeNode | null;
+  parent: CallTreeNode | null = null;
+  recursive: CallTreeNode | null = null;
   children: CallTreeNode[] = [];
 
+  totalWeight: number = 0;
+  selfWeight: number = 0;
+
+  aggregate_duration_ns = 0;
+
+  static readonly Root = new CallTreeNode(Frame.Root, null);
+
   constructor(frame: Frame, parent: CallTreeNode | null) {
-    super();
-    this.recursive = null;
     this.parent = parent;
     this.frame = frame;
+    this.isRoot = Frame.Root.name === this.frame.name;
   }
 
-  setParent(parent: CallTreeNode): void {
-    this.parent = parent;
-  }
-
-  setRecursive(node: CallTreeNode): void {
-    this.recursive = node;
-  }
-
-  isRecursive(): boolean {
-    return !!this.recursive;
+  isDirectRecursive(): boolean {
+    if (!this.parent) {
+      return false;
+    }
+    return this.parent.frame === this.frame;
   }
 
   isLocked(): boolean {
@@ -36,10 +38,4 @@ export class CallTreeNode extends WeightedNode {
   lock(): void {
     this.locked = true;
   }
-
-  isRoot(): boolean {
-    return Frame.Root === this.frame;
-  }
-
-  static readonly Root = new CallTreeNode(Frame.Root, null);
 }

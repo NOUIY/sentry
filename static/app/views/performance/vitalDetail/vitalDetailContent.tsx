@@ -1,34 +1,36 @@
-import {Component, Fragment} from 'react';
-import {browserHistory, InjectedRouter} from 'react-router';
+import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import omit from 'lodash/omit';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import Feature from 'sentry/components/acl/feature';
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
 import ButtonBar from 'sentry/components/buttonBar';
 import {getInterval} from 'sentry/components/charts/utils';
 import {CreateAlertFromViewButton} from 'sentry/components/createAlertButton';
-import DatePageFilter from 'sentry/components/datePageFilter';
-import DropdownMenuControlV2 from 'sentry/components/dropdownMenuControlV2';
-import {MenuItemProps} from 'sentry/components/dropdownMenuItemV2';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import SearchBar from 'sentry/components/events/searchBar';
 import * as Layout from 'sentry/components/layouts/thirds';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
+import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilter';
 import * as TeamKeyTransactionManager from 'sentry/components/performance/teamKeyTransactionsManager';
-import ProjectPageFilter from 'sentry/components/projectPageFilter';
 import {IconCheckmark, IconClose} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
-import {generateQueryWithTag} from 'sentry/utils';
+import {space} from 'sentry/styles/space';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
-import EventView from 'sentry/utils/discover/eventView';
-import {WebVital} from 'sentry/utils/discover/fields';
+import type EventView from 'sentry/utils/discover/eventView';
+import {WebVital} from 'sentry/utils/fields';
 import {Browser} from 'sentry/utils/performance/vitals/constants';
 import {decodeScalar} from 'sentry/utils/queryString';
 import Teams from 'sentry/utils/teams';
@@ -61,11 +63,6 @@ type Props = {
   vitalName: WebVital;
 };
 
-type State = {
-  error: string | undefined;
-  incompatibleAlertNotice: React.ReactNode;
-};
-
 function getSummaryConditions(query: string) {
   const parsed = new MutableSearch(query);
   parsed.freeText = [];
@@ -73,14 +70,11 @@ function getSummaryConditions(query: string) {
   return parsed.formatString();
 }
 
-class VitalDetailContent extends Component<Props, State> {
-  state: State = {
-    incompatibleAlertNotice: null,
-    error: undefined,
-  };
+function VitalDetailContent(props: Props) {
+  const [error, setError] = useState<string | undefined>(undefined);
 
-  handleSearch = (query: string) => {
-    const {location} = this.props;
+  function handleSearch(query: string) {
+    const {location} = props;
 
     const queryParams = normalizeDateTimeParams({
       ...(location.query || {}),
@@ -92,43 +86,18 @@ class VitalDetailContent extends Component<Props, State> {
 
     browserHistory.push({
       pathname: location.pathname,
-      query: {
-        ...searchQueryParams,
-        userModified: true,
-      },
+      query: searchQueryParams,
     });
-  };
+  }
 
-  generateTagUrl = (key: string, value: string) => {
-    const {location} = this.props;
-    const query = generateQueryWithTag(location.query, {key, value});
-
-    return {
-      ...location,
-      query,
-    };
-  };
-
-  handleIncompatibleQuery: React.ComponentProps<
-    typeof CreateAlertFromViewButton
-  >['onIncompatibleQuery'] = (incompatibleAlertNoticeFn, _errors) => {
-    const incompatibleAlertNotice = incompatibleAlertNoticeFn(() =>
-      this.setState({incompatibleAlertNotice: null})
-    );
-    this.setState({incompatibleAlertNotice});
-  };
-
-  renderCreateAlertButton() {
-    const {eventView, organization, projects, vitalName} = this.props;
+  function renderCreateAlertButton() {
+    const {eventView, organization, projects, vitalName} = props;
 
     return (
       <CreateAlertFromViewButton
         eventView={eventView}
         organization={organization}
         projects={projects}
-        onIncompatibleQuery={this.handleIncompatibleQuery}
-        onSuccess={() => {}}
-        useAlertWizardV3={organization.features.includes('alert-wizard-v3')}
         aria-label={t('Create Alert')}
         alertType={vitalAlertTypes[vitalName]}
         referrer="performance"
@@ -136,8 +105,8 @@ class VitalDetailContent extends Component<Props, State> {
     );
   }
 
-  renderVitalSwitcher() {
-    const {vitalName, location} = this.props;
+  function renderVitalSwitcher() {
+    const {vitalName, location, organization} = props;
 
     const position = FRONTEND_VITALS.indexOf(vitalName);
 
@@ -159,6 +128,12 @@ class VitalDetailContent extends Component<Props, State> {
                 cursor: undefined,
               },
             });
+
+            trackAnalytics('performance_views.vital_detail.switch_vital', {
+              organization,
+              from_vital: vitalAbbreviations[vitalName] ?? 'undefined',
+              to_vital: vitalAbbreviations[newVitalName] ?? 'undefined',
+            });
           },
         };
 
@@ -174,25 +149,19 @@ class VitalDetailContent extends Component<Props, State> {
     );
 
     return (
-      <DropdownMenuControlV2
+      <DropdownMenu
         items={items}
         triggerLabel={vitalAbbreviations[vitalName]}
         triggerProps={{
           'aria-label': `Web Vitals: ${vitalAbbreviations[vitalName]}`,
           prefix: t('Web Vitals'),
         }}
-        placement="bottom left"
+        position="bottom-start"
       />
     );
   }
 
-  setError = (error: string | undefined) => {
-    this.setState({error});
-  };
-
-  renderError() {
-    const {error} = this.state;
-
+  function renderError() {
     if (!error) {
       return null;
     }
@@ -204,8 +173,8 @@ class VitalDetailContent extends Component<Props, State> {
     );
   }
 
-  renderContent(vital: WebVital) {
-    const {location, organization, eventView, projects} = this.props;
+  function renderContent(vital: WebVital) {
+    const {location, organization, eventView, projects} = props;
 
     const {fields, start, end, statsPeriod, environment, project} = eventView;
 
@@ -226,7 +195,7 @@ class VitalDetailContent extends Component<Props, State> {
           <PageFilterBar condensed>
             <ProjectPageFilter />
             <EnvironmentPageFilter />
-            <DatePageFilter alignDropdown="left" />
+            <DatePageFilter />
           </PageFilterBar>
           <SearchBar
             searchSource="performance_vitals"
@@ -234,7 +203,7 @@ class VitalDetailContent extends Component<Props, State> {
             projectIds={project}
             query={query}
             fields={fields}
-            onSearch={this.handleSearch}
+            onSearch={handleSearch}
           />
         </FilterActions>
         <VitalChart
@@ -274,7 +243,7 @@ class VitalDetailContent extends Component<Props, State> {
                   projects={projects}
                   organization={organization}
                   location={location}
-                  setError={this.setError}
+                  setError={setError}
                   summaryConditions={summaryConditions}
                 />
               </TeamKeyTransactionManager.Provider>
@@ -287,57 +256,47 @@ class VitalDetailContent extends Component<Props, State> {
     );
   }
 
-  render() {
-    const {location, organization, vitalName} = this.props;
-    const {incompatibleAlertNotice} = this.state;
+  const {location, organization, vitalName} = props;
 
-    const vital = vitalName || WebVital.LCP;
+  const vital = vitalName || WebVital.LCP;
 
-    return (
-      <Fragment>
-        <Layout.Header>
-          <Layout.HeaderContent>
-            <Breadcrumb
-              organization={organization}
-              location={location}
-              vitalName={vital}
-            />
-            <Layout.Title>{vitalMap[vital]}</Layout.Title>
-          </Layout.HeaderContent>
-          <Layout.HeaderActions>
-            <ButtonBar gap={1}>
-              {this.renderVitalSwitcher()}
-              <Feature organization={organization} features={['incidents']}>
-                {({hasFeature}) => hasFeature && this.renderCreateAlertButton()}
-              </Feature>
-            </ButtonBar>
-          </Layout.HeaderActions>
-        </Layout.Header>
-        <Layout.Body>
-          {this.renderError()}
-          {incompatibleAlertNotice && (
-            <Layout.Main fullWidth>{incompatibleAlertNotice}</Layout.Main>
-          )}
-          <Layout.Main fullWidth>
-            <StyledDescription>{vitalDescription[vitalName]}</StyledDescription>
-            <SupportedBrowsers>
-              {Object.values(Browser).map(browser => (
-                <BrowserItem key={browser}>
-                  {vitalSupportedBrowsers[vitalName]?.includes(browser) ? (
-                    <IconCheckmark color="green300" size="sm" />
-                  ) : (
-                    <IconClose color="red300" size="sm" />
-                  )}
-                  {browser}
-                </BrowserItem>
-              ))}
-            </SupportedBrowsers>
-            {this.renderContent(vital)}
-          </Layout.Main>
-        </Layout.Body>
-      </Fragment>
-    );
-  }
+  return (
+    <Fragment>
+      <Layout.Header>
+        <Layout.HeaderContent>
+          <Breadcrumb organization={organization} location={location} vitalName={vital} />
+          <Layout.Title>{vitalMap[vital]}</Layout.Title>
+        </Layout.HeaderContent>
+        <Layout.HeaderActions>
+          <ButtonBar gap={1}>
+            {renderVitalSwitcher()}
+            <Feature organization={organization} features="incidents">
+              {({hasFeature}) => hasFeature && renderCreateAlertButton()}
+            </Feature>
+          </ButtonBar>
+        </Layout.HeaderActions>
+      </Layout.Header>
+      <Layout.Body>
+        {renderError()}
+        <Layout.Main fullWidth>
+          <StyledDescription>{vitalDescription[vitalName]}</StyledDescription>
+          <SupportedBrowsers>
+            {Object.values(Browser).map(browser => (
+              <BrowserItem key={browser}>
+                {vitalSupportedBrowsers[vitalName]?.includes(browser) ? (
+                  <IconCheckmark color="successText" size="sm" />
+                ) : (
+                  <IconClose color="dangerText" size="sm" />
+                )}
+                {browser}
+              </BrowserItem>
+            ))}
+          </SupportedBrowsers>
+          {renderContent(vital)}
+        </Layout.Main>
+      </Layout.Body>
+    </Fragment>
+  );
 }
 
 export default withProjects(VitalDetailContent);
@@ -368,7 +327,7 @@ const FilterActions = styled('div')`
   gap: ${space(2)};
   margin-bottom: ${space(2)};
 
-  @media (min-width: ${p => p.theme.breakpoints[0]}) {
+  @media (min-width: ${p => p.theme.breakpoints.small}) {
     grid-template-columns: auto 1fr;
   }
 `;

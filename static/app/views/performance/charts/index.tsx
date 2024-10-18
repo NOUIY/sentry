@@ -1,20 +1,20 @@
 import {Component, Fragment} from 'react';
-import {InjectedRouter} from 'react-router';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import EventsRequest from 'sentry/components/charts/eventsRequest';
 import LoadingPanel from 'sentry/components/charts/loadingPanel';
 import {HeaderTitle} from 'sentry/components/charts/styles';
 import {getInterval} from 'sentry/components/charts/utils';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
-import {Panel} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
 import Placeholder from 'sentry/components/placeholder';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {IconWarning} from 'sentry/icons';
-import {Organization} from 'sentry/types';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import getDynamicText from 'sentry/utils/getDynamicText';
 import withApi from 'sentry/utils/withApi';
 
@@ -43,7 +43,7 @@ class Container extends Component<Props> {
   }
 
   render() {
-    const {api, organization, location, eventView, router} = this.props;
+    const {api, organization, location, eventView} = this.props;
 
     // construct request parameters for fetching chart data
     const globalSelection = eventView.getPageFilters();
@@ -115,7 +115,6 @@ class Container extends Component<Props> {
                       <Chart
                         data={results}
                         loading={loading || reloading}
-                        router={router}
                         statsPeriod={globalSelection.datetime.period}
                         start={start}
                         end={end}

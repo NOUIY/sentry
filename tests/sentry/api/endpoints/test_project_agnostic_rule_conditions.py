@@ -1,6 +1,6 @@
 from django.urls import reverse
 
-from sentry.testutils import APITestCase
+from sentry.testutils.cases import APITestCase
 
 
 class ProjectAgnosticRuleConditionsTest(APITestCase):
@@ -11,4 +11,4 @@ class ProjectAgnosticRuleConditionsTest(APITestCase):
         response = self.client.get(url, format="json")
 
         assert response.status_code == 200, response.content
-        assert len(response.data) == 10
+        assert len(response.data) == 12

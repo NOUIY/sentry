@@ -1,21 +1,24 @@
-import {InjectedRouter} from 'react-router';
 import {useTheme} from '@emotion/react';
 import max from 'lodash/max';
 import min from 'lodash/min';
 
-import {AreaChart, AreaChartProps} from 'sentry/components/charts/areaChart';
+import type {AreaChartProps} from 'sentry/components/charts/areaChart';
+import {AreaChart} from 'sentry/components/charts/areaChart';
 import ChartZoom from 'sentry/components/charts/chartZoom';
 import {LineChart} from 'sentry/components/charts/lineChart';
-import {DateString} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
-import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
+import type {DateString} from 'sentry/types/core';
+import type {Series} from 'sentry/types/echarts';
+import {
+  axisLabelFormatter,
+  getDurationUnit,
+  tooltipFormatter,
+} from 'sentry/utils/discover/charts';
 import {aggregateOutputType} from 'sentry/utils/discover/fields';
 
 type Props = {
   data: Series[];
   end: DateString;
   loading: boolean;
-  router: InjectedRouter;
   start: DateString;
   statsPeriod: string | null | undefined;
   utc: boolean;
@@ -30,7 +33,7 @@ type Props = {
 };
 
 // adapted from https://stackoverflow.com/questions/11397239/rounding-up-for-a-graph-maximum
-function computeAxisMax(data) {
+export function computeAxisMax(data: Series[]) {
   // assumes min is 0
   const valuesDict = data.map(value => value.data.map(point => point.value));
   const maxValue = max(valuesDict.map(max)) as number;
@@ -60,7 +63,6 @@ function computeAxisMax(data) {
 function Chart({
   data,
   previousData,
-  router,
   statsPeriod,
   start,
   end,
@@ -101,14 +103,22 @@ function Chart({
         },
       ];
 
+  const durationUnit = getDurationUnit(data);
+
   const yAxes = disableMultiAxis
     ? [
         {
+          minInterval: durationUnit,
           splitNumber: definedAxisTicks,
           axisLabel: {
             color: theme.chartLabel,
             formatter(value: number) {
-              return axisLabelFormatter(value, data[0].seriesName);
+              return axisLabelFormatter(
+                value,
+                aggregateOutputType(data[0].seriesName),
+                undefined,
+                durationUnit
+              );
             },
           },
         },
@@ -117,11 +127,17 @@ function Chart({
         {
           gridIndex: 0,
           scale: true,
+          minInterval: durationUnit,
           max: dataMax,
           axisLabel: {
             color: theme.chartLabel,
             formatter(value: number) {
-              return axisLabelFormatter(value, data[0].seriesName);
+              return axisLabelFormatter(
+                value,
+                aggregateOutputType(data[0].seriesName),
+                undefined,
+                durationUnit
+              );
             },
           },
         },
@@ -129,10 +145,16 @@ function Chart({
           gridIndex: 1,
           scale: true,
           max: dataMax,
+          minInterval: durationUnit,
           axisLabel: {
             color: theme.chartLabel,
             formatter(value: number) {
-              return axisLabelFormatter(value, data[1].seriesName);
+              return axisLabelFormatter(
+                value,
+                aggregateOutputType(data[1].seriesName),
+                undefined,
+                durationUnit
+              );
             },
           },
         },
@@ -176,7 +198,7 @@ function Chart({
       valueFormatter: (value, seriesName) => {
         return tooltipFormatter(
           value,
-          data && data.length ? data[0].seriesName : seriesName
+          aggregateOutputType(data?.length ? data[0].seriesName : seriesName)
         );
       },
       nameFormatter(value: string) {
@@ -207,7 +229,6 @@ function Chart({
 
   return (
     <ChartZoom
-      router={router}
       period={statsPeriod}
       start={start}
       end={end}

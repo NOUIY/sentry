@@ -1,8 +1,8 @@
 from django.test.client import RequestFactory
 from django.urls import reverse
 
-from sentry.testutils import SCIMTestCase
-from tests.apidocs.util import APIDocsTestCase
+from fixtures.apidocs_test_case import APIDocsTestCase
+from sentry.testutils.cases import SCIMTestCase
 
 
 class SCIMTeamIndexDocs(APIDocsTestCase, SCIMTestCase):
@@ -12,7 +12,7 @@ class SCIMTeamIndexDocs(APIDocsTestCase, SCIMTestCase):
         self.team = self.create_team(organization=self.organization, members=[self.user])
         self.url = reverse(
             "sentry-api-0-organization-scim-team-index",
-            kwargs={"organization_slug": self.organization.slug},
+            kwargs={"organization_id_or_slug": self.organization.slug},
         )
 
     def test_get(self):

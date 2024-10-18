@@ -1,8 +1,8 @@
-# Ignore everything
-*
-
-!/docker
-!/package.json
-!/yarn.lock
-!/dist/requirements.txt
-!/dist/*.whl
+/.devenv
+/.dockerignore
+/.git
+/.gitignore
+/.venv
+/fixtures
+/node_modules
+/tests

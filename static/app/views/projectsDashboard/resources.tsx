@@ -1,41 +1,31 @@
-import {useEffect} from 'react';
 import styled from '@emotion/styled';
 
 import breadcrumbsImg from 'sentry-images/spot/breadcrumbs-generic.svg';
 import docsImg from 'sentry-images/spot/code-arguments-tags-mirrored.svg';
 import releasesImg from 'sentry-images/spot/releases.svg';
 
-import PageHeading from 'sentry/components/pageHeading';
+import * as Layout from 'sentry/components/layouts/thirds';
 import ResourceCard from 'sentry/components/resourceCard';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {trackAnalyticsEvent} from 'sentry/utils/analytics';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
 
 type Props = {
   organization: Organization;
 };
 
-function Resources({organization}: Props) {
-  useEffect(() => {
-    trackAnalyticsEvent({
-      eventKey: 'orgdash.resources_shown',
-      eventName: 'Projects Dashboard: Resources Shown',
-      organization_id: organization.id,
-    });
-  }, []);
-
+function Resources(_props: Props) {
   return (
     <ResourcesWrapper data-test-id="resources">
-      <PageHeading withMargins>{t('Resources')}</PageHeading>
+      <Layout.Title withMargins>{t('Resources')}</Layout.Title>
       <ResourceCards>
         <ResourceCard
-          link="https://blog.sentry.io/2018/03/06/the-sentry-workflow"
+          link="https://docs.sentry.io/product/releases/"
           imgUrl={releasesImg}
           title={t('The Sentry Workflow')}
         />
         <ResourceCard
-          link="https://sentry.io/vs/logging/"
+          link="https://docs.sentry.io/product/issues/"
           imgUrl={breadcrumbsImg}
           title={t('Sentry vs Logging')}
         />
@@ -49,7 +39,7 @@ export default Resources;
 
 const ResourcesWrapper = styled('div')`
   border-top: 1px solid ${p => p.theme.border};
-  padding: 25px 30px 10px 30px;
+  padding: ${space(2)} ${space(4)};
 `;
 
 const ResourceCards = styled('div')`
@@ -57,7 +47,7 @@ const ResourceCards = styled('div')`
   grid-template-columns: minmax(100px, 1fr);
   gap: ${space(3)};
 
-  @media (min-width: ${p => p.theme.breakpoints[1]}) {
+  @media (min-width: ${p => p.theme.breakpoints.medium}) {
     grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
   }
 `;

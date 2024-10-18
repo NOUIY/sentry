@@ -1,18 +1,19 @@
+from functools import cached_property
 from urllib.parse import parse_qs, urlparse
 
 import responses
 from django.urls import reverse
-from exam import fixture
 
-from sentry.models import Integration
-from sentry.testutils import APITestCase
-from tests.fixtures.integrations.mock_service import StubService
+from fixtures.integrations.stub_service import StubService
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.silo import control_silo_test
 
 
+@control_silo_test
 class JiraSearchEndpointTest(APITestCase):
-    @fixture
+    @cached_property
     def integration(self):
-        integration = Integration.objects.create(
+        integration = self.create_provider_integration(
             provider="jira",
             name="Jira Cloud",
             metadata={
@@ -32,7 +33,6 @@ class JiraSearchEndpointTest(APITestCase):
             "https://example.atlassian.net/rest/api/2/search/",
             body=StubService.get_stub_json("jira", "search_response.json"),
             content_type="json",
-            match_querystring=False,
         )
         org = self.organization
         self.login_as(self.user)
@@ -55,7 +55,6 @@ class JiraSearchEndpointTest(APITestCase):
             responses.GET,
             "https://example.atlassian.net/rest/api/2/search/",
             callback=responder,
-            match_querystring=False,
         )
         org = self.organization
         self.login_as(self.user)
@@ -77,7 +76,6 @@ class JiraSearchEndpointTest(APITestCase):
             "https://example.atlassian.net/rest/api/2/search/",
             status=500,
             body="Totally broken",
-            match_querystring=False,
         )
         org = self.organization
         self.login_as(self.user)
@@ -97,7 +95,6 @@ class JiraSearchEndpointTest(APITestCase):
             responses.GET,
             "https://example.atlassian.net/rest/api/2/project",
             json=[{"key": "HSP", "id": "10000"}],
-            match_querystring=False,
         )
 
         def responder(request):
@@ -112,7 +109,6 @@ class JiraSearchEndpointTest(APITestCase):
             "https://example.atlassian.net/rest/api/2/user/assignable/search",
             callback=responder,
             content_type="json",
-            match_querystring=False,
         )
         org = self.organization
         self.login_as(self.user)
@@ -129,14 +125,12 @@ class JiraSearchEndpointTest(APITestCase):
             responses.GET,
             "https://example.atlassian.net/rest/api/2/project",
             json=[{"key": "HSP", "id": "10000"}],
-            match_querystring=False,
         )
         responses.add(
             responses.GET,
             "https://example.atlassian.net/rest/api/2/user/assignable/search",
             status=500,
             body="Bad things",
-            match_querystring=False,
         )
         org = self.organization
         self.login_as(self.user)
@@ -159,7 +153,6 @@ class JiraSearchEndpointTest(APITestCase):
             "https://example.atlassian.net/rest/api/2/jql/autocompletedata/suggestions",
             callback=responder,
             content_type="application/json",
-            match_querystring=False,
         )
         org = self.organization
         self.login_as(self.user)
@@ -177,7 +170,6 @@ class JiraSearchEndpointTest(APITestCase):
             "https://example.atlassian.net/rest/api/2/jql/autocompletedata/suggestions",
             status=500,
             body="Totally broken",
-            match_querystring=False,
         )
         org = self.organization
         self.login_as(self.user)

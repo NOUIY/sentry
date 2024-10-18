@@ -1,13 +1,14 @@
-from django.urls import reverse
-from exam import fixture
+from functools import cached_property
 
-from sentry.testutils import PluginTestCase
-from sentry.utils import json
+import orjson
+from django.urls import reverse
+
+from sentry.testutils.cases import PluginTestCase
 from sentry_plugins.pivotal.plugin import PivotalPlugin
 
 
 class PivotalPluginTest(PluginTestCase):
-    @fixture
+    @cached_property
     def plugin(self):
         return PivotalPlugin()
 
@@ -26,10 +27,10 @@ class PivotalPluginTest(PluginTestCase):
         assert self.plugin.get_issue_url(group, 1) == "https://www.pivotaltracker.com/story/show/1"
 
     def test_is_configured(self):
-        assert self.plugin.is_configured(None, self.project) is False
+        assert self.plugin.is_configured(self.project) is False
         self.plugin.set_option("token", "1", self.project)
         self.plugin.set_option("project", "1", self.project)
-        assert self.plugin.is_configured(None, self.project) is True
+        assert self.plugin.is_configured(self.project) is True
 
     def test_no_secrets(self):
         self.user = self.create_user("foo@example.com")
@@ -43,7 +44,7 @@ class PivotalPluginTest(PluginTestCase):
             args=[self.org.slug, self.project.slug, "pivotal"],
         )
         res = self.client.get(url)
-        config = json.loads(res.content)["config"]
+        config = orjson.loads(res.content)["config"]
         token_config = [item for item in config if item["name"] == "token"][0]
         assert token_config.get("type") == "secret"
         assert token_config.get("value") is None

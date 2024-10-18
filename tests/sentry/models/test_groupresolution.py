@@ -2,8 +2,8 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from sentry.models import GroupResolution
-from sentry.testutils import TestCase
+from sentry.models.groupresolution import GroupResolution
+from sentry.testutils.cases import TestCase
 
 
 class GroupResolutionTest(TestCase):

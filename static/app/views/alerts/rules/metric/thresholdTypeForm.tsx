@@ -1,100 +1,117 @@
 import styled from '@emotion/styled';
 
 import Feature from 'sentry/components/acl/feature';
-import RadioGroup from 'sentry/components/forms/controls/radioGroup';
-import SelectControl from 'sentry/components/forms/selectControl';
-import ListItem from 'sentry/components/list/listItem';
+import FeatureBadge from 'sentry/components/badge/featureBadge';
+import RadioGroup, {type RadioOption} from 'sentry/components/forms/controls/radioGroup';
+import SelectControl from 'sentry/components/forms/controls/selectControl';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
 import {COMPARISON_DELTA_OPTIONS} from 'sentry/views/alerts/rules/metric/constants';
+import type {MetricAlertType} from 'sentry/views/alerts/wizard/options';
 
 import {isCrashFreeAlert} from './utils/isCrashFreeAlert';
-import {AlertRuleComparisonType, Dataset} from './types';
+import type {Dataset} from './types';
+import {AlertRuleComparisonType} from './types';
 
 type Props = {
+  alertType: MetricAlertType;
   comparisonType: AlertRuleComparisonType;
   dataset: Dataset;
   disabled: boolean;
-  hasAlertWizardV3: boolean;
   onComparisonDeltaChange: (value: number) => void;
   onComparisonTypeChange: (value: AlertRuleComparisonType) => void;
   organization: Organization;
   comparisonDelta?: number;
 };
 
-const ThresholdTypeForm = ({
+function ThresholdTypeForm({
+  alertType,
   organization,
   dataset,
   disabled,
   comparisonType,
   onComparisonDeltaChange,
   onComparisonTypeChange,
-  hasAlertWizardV3,
   comparisonDelta,
-}: Props) =>
-  isCrashFreeAlert(dataset) ? null : (
-    <Feature features={['organizations:change-alerts']} organization={organization}>
-      {!hasAlertWizardV3 && <StyledListItem>{t('Select threshold type')}</StyledListItem>}
-      <FormRow hasAlertWizardV3={hasAlertWizardV3}>
+}: Props) {
+  if (isCrashFreeAlert(dataset)) {
+    return null;
+  }
+  const validAnomalyDetectionAlertTypes = new Set([
+    'num_errors',
+    'users_experiencing_errors',
+    'throughput',
+    'trans_duration',
+    'failure_rate',
+    'lcp',
+    'fid',
+    'cls',
+    'custom_transactions',
+    'insights_metrics',
+  ]);
+
+  const hasAnomalyDetection =
+    organization.features.includes('anomaly-detection-alerts') &&
+    organization.features.includes('anomaly-detection-rollout');
+
+  const thresholdTypeChoices: RadioOption[] = [
+    [AlertRuleComparisonType.COUNT, 'Static: above or below {x}'],
+    [
+      AlertRuleComparisonType.CHANGE,
+      comparisonType !== AlertRuleComparisonType.CHANGE ? (
+        t('Percent Change: {x%} higher or lower compared to previous period')
+      ) : (
+        // Prevent default to avoid dropdown menu closing on click
+        <ComparisonContainer onClick={e => e.preventDefault()}>
+          {t('Percent Change: {x%} higher or lower compared to')}
+          <SelectControl
+            name="comparisonDelta"
+            styles={{
+              container: (provided: {[x: string]: string | number | boolean}) => ({
+                ...provided,
+                marginLeft: space(1),
+              }),
+              control: (provided: {[x: string]: string | number | boolean}) => ({
+                ...provided,
+                minHeight: 30,
+                minWidth: 500,
+                maxWidth: 1000,
+              }),
+              valueContainer: (provided: {[x: string]: string | number | boolean}) => ({
+                ...provided,
+                padding: 0,
+              }),
+              singleValue: (provided: {[x: string]: string | number | boolean}) => ({
+                ...provided,
+              }),
+            }}
+            value={comparisonDelta}
+            onChange={({value}) => onComparisonDeltaChange(value)}
+            options={COMPARISON_DELTA_OPTIONS}
+            required={comparisonType === AlertRuleComparisonType.CHANGE}
+          />
+        </ComparisonContainer>
+      ),
+    ],
+  ];
+
+  if (hasAnomalyDetection && validAnomalyDetectionAlertTypes.has(alertType)) {
+    thresholdTypeChoices.push([
+      AlertRuleComparisonType.DYNAMIC,
+      <ComparisonContainer key="Dynamic">
+        {t('Anomaly: whenever values are outside of expected bounds')}
+        <FeatureBadge type="beta" tooltipProps={{isHoverable: true}} />
+      </ComparisonContainer>,
+    ] as RadioOption);
+  }
+
+  return (
+    <Feature features="organizations:change-alerts" organization={organization}>
+      <FormRow>
         <StyledRadioGroup
-          hasAlertWizardV3={hasAlertWizardV3}
           disabled={disabled}
-          choices={[
-            [
-              AlertRuleComparisonType.COUNT,
-              hasAlertWizardV3 ? 'Static: above or below {x}' : 'Count',
-            ],
-            [
-              AlertRuleComparisonType.CHANGE,
-              hasAlertWizardV3 ? (
-                comparisonType === AlertRuleComparisonType.COUNT ? (
-                  t('Percent Change: {x%} higher or lower compared to previous period')
-                ) : (
-                  // Prevent default to avoid dropdown menu closing on click
-                  <ComparisonContainer onClick={e => e.preventDefault()}>
-                    {t('Percent Change: {x%} higher or lower compared to')}
-                    <SelectControl
-                      name="comparisonDelta"
-                      styles={{
-                        container: (provided: {
-                          [x: string]: string | number | boolean;
-                        }) => ({
-                          ...provided,
-                          marginLeft: space(1),
-                        }),
-                        control: (provided: {
-                          [x: string]: string | number | boolean;
-                        }) => ({
-                          ...provided,
-                          minHeight: 30,
-                          minWidth: 500,
-                          maxWidth: 1000,
-                        }),
-                        valueContainer: (provided: {
-                          [x: string]: string | number | boolean;
-                        }) => ({
-                          ...provided,
-                          padding: 0,
-                        }),
-                        singleValue: (provided: {
-                          [x: string]: string | number | boolean;
-                        }) => ({
-                          ...provided,
-                        }),
-                      }}
-                      value={comparisonDelta}
-                      onChange={({value}) => onComparisonDeltaChange(value)}
-                      options={COMPARISON_DELTA_OPTIONS}
-                      required={comparisonType === AlertRuleComparisonType.CHANGE}
-                    />
-                  </ComparisonContainer>
-                )
-              ) : (
-                t('Percent Change')
-              ),
-            ],
-          ]}
+          choices={thresholdTypeChoices}
           value={comparisonType}
           label={t('Threshold Type')}
           onChange={value => onComparisonTypeChange(value as AlertRuleComparisonType)}
@@ -102,19 +119,14 @@ const ThresholdTypeForm = ({
       </FormRow>
     </Feature>
   );
+}
 
-const StyledListItem = styled(ListItem)`
-  margin-bottom: ${space(1)};
-  font-size: ${p => p.theme.fontSizeExtraLarge};
-  line-height: 1.3;
-`;
-
-const FormRow = styled('div')<{hasAlertWizardV3: boolean}>`
+const FormRow = styled('div')`
   display: flex;
   flex-direction: row;
   align-items: center;
   flex-wrap: wrap;
-  margin-bottom: ${p => (p.hasAlertWizardV3 ? space(2) : space(4))};
+  margin-bottom: ${space(2)};
 `;
 
 const ComparisonContainer = styled('div')`
@@ -123,12 +135,12 @@ const ComparisonContainer = styled('div')`
   align-items: center;
 `;
 
-const StyledRadioGroup = styled(RadioGroup)<{hasAlertWizardV3: boolean}>`
+const StyledRadioGroup = styled(RadioGroup)`
   flex: 1;
 
-  ${p => p.hasAlertWizardV3 && 'gap: 0;'}
+  gap: 0;
   & > label {
-    ${p => p.hasAlertWizardV3 && 'height: 33px;'}
+    height: 33px;
   }
 `;
 

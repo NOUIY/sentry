@@ -1,12 +1,12 @@
 import {useState} from 'react';
 import styled from '@emotion/styled';
 
-import AnnotatedText from 'sentry/components/events/meta/annotatedText';
-import Tooltip from 'sentry/components/tooltip';
+import {AnnotatedText} from 'sentry/components/events/meta/annotatedText';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconSliders} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Meta} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Meta} from 'sentry/types/group';
 
 const REGISTER_VIEWS = [t('Hexadecimal'), t('Numeric')];
 
@@ -19,7 +19,7 @@ type State = {
   view: number;
 };
 
-function Value({meta, value}: Props) {
+export function FrameRegisterValue({meta, value}: Props) {
   const [state, setState] = useState<State>({view: 0});
 
   function formatValue() {
@@ -34,7 +34,7 @@ function Value({meta, value}: Props) {
           return `${parsed}`;
         case 0:
         default:
-          return `0x${('0000000000000000' + parsed.toString(16)).substr(-16)}`;
+          return `0x${parsed.toString(16).padStart(16, '0')}`;
       }
     } catch {
       return value;
@@ -42,7 +42,7 @@ function Value({meta, value}: Props) {
   }
 
   return (
-    <InlinePre data-test-id="frame-registers-value">
+    <InlinePre>
       <AnnotatedText value={formatValue()} meta={meta} />
       <StyledTooltip
         title={REGISTER_VIEWS[state.view]}
@@ -53,13 +53,12 @@ function Value({meta, value}: Props) {
             setState({view: (state.view + 1) % REGISTER_VIEWS.length});
           }}
           size="xs"
+          aria-label={t('Toggle register value format')}
         />
       </StyledTooltip>
     </InlinePre>
   );
 }
-
-export default Value;
 
 const StyledTooltip = styled(Tooltip)`
   align-items: center;

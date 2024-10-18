@@ -1,6 +1,5 @@
+import type {Theme} from '@emotion/react';
 import {css, keyframes} from '@emotion/react';
-
-import {Theme} from 'sentry/utils/theme';
 
 const pulse = keyframes`
   0% {

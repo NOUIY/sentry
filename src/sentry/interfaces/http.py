@@ -1,22 +1,13 @@
-from sentry.utils.compat import map
-
 __all__ = ("Http",)
 
-import re
 from urllib.parse import parse_qsl
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from sentry.interfaces.base import Interface
-from sentry.utils import json
 from sentry.utils.json import prune_empty_keys
 from sentry.utils.safe import get_path, safe_urlencode
-from sentry.utils.strings import to_unicode
 from sentry.web.helpers import render_to_string
-
-# Instead of relying on a list of hardcoded methods, just loosely match
-# against a pattern.
-http_method_re = re.compile(r"^[A-Z\-_]{3,32}$")
 
 
 def format_headers(value):
@@ -55,7 +46,7 @@ def format_cookies(value):
     if isinstance(value, dict):
         value = value.items()
 
-    return [map(fix_broken_encoding, (k.strip(), v)) for k, v in value]
+    return [(fix_broken_encoding(k.strip()), fix_broken_encoding(v)) for k, v in value]
 
 
 def fix_broken_encoding(value):
@@ -68,10 +59,6 @@ def fix_broken_encoding(value):
     if isinstance(value, bytes):
         value = value.decode("utf8", errors="replace")
     return value
-
-
-def jsonify(value):
-    return to_unicode(value) if isinstance(value, str) else json.dumps(value)
 
 
 class Http(Interface):
@@ -115,6 +102,7 @@ class Http(Interface):
     def to_python(cls, data, **kwargs):
         data.setdefault("query_string", [])
         for key in (
+            "api_target",
             "method",
             "url",
             "fragment",
@@ -131,6 +119,7 @@ class Http(Interface):
     def to_json(self):
         return prune_empty_keys(
             {
+                "apiTarget": self.api_target,
                 "method": self.method,
                 "url": self.url,
                 "query_string": self.query_string or None,
@@ -182,6 +171,7 @@ class Http(Interface):
             headers = sorted(self.headers.items())
 
         data = {
+            "apiTarget": self.api_target,
             "method": self.method,
             "url": self.url,
             "query": self.query_string,
@@ -198,27 +188,14 @@ class Http(Interface):
         if is_public:
             return None
 
-        headers = meta.get("headers")
-        if headers:
-            headers_meta = headers.pop("", None)
-            headers = {str(i): {"1": h[1]} for i, h in enumerate(sorted(headers.items()))}
-            if headers_meta:
-                headers[""] = headers_meta
-
-        cookies = meta.get("cookies")
-        if cookies:
-            cookies_meta = cookies.pop("", None)
-            cookies = {str(i): {"1": h[1]} for i, h in enumerate(sorted(cookies.items()))}
-            if cookies_meta:
-                cookies[""] = cookies_meta
-
         return {
             "": meta.get(""),
+            "apiTarget": meta.get("api_target"),
             "method": meta.get("method"),
             "url": meta.get("url"),
             "query": meta.get("query_string"),
             "data": meta.get("data"),
-            "headers": headers,
-            "cookies": cookies,
+            "headers": meta.get("headers"),
+            "cookies": meta.get("cookies"),
             "env": meta.get("env"),
         }

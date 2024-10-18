@@ -1,5 +1,5 @@
-from sentry.models import ServiceHook
-from sentry.testutils import APITestCase
+from sentry.sentry_apps.models.servicehook import ServiceHook
+from sentry.testutils.cases import APITestCase
 
 
 class ProjectServiceHookDetailsTest(APITestCase):

@@ -4,14 +4,14 @@ from unittest import mock
 
 from django.http import HttpResponse
 from django.urls import reverse
-from freezegun import freeze_time
 
 from sentry.api.endpoints.organization_transaction_anomaly_detection import get_time_params
-from sentry.testutils import APITestCase, SnubaTestCase
+from sentry.testutils.cases import APITestCase, SnubaTestCase
+from sentry.testutils.helpers.datetime import freeze_time
 
 
 @freeze_time("2022-02-21")
-class OrganizationTransactionAnomalyDetectionEndpoint(APITestCase, SnubaTestCase):
+class OrganizationTransactionAnomalyDetectionEndpointTest(APITestCase, SnubaTestCase):
     endpoint = "sentry-api-0-organization-transaction-anomaly-detection"
 
     def setUp(self):
@@ -24,7 +24,7 @@ class OrganizationTransactionAnomalyDetectionEndpoint(APITestCase, SnubaTestCase
     def do_request(self, data, url=None, features=None):
         self.url = reverse(
             "sentry-api-0-organization-transaction-anomaly-detection",
-            kwargs={"organization_slug": self.project.organization.slug},
+            kwargs={"organization_id_or_slug": self.project.organization.slug},
         )
 
         if features is None:
@@ -39,7 +39,7 @@ class OrganizationTransactionAnomalyDetectionEndpoint(APITestCase, SnubaTestCase
     def test_without_feature(self):
         self.url = reverse(
             "sentry-api-0-organization-transaction-anomaly-detection",
-            kwargs={"organization_slug": self.project.organization.slug},
+            kwargs={"organization_id_or_slug": self.project.organization.slug},
         )
 
         response = self.client.get(self.url, data={}, format="json")
@@ -64,14 +64,6 @@ class OrganizationTransactionAnomalyDetectionEndpoint(APITestCase, SnubaTestCase
             "query": "transaction.duration:>5s event.type:transaction",
             "data": self.snuba_raw_data,
             "granularity": 600,
-            "params": {
-                "start": datetime(2022, 1, 25, 12, 0, tzinfo=timezone.utc),
-                "end": datetime(2022, 2, 8, 12, 0, tzinfo=timezone.utc),
-                "project_id": [self.project.id],
-                "organization_id": self.organization.id,
-                "user_id": self.user.id,
-                "team_id": [self.team.id],
-            },
             "start": "2022-02-01 00:00:00",
             "end": "2022-02-02 00:00:00",
         }
@@ -98,14 +90,6 @@ class OrganizationTransactionAnomalyDetectionEndpoint(APITestCase, SnubaTestCase
             "query": "transaction.duration:>5s event.type:transaction",
             "data": self.snuba_raw_data,
             "granularity": 600,
-            "params": {
-                "start": datetime(2022, 1, 28, 3, 21, 34, tzinfo=timezone.utc),
-                "end": datetime(2022, 2, 11, 3, 21, 34, tzinfo=timezone.utc),
-                "project_id": [self.project.id],
-                "organization_id": self.organization.id,
-                "user_id": self.user.id,
-                "team_id": [self.team.id],
-            },
             "start": "2022-02-10 14:21:34",
             "end": "2022-02-11 03:21:34",
         }
@@ -131,14 +115,6 @@ class OrganizationTransactionAnomalyDetectionEndpoint(APITestCase, SnubaTestCase
             "query": "event.type:transaction",
             "data": self.snuba_raw_data,
             "granularity": 1200,
-            "params": {
-                "start": datetime(2021, 12, 20, 0, 0, tzinfo=timezone.utc),
-                "end": datetime(2022, 1, 17, 0, 0, tzinfo=timezone.utc),
-                "project_id": [self.project.id],
-                "organization_id": self.organization.id,
-                "user_id": self.user.id,
-                "team_id": [self.team.id],
-            },
             "start": "2022-01-01 00:00:00",
             "end": "2022-01-05 00:00:00",
         }

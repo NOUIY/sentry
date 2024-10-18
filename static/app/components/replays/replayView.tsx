@@ -1,83 +1,115 @@
-import React, {useEffect, useRef, useState} from 'react';
+import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
-import debounce from 'lodash/debounce';
 
-import {Panel, PanelBody, PanelHeader as _PanelHeader} from 'sentry/components/panels';
-import HorizontalMouseTracking from 'sentry/components/replays/player/horizontalMouseTracking';
-import {PlayerScrubber} from 'sentry/components/replays/player/scrubber';
+import {useReplayContext} from 'sentry/components/replays/replayContext';
 import ReplayController from 'sentry/components/replays/replayController';
+import ReplayCurrentScreen from 'sentry/components/replays/replayCurrentScreen';
 import ReplayCurrentUrl from 'sentry/components/replays/replayCurrentUrl';
 import ReplayPlayer from 'sentry/components/replays/replayPlayer';
+import ReplayProcessingError from 'sentry/components/replays/replayProcessingError';
+import {ReplaySidebarToggleButton} from 'sentry/components/replays/replaySidebarToggleButton';
+import TextCopyInput from 'sentry/components/textCopyInput';
+import {space} from 'sentry/styles/space';
+import useIsFullscreen from 'sentry/utils/window/useIsFullscreen';
+import Breadcrumbs from 'sentry/views/replays/detail/breadcrumbs';
+import BrowserOSIcons from 'sentry/views/replays/detail/browserOSIcons';
+import FluidHeight from 'sentry/views/replays/detail/layout/fluidHeight';
 
-// How much to reveal under the player, so people can see the 'pagefold' and
-// know that they can scroll the page.
-const BOTTOM_REVEAL_PIXELS = 70;
+import {CanvasSupportNotice} from './canvasSupportNotice';
 
 type Props = {
-  isFullscreen: boolean;
+  isLoading: boolean;
   toggleFullscreen: () => void;
 };
 
-function ReplayView({isFullscreen, toggleFullscreen}: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<HTMLDivElement>(null);
-
-  const [windowInnerHeight, setWindowInnerHeight] = useState(window.innerHeight);
-  const [playerHeight, setPlayerHeight] = useState(0);
-
-  useEffect(() => {
-    const onResize = debounce(() => {
-      setWindowInnerHeight(window.innerHeight);
-    });
-    window.addEventListener('resize', onResize);
-    return () => {
-      window.removeEventListener('resize', onResize);
-    };
-  }, []);
-
-  useEffect(() => {
-    const containerBottom =
-      (containerRef.current?.offsetTop || 0) + (containerRef.current?.offsetHeight || 0);
-    const playerOffsetHeight = playerRef.current?.offsetHeight || 0;
-    const calc =
-      windowInnerHeight - (containerBottom - playerOffsetHeight) - BOTTOM_REVEAL_PIXELS;
-    setPlayerHeight(Math.max(200, calc));
-  }, [windowInnerHeight]);
+function ReplayView({toggleFullscreen, isLoading}: Props) {
+  const isFullscreen = useIsFullscreen();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const {isFetching, replay} = useReplayContext();
+  const isVideoReplay = replay?.isVideoReplay();
 
   return (
-    <PanelNoMargin ref={containerRef} isFullscreen={isFullscreen}>
-      <PanelHeader>
-        <ReplayCurrentUrl />
-      </PanelHeader>
-      <PanelHeader ref={playerRef} disablePadding noBorder>
-        <ReplayPlayer height={isFullscreen ? Infinity : playerHeight} />
-      </PanelHeader>
-      <HorizontalMouseTracking>
-        <PlayerScrubber />
-      </HorizontalMouseTracking>
-      <PanelBody withPadding>
-        <ReplayController toggleFullscreen={toggleFullscreen} />
-      </PanelBody>
-    </PanelNoMargin>
+    <Fragment>
+      <PlayerBreadcrumbContainer>
+        <PlayerContainer>
+          <ContextContainer>
+            {isLoading ? (
+              <TextCopyInput size="sm" disabled>
+                {''}
+              </TextCopyInput>
+            ) : isVideoReplay ? (
+              <ReplayCurrentScreen />
+            ) : (
+              <ReplayCurrentUrl />
+            )}
+            <BrowserOSIcons showBrowser={!isVideoReplay} isLoading={isLoading} />
+            {isFullscreen ? (
+              <ReplaySidebarToggleButton
+                isOpen={isSidebarOpen}
+                setIsOpen={setIsSidebarOpen}
+              />
+            ) : null}
+          </ContextContainer>
+          {!isFetching && replay?.hasProcessingErrors() ? (
+            <ReplayProcessingError processingErrors={replay.processingErrors()} />
+          ) : (
+            <FluidHeight>
+              <CanvasSupportNotice />
+              <Panel>
+                <ReplayPlayer inspectable />
+              </Panel>
+            </FluidHeight>
+          )}
+        </PlayerContainer>
+        {isFullscreen && isSidebarOpen ? (
+          <BreadcrumbContainer>
+            <Breadcrumbs />
+          </BreadcrumbContainer>
+        ) : null}
+      </PlayerBreadcrumbContainer>
+      {isFullscreen ? (
+        <ReplayController
+          isLoading={isLoading}
+          toggleFullscreen={toggleFullscreen}
+          hideFastForward={isVideoReplay}
+        />
+      ) : null}
+    </Fragment>
   );
 }
 
-const PanelNoMargin = styled(Panel)<{isFullscreen: boolean}>`
-  margin-bottom: 0;
-
-  ${p =>
-    p.isFullscreen
-      ? `height: 100%;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      `
-      : ''}
+const Panel = styled(FluidHeight)`
+  background: ${p => p.theme.background};
+  border-radius: ${p => p.theme.borderRadius};
+  border: 1px solid ${p => p.theme.border};
+  box-shadow: ${p => p.theme.dropShadowMedium};
 `;
 
-const PanelHeader = styled(_PanelHeader)<{noBorder?: boolean}>`
-  display: block;
-  padding: 0;
-  ${p => (p.noBorder ? 'border-bottom: none;' : '')}
+const ContextContainer = styled('div')`
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: 1fr max-content;
+  align-items: center;
+  gap: ${space(1)};
+`;
+
+const PlayerContainer = styled('div')`
+  display: grid;
+  grid-auto-flow: row;
+  grid-template-rows: auto 1fr;
+  gap: 10px;
+  flex-grow: 1;
+`;
+
+const BreadcrumbContainer = styled('div')`
+  width: 25%;
+`;
+
+const PlayerBreadcrumbContainer = styled('div')`
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  gap: ${space(1)};
 `;
 
 export default ReplayView;

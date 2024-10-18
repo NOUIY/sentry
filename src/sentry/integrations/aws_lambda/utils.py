@@ -1,15 +1,15 @@
 import re
 from functools import wraps
 
+import sentry_sdk
 from django.conf import settings
 from django.core.cache import cache
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from sentry import options
-from sentry.models import Project, ProjectKey
+from sentry.projects.services.project_key import ProjectKeyRole, project_key_service
 from sentry.shared_integrations.exceptions import IntegrationError
 from sentry.tasks.release_registry import LAYER_INDEX_CACHE_KEY
-from sentry.utils.compat import filter, map
 
 SUPPORTED_RUNTIMES = [
     "nodejs18.x",
@@ -22,6 +22,8 @@ SUPPORTED_RUNTIMES = [
     "python3.7",
     "python3.8",
     "python3.9",
+    "python3.10",
+    "python3.11",
 ]
 
 INVALID_LAYER_TEXT = "Invalid existing layer %s"
@@ -113,7 +115,7 @@ def get_option_value(function, option):
     # special lookup for the version since it depends on the region
     if option == OPTION_VERSION:
         region_release_list = cache_value.get("regions", [])
-        matched_regions = filter(lambda x: x["region"] == region, region_release_list)
+        matched_regions = list(filter(lambda x: x["region"] == region, region_release_list))
         # see if there is the specific region in our list
         if matched_regions:
             version = matched_regions[0]["version"]
@@ -145,7 +147,7 @@ def _get_arn_from_layer(layer):
 
 def get_function_layer_arns(function):
     layers = function.get("Layers", [])
-    return map(_get_arn_from_layer, layers)
+    return [_get_arn_from_layer(layer) for layer in layers]
 
 
 def get_latest_layer_for_function(function):
@@ -185,22 +187,21 @@ def get_supported_functions(lambda_client):
     for page in response_iterator:
         functions += page["Functions"]
 
-    return filter(
-        lambda x: x.get("Runtime") in SUPPORTED_RUNTIMES,
-        functions,
+    return list(
+        filter(
+            lambda x: x.get("Runtime") in SUPPORTED_RUNTIMES,
+            functions,
+        )
     )
 
 
 def get_dsn_for_project(organization_id, project_id):
-    try:
-        project = Project.objects.get(organization_id=organization_id, id=project_id)
-    except Project.DoesNotExist:
-        raise IntegrationError("No valid project")
-
-    enabled_dsn = ProjectKey.get_default(project=project)
+    enabled_dsn = project_key_service.get_project_key(
+        organization_id=organization_id, project_id=project_id, role=ProjectKeyRole.store
+    )
     if not enabled_dsn:
         raise IntegrationError("Project does not have DSN enabled")
-    return enabled_dsn.get_dsn(public=True)
+    return enabled_dsn.dsn_public
 
 
 def enable_single_lambda(lambda_client, function, sentry_project_dsn, retries_left=3):
@@ -225,9 +226,32 @@ def enable_single_lambda(lambda_client, function, sentry_project_dsn, retries_le
 
     if runtime.startswith("nodejs"):
         # note the env variables would be different for non-Node runtimes
-        env_variables.update(
-            {"NODE_OPTIONS": "-r @sentry/serverless/dist/awslambda-auto", **sentry_env_variables}
-        )
+        version = get_option_value(function, OPTION_VERSION)
+        try:
+            parsed_version = int(version)
+        except Exception:
+            sentry_sdk.capture_message("Invariant: Unable to parse AWS lambda version")
+            parsed_version = None
+
+        if (
+            # Lambda layer version 235 was the latest version using `@sentry/serverless` before we switched to `@sentry/aws-serverless`
+            parsed_version is not None
+            and parsed_version <= 235
+        ):
+            env_variables.update(
+                {
+                    "NODE_OPTIONS": "-r @sentry/serverless/dist/awslambda-auto",
+                    **sentry_env_variables,
+                }
+            )
+        else:
+            env_variables.update(
+                {
+                    "NODE_OPTIONS": "-r @sentry/aws-serverless/awslambda-auto",
+                    **sentry_env_variables,
+                }
+            )
+
     elif runtime.startswith("python"):
         # Check if we are trying to re-enable an already enabled python, and if
         # are we should not override the env variable "SENTRY_INITIAL_HANDLER"

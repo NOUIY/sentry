@@ -1,10 +1,10 @@
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 import omit from 'lodash/omit';
 
-import Link, {LinkProps} from 'sentry/components/links/link';
-import space from 'sentry/styles/space';
-import {callIfFunction} from 'sentry/utils/callIfFunction';
-import {Theme} from 'sentry/utils/theme';
+import type {LinkProps} from 'sentry/components/links/link';
+import Link from 'sentry/components/links/link';
+import {space} from 'sentry/styles/space';
 
 type MenuItemProps = {
   /**
@@ -38,7 +38,7 @@ type MenuItemProps = {
    */
   icon?: React.ReactNode;
   /**
-   * Is the item actively seleted?
+   * Is the item actively selected?
    */
   isActive?: boolean;
   /**
@@ -54,7 +54,7 @@ type MenuItemProps = {
    */
   stopPropagation?: boolean;
   /**
-   * The title/tooltipe of the item
+   * The title/tooltip of the item
    */
   title?: string;
 
@@ -73,7 +73,7 @@ interface Props
   extends MenuItemProps,
     Omit<React.HTMLAttributes<HTMLLIElement>, 'onSelect'> {}
 
-const MenuItem = ({
+function MenuItem({
   header,
   icon,
   divider,
@@ -82,7 +82,7 @@ const MenuItem = ({
   className,
   children,
   ...props
-}: Props) => {
+}: Props) {
   const {
     to,
     href,
@@ -106,7 +106,7 @@ const MenuItem = ({
       if (stopPropagation) {
         e.stopPropagation();
       }
-      callIfFunction(onSelect, eventKey);
+      onSelect?.(eventKey);
     }
   };
 
@@ -167,7 +167,7 @@ const MenuItem = ({
       {renderChildren}
     </MenuListItem>
   );
-};
+}
 
 interface MenuListItemProps extends React.HTMLAttributes<HTMLLIElement> {
   disabled?: boolean;

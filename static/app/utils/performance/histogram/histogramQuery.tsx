@@ -1,12 +1,12 @@
 import {Fragment} from 'react';
 import omit from 'lodash/omit';
 
-import GenericDiscoverQuery, {
+import type {
   DiscoverQueryProps,
   GenericChildrenProps,
 } from 'sentry/utils/discover/genericDiscoverQuery';
-import {DataFilter, HistogramData} from 'sentry/utils/performance/histogram/types';
-import withApi from 'sentry/utils/withApi';
+import GenericDiscoverQuery from 'sentry/utils/discover/genericDiscoverQuery';
+import type {DataFilter, HistogramData} from 'sentry/utils/performance/histogram/types';
 
 type Histograms = Record<string, HistogramData>;
 
@@ -96,4 +96,4 @@ function HistogramQuery(props: Props) {
   );
 }
 
-export default withApi(HistogramQuery);
+export default HistogramQuery;

@@ -1,5 +1,8 @@
 from sentry.rules.conditions.regression_event import RegressionEventCondition
 from sentry.testutils.cases import RuleTestCase
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class RegressionEventConditionTest(RuleTestCase):

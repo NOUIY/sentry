@@ -1,23 +1,20 @@
 import {Component} from 'react';
+import type {Theme} from '@emotion/react';
 import {withTheme} from '@emotion/react';
+import type {LineSeriesOption} from 'echarts';
 import isEqual from 'lodash/isEqual';
 import omit from 'lodash/omit';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import {shouldFetchPreviousPeriod} from 'sentry/components/charts/utils';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import {t} from 'sentry/locale';
-import {
-  Organization,
-  PageFilters,
-  SessionApiResponse,
-  SessionFieldWithOperation,
-  SessionStatus,
-} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
-import {percent} from 'sentry/utils';
-import {getPeriod} from 'sentry/utils/getPeriod';
+import type {PageFilters} from 'sentry/types/core';
+import type {Series} from 'sentry/types/echarts';
+import type {Organization, SessionApiResponse} from 'sentry/types/organization';
+import {SessionFieldWithOperation, SessionStatus} from 'sentry/types/organization';
+import {getPeriod} from 'sentry/utils/duration/getPeriod';
 import {
   filterSessionsInTimeWindow,
   getCount,
@@ -25,12 +22,11 @@ import {
   getSessionsInterval,
   initSessionsChart,
 } from 'sentry/utils/sessions';
-import {Theme} from 'sentry/utils/theme';
 import {getCrashFreePercent} from 'sentry/views/releases/utils';
 
 import {DisplayModes} from '../projectCharts';
 
-const omitIgnoredProps = (props: Props) =>
+const omitIgnoredProps = (props: ProjectSessionsChartRequestProps) =>
   omit(props, ['api', 'organization', 'children', 'selection.datetime.utc']);
 
 type ProjectSessionsChartRequestRenderProps = {
@@ -40,15 +36,19 @@ type ProjectSessionsChartRequestRenderProps = {
   reloading: boolean;
   timeseriesData: Series[];
   totalSessions: number | null;
+  additionalSeries?: LineSeriesOption[];
 };
 
-type Props = {
+export type ProjectSessionsChartRequestProps = {
   api: Client;
   children: (renderProps: ProjectSessionsChartRequestRenderProps) => React.ReactNode;
   displayMode:
     | DisplayModes.SESSIONS
     | DisplayModes.STABILITY
-    | DisplayModes.STABILITY_USERS;
+    | DisplayModes.STABILITY_USERS
+    // ANR is handled by the ProjectSessionsAnrRequest component
+    | DisplayModes.ANR_RATE
+    | DisplayModes.FOREGROUND_ANR_RATE;
   onTotalValuesChange: (value: number | null) => void;
   organization: Organization;
   selection: PageFilters;
@@ -65,7 +65,10 @@ type State = {
   totalSessions: number | null;
 };
 
-class ProjectSessionsChartRequest extends Component<Props, State> {
+class ProjectSessionsChartRequest extends Component<
+  ProjectSessionsChartRequestProps,
+  State
+> {
   state: State = {
     reloading: false,
     errored: false,
@@ -78,7 +81,7 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
     this.fetchData();
   }
 
-  componentDidUpdate(prevProps: Props) {
+  componentDidUpdate(prevProps: ProjectSessionsChartRequestProps) {
     if (!isEqual(omitIgnoredProps(this.props), omitIgnoredProps(prevProps))) {
       this.fetchData();
     }
@@ -113,9 +116,29 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
 
     try {
       const queryParams = this.queryParams({shouldFetchWithPrevious});
-      const response: SessionApiResponse = await api.requestPromise(this.path, {
-        query: queryParams,
-      });
+      const requests = [
+        api.requestPromise(this.path, {
+          query: queryParams,
+        }),
+      ];
+      // for crash free sessions and users, we need to make a separate request to get the total count in period
+      if (this.isCrashFreeRate) {
+        requests.push(
+          api.requestPromise(this.path, {
+            query: {
+              ...queryParams,
+              field:
+                displayMode === DisplayModes.STABILITY_USERS
+                  ? SessionFieldWithOperation.USERS
+                  : SessionFieldWithOperation.SESSIONS,
+              groupBy: undefined,
+              ...(shouldFetchWithPrevious ? {statsPeriod: datetime.period} : {}),
+            },
+          })
+        );
+      }
+      const [response, totalCountResponse]: SessionApiResponse[] =
+        await Promise.all(requests);
 
       const filteredResponse = filterSessionsInTimeWindow(
         response,
@@ -123,10 +146,10 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
         queryParams.end
       );
 
-      const {timeseriesData, previousTimeseriesData, totalSessions} =
+      const {timeseriesData, previousTimeseriesData, totalCount} =
         displayMode === DisplayModes.SESSIONS
           ? this.transformSessionCountData(filteredResponse)
-          : this.transformData(filteredResponse, {
+          : this.transformData(filteredResponse, totalCountResponse, {
               fetchedWithPrevious: shouldFetchWithPrevious,
             });
 
@@ -138,9 +161,9 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
         reloading: false,
         timeseriesData,
         previousTimeseriesData,
-        totalSessions,
+        totalSessions: totalCount,
       });
-      onTotalValuesChange(totalSessions);
+      onTotalValuesChange(totalCount);
     } catch {
       addErrorMessage(t('Error loading chart data'));
       this.setState({
@@ -161,9 +184,20 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
 
   get field() {
     const {displayMode} = this.props;
-    return displayMode === DisplayModes.STABILITY_USERS
-      ? SessionFieldWithOperation.USERS
-      : SessionFieldWithOperation.SESSIONS;
+    switch (displayMode) {
+      case DisplayModes.STABILITY_USERS:
+        return SessionFieldWithOperation.CRASH_FREE_RATE_USERS;
+      case DisplayModes.STABILITY:
+        return SessionFieldWithOperation.CRASH_FREE_RATE_SESSIONS;
+      default:
+        return SessionFieldWithOperation.SESSIONS;
+    }
+  }
+
+  get isCrashFreeRate() {
+    return [DisplayModes.STABILITY, DisplayModes.STABILITY_USERS].includes(
+      this.props.displayMode
+    );
   }
 
   queryParams({shouldFetchWithPrevious = false}): Record<string, any> {
@@ -172,7 +206,7 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
 
     const baseParams = {
       field: this.field,
-      groupBy: 'session.status',
+      groupBy: this.isCrashFreeRate ? undefined : 'session.status',
       interval: getSessionsInterval(datetime, {
         highFidelity: organization.features.includes('minute-resolution-sessions'),
       }),
@@ -200,33 +234,16 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
     };
   }
 
-  transformData(responseData: SessionApiResponse, {fetchedWithPrevious = false}) {
+  transformData(
+    responseData: SessionApiResponse,
+    totalCountResponse: SessionApiResponse,
+    {fetchedWithPrevious = false}
+  ) {
     const {theme} = this.props;
     const {field} = this;
 
     // Take the floor just in case, but data should always be divisible by 2
     const dataMiddleIndex = Math.floor(responseData.intervals.length / 2);
-
-    // calculate the total number of sessions for this period (exclude previous if there)
-    const totalSessions = responseData.groups.reduce(
-      (acc, group) =>
-        acc +
-        group.series[field]
-          .slice(fetchedWithPrevious ? dataMiddleIndex : 0)
-          .reduce((value, groupAcc) => groupAcc + value, 0),
-      0
-    );
-
-    const previousPeriodTotalSessions = fetchedWithPrevious
-      ? responseData.groups.reduce(
-          (acc, group) =>
-            acc +
-            group.series[field]
-              .slice(0, dataMiddleIndex)
-              .reduce((value, groupAcc) => groupAcc + value, 0),
-          0
-        )
-      : 0;
 
     // TODO(project-details): refactor this to avoid duplication as we add more session charts
     const timeseriesData = [
@@ -236,31 +253,14 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
         data: responseData.intervals
           .slice(fetchedWithPrevious ? dataMiddleIndex : 0)
           .map((interval, i) => {
-            const totalIntervalSessions = responseData.groups.reduce(
-              (acc, group) =>
-                acc +
-                group.series[field].slice(fetchedWithPrevious ? dataMiddleIndex : 0)[i],
-              0
-            );
-
-            const intervalCrashedSessions =
-              responseData.groups
-                .find(group => group.by['session.status'] === 'crashed')
-                ?.series[field].slice(fetchedWithPrevious ? dataMiddleIndex : 0)[i] ?? 0;
-
-            const crashedSessionsPercent = percent(
-              intervalCrashedSessions,
-              totalIntervalSessions
-            );
+            const crashedSessionsPercent =
+              responseData.groups[0]?.series[field].slice(
+                fetchedWithPrevious ? dataMiddleIndex : 0
+              )[i] * 100;
 
             return {
               name: interval,
-              value:
-                totalSessions === 0 && previousPeriodTotalSessions === 0
-                  ? 0
-                  : totalIntervalSessions === 0
-                  ? null
-                  : getCrashFreePercent(100 - crashedSessionsPercent),
+              value: getCrashFreePercent(crashedSessionsPercent),
             };
           }),
       },
@@ -270,37 +270,27 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
       ? ({
           seriesName: t('Previous Period'),
           data: responseData.intervals.slice(0, dataMiddleIndex).map((_interval, i) => {
-            const totalIntervalSessions = responseData.groups.reduce(
-              (acc, group) => acc + group.series[field].slice(0, dataMiddleIndex)[i],
-              0
-            );
-
-            const intervalCrashedSessions =
-              responseData.groups
-                .find(group => group.by['session.status'] === 'crashed')
-                ?.series[field].slice(0, dataMiddleIndex)[i] ?? 0;
-
-            const crashedSessionsPercent = percent(
-              intervalCrashedSessions,
-              totalIntervalSessions
-            );
+            const crashedSessionsPercent =
+              responseData.groups[0]?.series[field].slice(0, dataMiddleIndex)[i] * 100;
 
             return {
               name: responseData.intervals[i + dataMiddleIndex],
-              value:
-                totalSessions === 0 && previousPeriodTotalSessions === 0
-                  ? 0
-                  : totalIntervalSessions === 0
-                  ? null
-                  : getCrashFreePercent(100 - crashedSessionsPercent),
+              value: getCrashFreePercent(crashedSessionsPercent),
             };
           }),
         } as Series) // TODO(project-detail): Change SeriesDataUnit value to support null
       : null;
 
+    const totalCount =
+      totalCountResponse?.groups[0].totals[
+        this.props.displayMode === DisplayModes.STABILITY_USERS
+          ? SessionFieldWithOperation.USERS
+          : SessionFieldWithOperation.SESSIONS
+      ];
+
     return {
-      totalSessions,
       timeseriesData,
+      totalCount,
       previousTimeseriesData,
     };
   }
@@ -353,7 +343,7 @@ class ProjectSessionsChartRequest extends Component<Props, State> {
     return {
       timeseriesData: chartData,
       previousTimeseriesData: null,
-      totalSessions,
+      totalCount: totalSessions,
     };
   }
 

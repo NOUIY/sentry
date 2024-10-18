@@ -1,5 +1,6 @@
 import abc
-from typing import TYPE_CHECKING, Any, Mapping
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from django.http.response import HttpResponseBase
 from rest_framework.request import Request
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
     from sentry.pipeline.base import Pipeline
 
 
-class PipelineView(BaseView, abc.ABC):  # type: ignore
+class PipelineView(BaseView, abc.ABC):
     """
     A class implementing the PipelineView may be used in a PipelineProviders
     get_pipeline_views list.
@@ -24,7 +25,6 @@ class PipelineView(BaseView, abc.ABC):  # type: ignore
         Called on request, the active pipeline is passed in which can and
         should be used to bind data and traverse the pipeline.
         """
-        pass
 
     @staticmethod
     def render_react_view(

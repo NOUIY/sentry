@@ -1,27 +1,35 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
-import {LocationDescriptorObject} from 'history';
+import type {LocationDescriptorObject} from 'history';
+import isEqual from 'lodash/isEqual';
 
-import AsyncComponent from 'sentry/components/asyncComponent';
-import {DateTimeObject, getSeriesApiInterval} from 'sentry/components/charts/utils';
-import SortLink, {Alignments, Directions} from 'sentry/components/gridEditable/sortLink';
+import type {DateTimeObject} from 'sentry/components/charts/utils';
+import {getSeriesApiInterval} from 'sentry/components/charts/utils';
+import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
+import type {Alignments, Directions} from 'sentry/components/gridEditable/sortLink';
+import SortLink from 'sentry/components/gridEditable/sortLink';
 import Pagination from 'sentry/components/pagination';
 import SearchBar from 'sentry/components/searchBar';
-import {DEFAULT_STATS_PERIOD} from 'sentry/constants';
+import {DATA_CATEGORY_INFO, DEFAULT_STATS_PERIOD} from 'sentry/constants';
+import {ALL_ACCESS_PROJECTS} from 'sentry/constants/pageFilters';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {DataCategory, Organization, Project} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {DataCategoryInfo} from 'sentry/types/core';
+import {Outcome} from 'sentry/types/core';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import withProjects from 'sentry/utils/withProjects';
 
-import {Outcome, UsageSeries} from './types';
-import UsageTable, {CellProject, CellStat, TableStat} from './usageTable';
+import type {UsageSeries} from './types';
+import type {TableStat} from './usageTable';
+import UsageTable, {CellProject, CellStat} from './usageTable';
+import {getOffsetFromCursor, getPaginationPageLink} from './utils';
 
 type Props = {
-  dataCategory: DataCategory;
+  dataCategory: DataCategoryInfo;
   dataCategoryName: string;
   dataDatetime: DateTimeObject;
-
   getNextLocations: (project: Project) => Record<string, LocationDescriptorObject>;
   handleChangeState: (
     nextState: {
@@ -31,47 +39,57 @@ type Props = {
     },
     options?: {willUpdateRouter?: boolean}
   ) => LocationDescriptorObject;
+  isSingleProject: boolean;
   loadingProjects: boolean;
   organization: Organization;
+  projectIds: number[];
   projects: Project[];
   tableCursor?: string;
   tableQuery?: string;
   tableSort?: string;
-} & AsyncComponent['props'];
+} & DeprecatedAsyncComponent['props'];
 
 type State = {
   projectStats: UsageSeries | undefined;
-} & AsyncComponent['state'];
+} & DeprecatedAsyncComponent['state'];
 
 export enum SortBy {
   PROJECT = 'project',
   TOTAL = 'total',
   ACCEPTED = 'accepted',
   FILTERED = 'filtered',
-  DROPPED = 'dropped',
   INVALID = 'invalid',
   RATE_LIMITED = 'rate_limited',
 }
 
-class UsageStatsProjects extends AsyncComponent<Props, State> {
+class UsageStatsProjects extends DeprecatedAsyncComponent<Props, State> {
   static MAX_ROWS_USAGE_TABLE = 25;
 
   componentDidUpdate(prevProps: Props) {
-    const {dataDatetime: prevDateTime, dataCategory: prevDataCategory} = prevProps;
-    const {dataDatetime: currDateTime, dataCategory: currDataCategory} = this.props;
+    const {
+      dataDatetime: prevDateTime,
+      dataCategory: prevDataCategory,
+      projectIds: prevProjectIds,
+    } = prevProps;
+    const {
+      dataDatetime: currDateTime,
+      dataCategory: currDataCategory,
+      projectIds: currProjectIds,
+    } = this.props;
 
     if (
       prevDateTime.start !== currDateTime.start ||
       prevDateTime.end !== currDateTime.end ||
       prevDateTime.period !== currDateTime.period ||
       prevDateTime.utc !== currDateTime.utc ||
-      currDataCategory !== prevDataCategory
+      prevDataCategory !== currDataCategory ||
+      !isEqual(prevProjectIds, currProjectIds)
     ) {
       this.reloadData();
     }
   }
 
-  getEndpoints(): ReturnType<AsyncComponent['getEndpoints']> {
+  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
     return [['projectStats', this.endpointPath, {query: this.endpointQuery}]];
   }
 
@@ -81,7 +99,7 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
   }
 
   get endpointQuery() {
-    const {dataDatetime, dataCategory} = this.props;
+    const {dataDatetime, dataCategory, projectIds, isSingleProject} = this.props;
 
     const queryDatetime =
       dataDatetime.start && dataDatetime.end
@@ -100,8 +118,9 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
       interval: getSeriesApiInterval(dataDatetime),
       groupBy: ['outcome', 'project'],
       field: ['sum(quantity)'],
-      project: '-1', // get all project user has access to
-      category: dataCategory.slice(0, -1), // backend is singular
+      // If only one project is in selected, display the entire project list
+      project: isSingleProject ? [ALL_ACCESS_PROJECTS] : projectIds,
+      category: dataCategory.apiName,
     };
   }
 
@@ -140,17 +159,17 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
       case SortBy.TOTAL:
       case SortBy.ACCEPTED:
       case SortBy.FILTERED:
-      case SortBy.DROPPED:
+      case SortBy.INVALID:
+      case SortBy.RATE_LIMITED:
         return {key, direction};
       default:
         return {key: SortBy.ACCEPTED, direction: -1};
     }
   }
 
-  get tableCursor() {
+  get tableOffset() {
     const {tableCursor} = this.props;
-    const offset = Number(tableCursor?.split(':')[1]);
-    return isNaN(offset) ? 0 : offset;
+    return getOffsetFromCursor(tableCursor);
   }
 
   /**
@@ -159,17 +178,24 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
    * page doesn't scroll too deeply for organizations with a lot of projects
    */
   get pageLink() {
+    const offset = this.tableOffset;
     const numRows = this.filteredProjects.length;
-    const offset = this.tableCursor;
-    const prevOffset = offset - UsageStatsProjects.MAX_ROWS_USAGE_TABLE;
-    const nextOffset = offset + UsageStatsProjects.MAX_ROWS_USAGE_TABLE;
 
-    return `<link>; rel="previous"; results="${prevOffset >= 0}"; cursor="0:${Math.max(
-      0,
-      prevOffset
-    )}:1", <link>; rel="next"; results="${
-      nextOffset < numRows
-    }"; cursor="0:${nextOffset}:0"`;
+    return getPaginationPageLink({
+      numRows,
+      pageSize: UsageStatsProjects.MAX_ROWS_USAGE_TABLE,
+      offset,
+    });
+  }
+
+  get projectSelectionFilter(): (p: Project) => boolean {
+    const {projectIds, isSingleProject} = this.props;
+    const selectedProjects = new Set(projectIds.map(id => `${id}`));
+
+    // If 'My Projects' or 'All Projects' are selected
+    return selectedProjects.size === 0 || selectedProjects.has('-1') || isSingleProject
+      ? _p => true
+      : p => selectedProjects.has(p.id);
   }
 
   /**
@@ -178,8 +204,11 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
   get filteredProjects() {
     const {projects, tableQuery} = this.props;
     return tableQuery
-      ? projects.filter(p => p.slug.includes(tableQuery) && p.hasAccess)
-      : projects.filter(p => p.hasAccess);
+      ? projects.filter(
+          p =>
+            p.slug.includes(tableQuery) && p.hasAccess && this.projectSelectionFilter(p)
+        )
+      : projects.filter(p => p.hasAccess && this.projectSelectionFilter(p));
   }
 
   get tableHeader() {
@@ -223,27 +252,36 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
         onClick: () => this.handleChangeSort(SortBy.FILTERED),
       },
       {
-        key: SortBy.DROPPED,
-        title: t('Dropped'),
+        key: SortBy.RATE_LIMITED,
+        title: t('Rate Limited'),
         align: 'right',
-        direction: getArrowDirection(SortBy.DROPPED),
-        onClick: () => this.handleChangeSort(SortBy.DROPPED),
+        direction: getArrowDirection(SortBy.RATE_LIMITED),
+        onClick: () => this.handleChangeSort(SortBy.RATE_LIMITED),
       },
-    ].map(h => {
-      const Cell = h.key === SortBy.PROJECT ? CellProject : CellStat;
+      {
+        key: SortBy.INVALID,
+        title: t('Invalid'),
+        align: 'right',
+        direction: getArrowDirection(SortBy.INVALID),
+        onClick: () => this.handleChangeSort(SortBy.INVALID),
+      },
+    ]
+      .map(h => {
+        const Cell = h.key === SortBy.PROJECT ? CellProject : CellStat;
 
-      return (
-        <Cell key={h.key}>
-          <SortLink
-            canSort
-            title={h.title}
-            align={h.align as Alignments}
-            direction={h.direction}
-            generateSortLink={h.onClick}
-          />
-        </Cell>
-      );
-    });
+        return (
+          <Cell key={h.key}>
+            <SortLink
+              canSort
+              title={h.title}
+              align={h.align as Alignments}
+              direction={h.direction}
+              generateSortLink={h.onClick}
+            />
+          </Cell>
+        );
+      })
+      .concat([<CellStat key="empty" />]); // Extra column for displaying buttons etc.
   }
 
   getProjectLink(project: Project) {
@@ -251,7 +289,7 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
     const {performance, projectDetail, settings} = getNextLocations(project);
 
     if (
-      dataCategory === DataCategory.TRANSACTIONS &&
+      dataCategory === DATA_CATEGORY_INFO.transaction &&
       organization.features.includes('performance-view')
     ) {
       return {
@@ -317,7 +355,8 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
         [SortBy.TOTAL]: 0,
         [SortBy.ACCEPTED]: 0,
         [SortBy.FILTERED]: 0,
-        [SortBy.DROPPED]: 0,
+        [SortBy.INVALID]: 0,
+        [SortBy.RATE_LIMITED]: 0,
       };
 
       const projectList = this.filteredProjects;
@@ -339,14 +378,20 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
           stats[projectId].total += group.totals['sum(quantity)'];
         }
 
-        if (outcome === Outcome.ACCEPTED || outcome === Outcome.FILTERED) {
-          stats[projectId][outcome] += group.totals['sum(quantity)'];
-        } else if (
-          outcome === Outcome.RATE_LIMITED ||
-          outcome === Outcome.INVALID ||
-          outcome === Outcome.DROPPED
+        if (
+          outcome === Outcome.ACCEPTED ||
+          outcome === Outcome.FILTERED ||
+          outcome === Outcome.INVALID
         ) {
-          stats[projectId][SortBy.DROPPED] += group.totals['sum(quantity)'];
+          stats[projectId][outcome] += group.totals['sum(quantity)'];
+        }
+
+        if (
+          outcome === Outcome.RATE_LIMITED ||
+          outcome === Outcome.CARDINALITY_LIMITED ||
+          outcome === Outcome.ABUSE
+        ) {
+          stats[projectId][SortBy.RATE_LIMITED] += group.totals['sum(quantity)'];
         }
       });
 
@@ -371,7 +416,7 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
           : a.project.slug.localeCompare(b.project.slug);
       });
 
-      const offset = this.tableCursor;
+      const offset = this.tableOffset;
 
       return {
         tableStats: tableStats.slice(
@@ -382,7 +427,7 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
     } catch (err) {
       Sentry.withScope(scope => {
         scope.setContext('query', this.endpointQuery);
-        scope.setContext('body', projectStats);
+        scope.setContext('body', {...projectStats});
         Sentry.captureException(err);
       });
 
@@ -395,21 +440,27 @@ class UsageStatsProjects extends AsyncComponent<Props, State> {
 
   renderComponent() {
     const {error, errors, loading} = this.state;
-    const {dataCategory, loadingProjects, tableQuery} = this.props;
+    const {dataCategory, loadingProjects, tableQuery, isSingleProject} = this.props;
     const {headers, tableStats} = this.tableData;
-
     return (
       <Fragment>
-        <Container>
-          <SearchBar
-            defaultQuery=""
-            query={tableQuery}
-            placeholder={t('Filter your projects')}
-            onSearch={this.handleSearch}
-          />
-        </Container>
-
-        <Container>
+        {isSingleProject && (
+          <PanelHeading>
+            <Title>{t('All Projects')}</Title>
+          </PanelHeading>
+        )}
+        {!isSingleProject && (
+          <Container>
+            <SearchBar
+              defaultQuery=""
+              query={tableQuery}
+              placeholder={t('Filter your projects')}
+              aria-label={t('Filter projects')}
+              onSearch={this.handleSearch}
+            />
+          </Container>
+        )}
+        <Container data-test-id="usage-stats-table">
           <UsageTable
             isLoading={loading || loadingProjects}
             isError={error}
@@ -430,4 +481,19 @@ export default withProjects(UsageStatsProjects);
 
 const Container = styled('div')`
   margin-bottom: ${space(2)};
+`;
+
+const Title = styled('div')`
+  font-weight: ${p => p.theme.fontWeightBold};
+  font-size: ${p => p.theme.fontSizeLarge};
+  color: ${p => p.theme.gray400};
+  display: flex;
+  flex: 1;
+  align-items: center;
+`;
+
+const PanelHeading = styled('div')`
+  display: flex;
+  margin-bottom: ${space(2)};
+  align-items: center;
 `;

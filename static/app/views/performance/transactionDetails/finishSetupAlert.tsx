@@ -1,12 +1,12 @@
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
 import PageAlertBar from 'sentry/components/pageAlertBar';
 import {IconLightning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
 
 export default function FinishSetupAlert({
   organization,
@@ -23,21 +23,20 @@ export default function FinishSetupAlert({
           'You are viewing a sample transaction. Configure performance to start viewing real transactions.'
         )}
       </TextWrapper>
-      <Button
-        size="xsmall"
+      <LinkButton
+        size="xs"
         priority="primary"
-        target="_blank"
         external
         href="https://docs.sentry.io/performance-monitoring/getting-started/"
         onClick={() =>
-          trackAdvancedAnalyticsEvent('growth.sample_transaction_docs_link_clicked', {
+          trackAnalytics('growth.sample_transaction_docs_link_clicked', {
             project_id: projectId,
             organization,
           })
         }
       >
         {t('Get Started')}
-      </Button>
+      </LinkButton>
     </PageAlertBar>
   );
 }

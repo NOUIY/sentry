@@ -1,9 +1,9 @@
-import {EventsStatsData, Organization} from 'sentry/types';
-import GenericDiscoverQuery, {
+import type {EventsStatsData, Organization} from 'sentry/types/organization';
+import type {
   DiscoverQueryProps,
   GenericChildrenProps,
 } from 'sentry/utils/discover/genericDiscoverQuery';
-import withApi from 'sentry/utils/withApi';
+import GenericDiscoverQuery from 'sentry/utils/discover/genericDiscoverQuery';
 import {ANOMALY_FLAG} from 'sentry/views/performance/transactionSummary/transactionAnomalies/utils';
 
 type AnomaliesProps = {};
@@ -85,7 +85,7 @@ function AnomaliesSeriesQuery(props: Props) {
     >
       {({tableData, ...rest}) => {
         return props.children({
-          data: tableData && tableData.y ? transformPayload(tableData) : null,
+          data: tableData?.y ? transformPayload(tableData) : null,
           ...rest,
         });
       }}
@@ -93,4 +93,4 @@ function AnomaliesSeriesQuery(props: Props) {
   );
 }
 
-export default withApi(AnomaliesSeriesQuery);
+export default AnomaliesSeriesQuery;

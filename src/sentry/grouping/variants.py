@@ -1,14 +1,17 @@
+from __future__ import annotations
+
 from sentry.grouping.utils import hash_from_values, is_default_fingerprint_var
+from sentry.types.misc import KeyedList
 
 
 class BaseVariant:
     # The type of the variant that is reported to the UI.
-    type = None
+    type: str | None = None
 
     # This is true if `get_hash` does not return `None`.
     contributes = True
 
-    def get_hash(self):
+    def get_hash(self) -> str | None:
         return None
 
     @property
@@ -23,11 +26,16 @@ class BaseVariant:
         rv.update(self._get_metadata_as_dict())
         return rv
 
-    def encode_for_similarity(self):
-        raise NotImplementedError()
-
     def __repr__(self):
         return f"<{self.__class__.__name__} {self.get_hash()!r} ({self.type})>"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, BaseVariant):
+            return NotImplemented
+        return self.as_dict() == other.as_dict()
+
+
+KeyedVariants = KeyedList[BaseVariant]
 
 
 class ChecksumVariant(BaseVariant):
@@ -45,27 +53,50 @@ class ChecksumVariant(BaseVariant):
             return "hashed legacy checksum"
         return "legacy checksum"
 
-    def encode_for_similarity(self):
-        return ()
-
-    def get_hash(self):
+    def get_hash(self) -> str | None:
         return self.hash
 
 
 class FallbackVariant(BaseVariant):
-    id = "fallback"
+    type = "fallback"
     contributes = True
 
-    def encode_for_similarity(self):
-        return ()
-
-    def get_hash(self):
+    def get_hash(self) -> str | None:
         return hash_from_values([])
+
+
+class PerformanceProblemVariant(BaseVariant):
+    """
+    Applies only to transaction events! Transactions are not subject to the
+    normal grouping pipeline. Instead, they are fingerprinted by
+    `PerformanceDetector` when the event is saved by `EventManager`. We detect
+    problems, generate some metadata called "evidence" and use that evidence
+    for fingerprinting. The evidence is then stored in `nodestore`. This
+        variant's hash is delegated to the `EventPerformanceProblem` that
+        contains the event and the evidence.
+    """
+
+    type = "performance-problem"
+    description = "performance problem"
+    contributes = True
+
+    def __init__(self, event_performance_problem):
+        self.event_performance_problem = event_performance_problem
+        self.problem = event_performance_problem.problem
+
+    def get_hash(self) -> str | None:
+        return self.problem.fingerprint
+
+    def _get_metadata_as_dict(self):
+        problem_data = self.problem.to_dict()
+        evidence_hashes = self.event_performance_problem.evidence_hashes
+
+        return {"evidence": {**problem_data, **evidence_hashes}}
 
 
 class ComponentVariant(BaseVariant):
     """A component variant is a variant that produces a hash from the
-    `GroupComponent` it encloses.
+    `GroupingComponent` it encloses.
     """
 
     type = "component"
@@ -82,14 +113,14 @@ class ComponentVariant(BaseVariant):
     def contributes(self):
         return self.component.contributes
 
-    def get_hash(self):
+    def get_hash(self) -> str | None:
         return self.component.get_hash()
-
-    def encode_for_similarity(self):
-        return self.component.encode_for_similarity()
 
     def _get_metadata_as_dict(self):
         return {"component": self.component.as_dict(), "config": self.config.as_dict()}
+
+    def __repr__(self):
+        return super().__repr__() + f" contributes={self.contributes} ({self.description})"
 
 
 def expose_fingerprint_dict(values, info=None):
@@ -115,7 +146,7 @@ def expose_fingerprint_dict(values, info=None):
 
 
 class CustomFingerprintVariant(BaseVariant):
-    """A completely custom fingerprint."""
+    """A user-defined custom fingerprint."""
 
     type = "custom-fingerprint"
 
@@ -127,15 +158,21 @@ class CustomFingerprintVariant(BaseVariant):
     def description(self):
         return "custom fingerprint"
 
-    def get_hash(self):
+    def get_hash(self) -> str | None:
         return hash_from_values(self.values)
-
-    def encode_for_similarity(self):
-        for value in self.values:
-            yield ("fingerprint", "ident-shingle"), [value]
 
     def _get_metadata_as_dict(self):
         return expose_fingerprint_dict(self.values, self.info)
+
+
+class BuiltInFingerprintVariant(CustomFingerprintVariant):
+    """A built-in, Sentry defined fingerprint."""
+
+    type = "built-in-fingerprint"
+
+    @property
+    def description(self):
+        return "Sentry defined fingerprint"
 
 
 class SaltedComponentVariant(ComponentVariant):
@@ -152,7 +189,7 @@ class SaltedComponentVariant(ComponentVariant):
     def description(self):
         return "modified " + self.component.description
 
-    def get_hash(self):
+    def get_hash(self) -> str | None:
         if not self.component.contributes:
             return None
         final_values = []
@@ -163,34 +200,7 @@ class SaltedComponentVariant(ComponentVariant):
                 final_values.append(value)
         return hash_from_values(final_values)
 
-    def encode_for_similarity(self):
-        yield from ComponentVariant.encode_for_similarity(self)
-
-        for value in self.values:
-            if not is_default_fingerprint_var(value):
-                yield ("fingerprint", "ident-shingle"), [value]
-
     def _get_metadata_as_dict(self):
         rv = ComponentVariant._get_metadata_as_dict(self)
         rv.update(expose_fingerprint_dict(self.values, self.info))
         return rv
-
-
-# defines the order of hierarchical grouping hashes, globally. variant names
-# defined in this list
-#
-# 1) will be persisted in snuba for split/unsplit operations
-# 2) in save_event, will be traversed bottom-to-top, and the first GroupHash
-#    found is used to find/create group
-#
-# variants outside of this list are assumed to not contribute to any sort of
-# hierarchy, their hashes are always persisted as GroupHash (and used to find
-# existing groups)
-HIERARCHICAL_VARIANTS = [
-    "app-depth-1",  # hashing by 1 level of stacktrace (eg just crashing frame)
-    "app-depth-2",
-    "app-depth-3",
-    "app-depth-4",
-    "app-depth-5",
-    "app-depth-max",  # hashing by full stacktrace
-]

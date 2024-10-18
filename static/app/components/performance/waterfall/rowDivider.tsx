@@ -1,8 +1,8 @@
 import styled from '@emotion/styled';
 
-import {IconAdd, IconFire, IconSubtract} from 'sentry/icons';
-import space from 'sentry/styles/space';
-import {Aliases, Color} from 'sentry/utils/theme';
+import {IconAdd, IconFire, IconGraph, IconProfiling, IconSubtract} from 'sentry/icons';
+import {space} from 'sentry/styles/space';
+import type {Aliases, Color} from 'sentry/utils/theme';
 
 export const DividerContainer = styled('div')`
   position: relative;
@@ -49,14 +49,17 @@ export const DividerLineGhostContainer = styled('div')`
   height: 100%;
 `;
 
-const BadgeBorder = styled('div')<{borderColor: Color | keyof Aliases}>`
+export const BadgeBorder = styled('div')<{
+  color: Color | keyof Aliases;
+  fillBackground?: boolean;
+}>`
   position: absolute;
   margin: ${space(0.25)};
   left: -11px;
-  background: ${p => p.theme.background};
+  background: ${p => (p.fillBackground ? p.theme[p.color] : p.theme.background)};
   width: ${space(3)};
   height: ${space(3)};
-  border: 1px solid ${p => p.theme[p.borderColor]};
+  border: 1px solid ${p => p.theme[p.color]};
   border-radius: 50%;
   z-index: ${p => p.theme.zIndex.traceView.dividerLine};
   display: flex;
@@ -66,23 +69,34 @@ const BadgeBorder = styled('div')<{borderColor: Color | keyof Aliases}>`
 
 export function ErrorBadge() {
   return (
-    <BadgeBorder borderColor="red300">
-      <IconFire color="red300" size="xs" />
+    <BadgeBorder color="error">
+      <IconFire color="errorText" size="xs" />
+    </BadgeBorder>
+  );
+}
+
+export function MetricsBadge() {
+  return (
+    <BadgeBorder color="pink400">
+      <IconGraph color="pink400" size="xs" />
     </BadgeBorder>
   );
 }
 
 export function EmbeddedTransactionBadge({
+  inTraceView = false,
   expanded,
   onClick,
 }: {
   expanded: boolean;
+  inTraceView: boolean;
   onClick: () => void;
 }) {
   return (
-    <BadgeBorder
+    <StyledBadgeBorder
+      inTraceView={inTraceView}
       data-test-id="embedded-transaction-badge"
-      borderColor="border"
+      color="border"
       onClick={event => {
         event.stopPropagation();
         event.preventDefault();
@@ -94,6 +108,18 @@ export function EmbeddedTransactionBadge({
       ) : (
         <IconAdd color="textColor" size="xs" />
       )}
+    </StyledBadgeBorder>
+  );
+}
+
+export function ProfileBadge() {
+  return (
+    <BadgeBorder data-test-id="profile-badge" color="activeText" fillBackground>
+      <IconProfiling color="background" size="xs" />
     </BadgeBorder>
   );
 }
+
+const StyledBadgeBorder = styled(BadgeBorder)<{inTraceView: boolean}>`
+  ${p => p.inTraceView && 'left: 0;'}
+`;

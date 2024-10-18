@@ -3,21 +3,26 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from functools import partial
 from operator import attrgetter
 from random import randrange
-from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any
 
-import lxml
+import lxml.html
 import toronado
 from django.core.mail import EmailMultiAlternatives
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 
 from sentry import options
 from sentry.db.models import Model
 from sentry.logging import LoggingFormat
-from sentry.models import Activity, Group, GroupEmailThread, Project
-from sentry.utils import metrics
+from sentry.models.activity import Activity
+from sentry.models.group import Group
+from sentry.models.groupemailthread import GroupEmailThread
+from sentry.models.project import Project
+from sentry.silo.base import SiloMode
+from sentry.utils import json, metrics
 from sentry.utils.safe import safe_execute
 from sentry.web.helpers import render_to_string
 
@@ -66,7 +71,7 @@ def inline_css(value: str) -> str:
     toronado.inline(tree)
     # CSS media query support is inconsistent when the DOCTYPE declaration is
     # missing, so we force it to HTML5 here.
-    html: str = lxml.html.tostring(tree, doctype="<!DOCTYPE html>", encoding=None).decode("utf-8")
+    html = lxml.html.tostring(tree, doctype="<!DOCTYPE html>", encoding=None).decode("utf-8")
     return html
 
 
@@ -108,9 +113,16 @@ class MessageBuilder:
             except AssertionError as error:
                 logger.warning(str(error))
 
+        # If a "type" is specified, add it to the headers to categorize the emails if not already set
+        if type is not None and "X-SMTPAPI" not in self.headers:
+            self.headers = {
+                "X-SMTPAPI": json.dumps({"category": type}),
+                **(self.headers),
+            }
+
     def __render_html_body(self) -> str | None:
         if self.html_template:
-            html_body = render_to_string(self.html_template, self.context)
+            html_body: str | None = render_to_string(self.html_template, self.context)
         else:
             html_body = self._html_body
 
@@ -132,8 +144,8 @@ class MessageBuilder:
         self,
         to: str,
         reply_to: Iterable[str] | None = None,
-        cc: Iterable[str] | None = None,
-        bcc: Iterable[str] | None = None,
+        cc: Sequence[str] | None = None,
+        bcc: Sequence[str] | None = None,
     ) -> EmailMultiAlternatives:
         headers = {**self.headers}
 
@@ -151,7 +163,7 @@ class MessageBuilder:
         message_id = make_msgid(get_from_email_domain())
         headers.setdefault("Message-Id", message_id)
 
-        subject = force_text(self.subject)
+        subject = force_str(self.subject)
 
         reference = self.reference
         if isinstance(reference, Activity):
@@ -187,8 +199,8 @@ class MessageBuilder:
     def get_built_messages(
         self,
         to: Iterable[str] | None = None,
-        cc: Iterable[str] | None = None,
-        bcc: Iterable[str] | None = None,
+        cc: Sequence[str] | None = None,
+        bcc: Sequence[str] | None = None,
     ) -> Sequence[EmailMultiAlternatives]:
         send_to = set(to or ())
         send_to.update(self._send_to)
@@ -209,8 +221,8 @@ class MessageBuilder:
     def send(
         self,
         to: Iterable[str] | None = None,
-        cc: Iterable[str] | None = None,
-        bcc: Iterable[str] | None = None,
+        cc: Sequence[str] | None = None,
+        bcc: Sequence[str] | None = None,
         fail_silently: bool = False,
     ) -> int:
         return send_messages(
@@ -220,10 +232,10 @@ class MessageBuilder:
     def send_async(
         self,
         to: Iterable[str] | None = None,
-        cc: Iterable[str] | None = None,
-        bcc: Iterable[str] | None = None,
+        cc: Sequence[str] | None = None,
+        bcc: Sequence[str] | None = None,
     ) -> None:
-        from sentry.tasks.email import send_email
+        from sentry.tasks.email import send_email, send_email_control
 
         fmt = options.get("system.logging-format")
         messages = self.get_built_messages(to, cc=cc, bcc=bcc)
@@ -234,7 +246,10 @@ class MessageBuilder:
 
         log_mail_queued = partial(logger.info, "mail.queued", extra=extra)
         for message in messages:
-            safe_execute(send_email.delay, message=message, _with_transaction=False)
+            send_email_task = send_email.delay
+            if SiloMode.get_current_mode() == SiloMode.CONTROL:
+                send_email_task = send_email_control.delay
+            safe_execute(send_email_task, message=message)
             extra["message_id"] = message.extra_headers["Message-Id"]
             metrics.incr("email.queued", instance=self.type, skip_internal=False)
             if fmt == LoggingFormat.HUMAN:

@@ -1,5 +1,8 @@
 from sentry.rules.filters.issue_occurrences import IssueOccurrencesFilter
 from sentry.testutils.cases import RuleTestCase
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class IssueOccurrencesTest(RuleTestCase):

@@ -5,8 +5,7 @@ import * as cbor from 'cbor-web';
 import {base64urlToBuffer, bufferToBase64url} from 'sentry/components/u2f/webAuthnHelper';
 import {t, tct} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
-import {ChallengeData, Organization} from 'sentry/types';
-import withOrganization from 'sentry/utils/withOrganization';
+import type {ChallengeData} from 'sentry/types/auth';
 
 type TapParams = {
   challenge: string;
@@ -26,8 +25,8 @@ type Props = {
     superuserAccessCategory,
     superuserReason,
   }: TapParams) => Promise<void>;
-  organization: Organization;
   silentIfUnsupported: boolean;
+  children?: React.ReactNode;
   style?: React.CSSProperties;
 };
 
@@ -54,7 +53,7 @@ class U2fInterface extends Component<Props, State> {
     failCount: 0,
   };
 
-  async componentDidMount() {
+  componentDidMount() {
     const supported = !!window.PublicKeyCredential;
 
     // eslint-disable-next-line react/no-did-mount-set-state
@@ -235,7 +234,7 @@ class U2fInterface extends Component<Props, State> {
   bindChallengeElement: React.RefCallback<HTMLInputElement> = ref => {
     this.setState({
       challengeElement: ref,
-      formElement: ref && ref.form,
+      formElement: ref?.form ?? null,
     });
 
     if (ref) {
@@ -299,11 +298,10 @@ class U2fInterface extends Component<Props, State> {
               DUPLICATE_DEVICE: t('This device is already registered with Sentry.'),
               UNKNOWN_DEVICE: t('The device you used for sign-in is unknown.'),
               BAD_APPID: tct(
-                '[p1:The Sentry server administrator modified the ' +
-                  'device registrations.]' +
-                  '[p2:You need to remove and re-add the device to continue ' +
-                  'using your U2F device. Use a different sign-in method or ' +
-                  'contact [support] for assistance.]',
+                `[p1:The Sentry server administrator modified the device
+                 registrations.] [p2:You need to remove and re-add the device to continue using
+                 your U2F device. Use a different sign-in method or contact [support] for
+                 assistance.]`,
                 {
                   p1: <p />,
                   p2: <p />,
@@ -376,4 +374,4 @@ class U2fInterface extends Component<Props, State> {
   }
 }
 
-export default withOrganization(U2fInterface);
+export default U2fInterface;

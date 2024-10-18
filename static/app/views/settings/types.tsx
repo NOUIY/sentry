@@ -1,9 +1,14 @@
-import {Organization, Project, Scope} from 'sentry/types';
+import type {ReactElement} from 'react';
+
+import type {Scope} from 'sentry/types/core';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 
 export type NavigationProps = {
   access?: Set<Scope>;
   features?: Set<string>;
   id?: string;
+  isSelfHosted?: boolean;
   organization?: Organization;
   project?: Project;
 };
@@ -23,7 +28,7 @@ export type NavigationItem = {
   /**
    * Returns the text of the badge to render next to the navigation.
    */
-  badge?: (opts: NavigationGroupProps) => string | number | null;
+  badge?: (opts: NavigationGroupProps) => string | number | null | ReactElement;
   /**
    * The description of the settings section. This will be used in search.
    */

@@ -1,5 +1,4 @@
-import {lazy, Profiler, Suspense, useCallback, useEffect, useRef} from 'react';
-import {useHotkeys} from 'react-hotkeys-hook';
+import {lazy, Suspense, useCallback, useEffect, useRef} from 'react';
 import styled from '@emotion/styled';
 
 import {
@@ -8,48 +7,80 @@ import {
 } from 'sentry/actionCreators/developmentAlerts';
 import {fetchGuides} from 'sentry/actionCreators/guides';
 import {openCommandPalette} from 'sentry/actionCreators/modal';
+import {fetchOrganizations} from 'sentry/actionCreators/organizations';
 import {initApiClientErrorHandling} from 'sentry/api';
 import ErrorBoundary from 'sentry/components/errorBoundary';
+import {GlobalDrawer} from 'sentry/components/globalDrawer';
 import GlobalModal from 'sentry/components/globalModal';
+import Hook from 'sentry/components/hook';
 import Indicators from 'sentry/components/indicators';
 import {DEPLOY_PREVIEW_CONFIG, EXPERIMENTAL_SPA} from 'sentry/constants';
 import AlertStore from 'sentry/stores/alertStore';
 import ConfigStore from 'sentry/stores/configStore';
+import GuideStore from 'sentry/stores/guideStore';
 import HookStore from 'sentry/stores/hookStore';
 import OrganizationsStore from 'sentry/stores/organizationsStore';
 import {useLegacyStore} from 'sentry/stores/useLegacyStore';
-import {onRenderCallback} from 'sentry/utils/performanceForSentry';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import isValidOrgSlug from 'sentry/utils/isValidOrgSlug';
+import {onRenderCallback, Profiler} from 'sentry/utils/performanceForSentry';
 import useApi from 'sentry/utils/useApi';
+import {useColorscheme} from 'sentry/utils/useColorscheme';
+import {GlobalFeedbackForm} from 'sentry/utils/useFeedbackForm';
+import {useHotkeys} from 'sentry/utils/useHotkeys';
+import {useLocation} from 'sentry/utils/useLocation';
+import {useUser} from 'sentry/utils/useUser';
+import type {InstallWizardProps} from 'sentry/views/admin/installWizard';
+import {AsyncSDKIntegrationContextProvider} from 'sentry/views/app/asyncSDKIntegrationProvider';
+import LastKnownRouteContextProvider from 'sentry/views/lastKnownRouteContextProvider';
+import {OrganizationContextProvider} from 'sentry/views/organizationContext';
+import RouteAnalyticsContextProvider from 'sentry/views/routeAnalyticsContextProvider';
 
 import SystemAlerts from './systemAlerts';
 
 type Props = {
   children: React.ReactNode;
-};
+} & RouteComponentProps<{orgId?: string}, {}>;
 
-const InstallWizard = lazy(() => import('sentry/views/admin/installWizard'));
+const InstallWizard = lazy(
+  () => import('sentry/views/admin/installWizard')
+  // TODO(TS): DeprecatedAsyncComponent prop types are doing something weird
+) as unknown as React.ComponentType<InstallWizardProps>;
 const NewsletterConsent = lazy(() => import('sentry/views/newsletterConsent'));
+const BeaconConsent = lazy(() => import('sentry/views/beaconConsent'));
 
 /**
  * App is the root level container for all uathenticated routes.
  */
-function App({children}: Props) {
+function App({children, params}: Props) {
+  useColorscheme();
+
   const api = useApi();
+  const user = useUser();
   const config = useLegacyStore(ConfigStore);
 
   // Command palette global-shortcut
-  useHotkeys('command+shift+p, command+k, ctrl+shift+p, ctrl+k', e => {
-    openCommandPalette();
-    e.preventDefault();
-  });
+  useHotkeys(
+    [
+      {
+        match: ['command+shift+p', 'command+k', 'ctrl+shift+p', 'ctrl+k'],
+        includeInputs: true,
+        callback: () => openCommandPalette(),
+      },
+    ],
+    []
+  );
 
   // Theme toggle global shortcut
   useHotkeys(
-    'command+shift+l, ctrl+shift+l',
-    e => {
-      ConfigStore.set('theme', config.theme === 'light' ? 'dark' : 'light');
-      e.preventDefault();
-    },
+    [
+      {
+        match: ['command+shift+l', 'ctrl+shift+l'],
+        includeInputs: true,
+        callback: () =>
+          ConfigStore.set('theme', config.theme === 'light' ? 'dark' : 'light'),
+      },
+    ],
     [config.theme]
   );
 
@@ -58,7 +89,7 @@ function App({children}: Props) {
    */
   const loadOrganizations = useCallback(async () => {
     try {
-      const data = await api.requestPromise('/organizations/', {query: {member: '1'}});
+      const data = await fetchOrganizations(api, {member: '1'});
       OrganizationsStore.load(data);
     } catch {
       // TODO: do something?
@@ -69,6 +100,10 @@ function App({children}: Props) {
    * Creates Alerts for any internal health problems
    */
   const checkInternalHealth = useCallback(async () => {
+    // For saas deployments we have more robust ways of checking application health.
+    if (!config.isSelfHosted) {
+      return;
+    }
     let data: any = null;
 
     try {
@@ -83,7 +118,26 @@ function App({children}: Props) {
 
       AlertStore.addAlert({id, message, type, url, opaque: true});
     });
-  }, [api]);
+  }, [api, config.isSelfHosted]);
+
+  const {sentryUrl} = ConfigStore.get('links');
+  const {orgId} = params;
+  const isOrgSlugValid = orgId ? isValidOrgSlug(orgId) : true;
+
+  useEffect(() => {
+    if (orgId === undefined) {
+      return;
+    }
+
+    if (!isOrgSlugValid) {
+      window.location.replace(sentryUrl);
+      return;
+    }
+  }, [orgId, sentryUrl, isOrgSlugValid]);
+
+  // Update guide store on location change
+  const location = useLocation();
+  useEffect(() => GuideStore.onURLChange(), [location]);
 
   useEffect(() => {
     loadOrganizations();
@@ -105,8 +159,8 @@ function App({children}: Props) {
     }
 
     // Set the user for analytics
-    if (config.user) {
-      HookStore.get('analytics:init-user').map(cb => cb(config.user));
+    if (user) {
+      HookStore.get('analytics:init-user').map(cb => cb(user));
     }
 
     initApiClientErrorHandling();
@@ -114,25 +168,55 @@ function App({children}: Props) {
 
     // When the app is unloaded clear the organizationst list
     return () => OrganizationsStore.load([]);
-  }, [loadOrganizations, checkInternalHealth, config.messages, config.user]);
+  }, [loadOrganizations, checkInternalHealth, config.messages, user]);
 
   function clearUpgrade() {
     ConfigStore.set('needsUpgrade', false);
   }
 
   function clearNewsletterConsent() {
-    const flags = {...config.user.flags, newsletter_consent_prompt: false};
-    ConfigStore.set('user', {...config.user, flags});
+    const flags = {...user.flags, newsletter_consent_prompt: false};
+    ConfigStore.set('user', {...user, flags});
   }
 
-  const needsUpgrade = config.user?.isSuperuser && config.needsUpgrade;
-  const newsletterConsentPrompt = config.user?.flags?.newsletter_consent_prompt;
+  function clearBeaconConsentPrompt() {
+    ConfigStore.set('shouldShowBeaconConsentPrompt', false);
+  }
+
+  const displayInstallWizard =
+    user?.isSuperuser && config.needsUpgrade && config.isSelfHosted;
+  const newsletterConsentPrompt = user?.flags?.newsletter_consent_prompt;
+  const partnershipAgreementPrompt = config.partnershipAgreementPrompt;
+  const beaconConsentPrompt =
+    user?.isSuperuser && config.isSelfHosted && config.shouldShowBeaconConsentPrompt;
 
   function renderBody() {
-    if (needsUpgrade) {
+    if (displayInstallWizard) {
       return (
         <Suspense fallback={null}>
-          <InstallWizard onConfigured={clearUpgrade} />;
+          <InstallWizard onConfigured={clearUpgrade} />
+        </Suspense>
+      );
+    }
+
+    if (beaconConsentPrompt) {
+      return (
+        <Suspense fallback={null}>
+          <BeaconConsent onSubmitSuccess={clearBeaconConsentPrompt} />
+        </Suspense>
+      );
+    }
+
+    if (partnershipAgreementPrompt) {
+      return (
+        <Suspense fallback={null}>
+          <Hook
+            name="component:partnership-agreement"
+            partnerDisplayName={partnershipAgreementPrompt.partnerDisplayName}
+            agreements={partnershipAgreementPrompt.agreements}
+            onSubmitSuccess={() => ConfigStore.set('partnershipAgreementPrompt', null)}
+            organizationSlug={config.customerDomain?.subdomain}
+          />
         </Suspense>
       );
     }
@@ -145,6 +229,10 @@ function App({children}: Props) {
       );
     }
 
+    if (!isOrgSlugValid) {
+      return null;
+    }
+
     return children;
   }
 
@@ -154,12 +242,24 @@ function App({children}: Props) {
 
   return (
     <Profiler id="App" onRender={onRenderCallback}>
-      <MainContainer tabIndex={-1} ref={mainContainerRef}>
-        <GlobalModal onClose={handleModalClose} />
-        <SystemAlerts className="messages-container" />
-        <Indicators className="indicators-container" />
-        <ErrorBoundary>{renderBody()}</ErrorBoundary>
-      </MainContainer>
+      <LastKnownRouteContextProvider>
+        <RouteAnalyticsContextProvider>
+          <OrganizationContextProvider>
+            <AsyncSDKIntegrationContextProvider>
+              <GlobalFeedbackForm>
+                <GlobalDrawer>
+                  <MainContainer tabIndex={-1} ref={mainContainerRef}>
+                    <GlobalModal onClose={handleModalClose} />
+                    <SystemAlerts className="messages-container" />
+                    <Indicators className="indicators-container" />
+                    <ErrorBoundary>{renderBody()}</ErrorBoundary>
+                  </MainContainer>
+                </GlobalDrawer>
+              </GlobalFeedbackForm>
+            </AsyncSDKIntegrationContextProvider>
+          </OrganizationContextProvider>
+        </RouteAnalyticsContextProvider>
+      </LastKnownRouteContextProvider>
     </Profiler>
   );
 }

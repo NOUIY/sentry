@@ -1,19 +1,22 @@
-import {components as selectComponents, MultiValueProps} from 'react-select';
+import type {MultiValueProps, OptionTypeBase} from 'react-select';
+import {components as selectComponents} from 'react-select';
 import styled from '@emotion/styled';
 
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconCheckmark, IconWarning} from 'sentry/icons';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import useOrganization from 'sentry/utils/useOrganization';
 
-import {InviteStatus} from './types';
+import type {InviteStatus} from './types';
 
-function renderEmailValue<Option>(
+function renderEmailValue<Option extends OptionTypeBase>(
   status: InviteStatus[string],
   valueProps: MultiValueProps<Option>
 ) {
+  const organization = useOrganization();
   const {children, ...props} = valueProps;
-  const error = status && status.error;
+  const error = status?.error;
 
   const emailLabel =
     status === undefined ? (
@@ -23,8 +26,10 @@ function renderEmailValue<Option>(
         <EmailLabel>
           {children}
           {!status.sent && !status.error && <SendingIndicator />}
-          {status.error && <IconWarning size="10px" />}
-          {status.sent && <IconCheckmark size="10px" color="success" />}
+          {status.error && <IconWarning legacySize="10px" />}
+          {status.sent && !organization.features.includes('invite-members-new-modal') && (
+            <IconCheckmark legacySize="10px" color="success" />
+          )}
         </EmailLabel>
       </Tooltip>
     );

@@ -3,21 +3,19 @@ from datetime import timedelta
 import pytest
 from django.urls import reverse
 
-from sentry.testutils import APITestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.cases import APITestCase, SnubaTestCase
+from sentry.testutils.helpers.datetime import before_now
 from sentry.utils.samples import load_data
 
 
 class OrganizationEventsSpanOpsEndpointBase(APITestCase, SnubaTestCase):
-    FEATURES = ["organizations:performance-suspect-spans-view"]
-
     def setUp(self):
         super().setUp()
         self.login_as(user=self.user)
 
         self.url = reverse(
             "sentry-api-0-organization-events-span-ops",
-            kwargs={"organization_slug": self.organization.slug},
+            kwargs={"organization_id_or_slug": self.organization.slug},
         )
 
         self.min_ago = before_now(minutes=1).replace(microsecond=0)
@@ -47,8 +45,8 @@ class OrganizationEventsSpanOpsEndpointBase(APITestCase, SnubaTestCase):
                     "same_process_as_parent": True,
                     "parent_span_id": "a" * 16,
                     "span_id": x * 16,
-                    "start_timestamp": iso_format(self.min_ago + timedelta(seconds=1)),
-                    "timestamp": iso_format(self.min_ago + timedelta(seconds=4)),
+                    "start_timestamp": self.min_ago + timedelta(seconds=1),
+                    "timestamp": self.min_ago + timedelta(seconds=4),
                     "op": "django.middleware",
                     "description": "middleware span",
                     "hash": "cd" * 8,
@@ -61,8 +59,8 @@ class OrganizationEventsSpanOpsEndpointBase(APITestCase, SnubaTestCase):
                     "same_process_as_parent": True,
                     "parent_span_id": "a" * 16,
                     "span_id": x * 16,
-                    "start_timestamp": iso_format(self.min_ago + timedelta(seconds=4)),
-                    "timestamp": iso_format(self.min_ago + timedelta(seconds=5)),
+                    "start_timestamp": self.min_ago + timedelta(seconds=4),
+                    "timestamp": self.min_ago + timedelta(seconds=5),
                     "op": "django.view",
                     "description": "view span",
                     "hash": "ef" * 8,
@@ -80,14 +78,13 @@ class OrganizationEventsSpanOpsEndpointBase(APITestCase, SnubaTestCase):
     def test_basic(self):
         self.create_event()
 
-        with self.feature(self.FEATURES):
-            response = self.client.get(
-                self.url,
-                data={
-                    "project": self.project.id,
-                },
-                format="json",
-            )
+        response = self.client.get(
+            self.url,
+            data={
+                "project": self.project.id,
+            },
+            format="json",
+        )
 
         assert response.status_code == 200, response.content
         assert response.data == [

@@ -1,11 +1,9 @@
-import {Component} from 'react';
 import styled from '@emotion/styled';
 
 import {trimPackage} from 'sentry/components/events/interfaces/frame/utils';
-import {STACKTRACE_PREVIEW_TOOLTIP_DELAY} from 'sentry/components/stacktracePreview';
-import Tooltip from 'sentry/components/tooltip';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
+import {Tooltip} from 'sentry/components/tooltip';
+import {SLOW_TOOLTIP_DELAY} from 'sentry/constants';
+import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
 
 type Props = {
@@ -20,57 +18,52 @@ type Props = {
   isHoverPreviewed?: boolean;
 };
 
-class PackageLink extends Component<Props> {
-  handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
-    const {isClickable, onClick} = this.props;
-
+function PackageLink({
+  children,
+  includeSystemFrames,
+  isClickable,
+  isHoverPreviewed,
+  onClick,
+  packagePath,
+  withLeadHint,
+}) {
+  const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
     if (isClickable) {
       onClick(event);
     }
   };
 
-  render() {
-    const {
-      packagePath,
-      isClickable,
-      withLeadHint,
-      children,
-      includeSystemFrames,
-      isHoverPreviewed,
-    } = this.props;
-
-    return (
-      <Package
-        onClick={this.handleClick}
-        isClickable={isClickable}
-        withLeadHint={withLeadHint}
-        includeSystemFrames={includeSystemFrames}
-      >
-        {defined(packagePath) ? (
-          <Tooltip
-            title={packagePath}
-            delay={isHoverPreviewed ? STACKTRACE_PREVIEW_TOOLTIP_DELAY : undefined}
+  return (
+    <Package
+      onClick={handleClick}
+      isClickable={isClickable}
+      withLeadHint={withLeadHint}
+      includeSystemFrames={includeSystemFrames}
+    >
+      {defined(packagePath) ? (
+        <Tooltip
+          title={packagePath}
+          delay={isHoverPreviewed ? SLOW_TOOLTIP_DELAY : undefined}
+        >
+          <PackageName
+            isClickable={isClickable}
+            withLeadHint={withLeadHint}
+            includeSystemFrames={includeSystemFrames}
           >
-            <PackageName
-              isClickable={isClickable}
-              withLeadHint={withLeadHint}
-              includeSystemFrames={includeSystemFrames}
-            >
-              {trimPackage(packagePath)}
-            </PackageName>
-          </Tooltip>
-        ) : (
-          <span>{'<unknown>'}</span>
-        )}
-        {children}
-      </Package>
-    );
-  }
+            {trimPackage(packagePath)}
+          </PackageName>
+        </Tooltip>
+      ) : (
+        <span>{'<unknown>'}</span>
+      )}
+      {children}
+    </Package>
+  );
 }
 
 export const Package = styled('a')<Partial<Props>>`
   font-size: 13px;
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   padding: 0 0 0 ${space(0.5)};
   color: ${p => p.theme.textColor};
   :hover {
@@ -83,8 +76,8 @@ export const Package = styled('a')<Partial<Props>>`
   ${p =>
     p.withLeadHint && (p.includeSystemFrames ? `max-width: 89px;` : `max-width: 76px;`)}
 
-  @media (min-width: ${p => p.theme.breakpoints[2]}) and (max-width: ${p =>
-    p.theme.breakpoints[3]}) {
+  @media (min-width: ${p => p.theme.breakpoints.large}) and (max-width: ${p =>
+    p.theme.breakpoints.xlarge}) {
     ${p =>
       p.withLeadHint && (p.includeSystemFrames ? `max-width: 76px;` : `max-width: 63px;`)}
   }
@@ -95,7 +88,7 @@ export const PackageName = styled('span')<
 >`
   max-width: ${p =>
     p.withLeadHint && p.isClickable && !p.includeSystemFrames ? '45px' : '104px'};
-  ${overflowEllipsis}
+  ${p => p.theme.overflowEllipsis}
 `;
 
 export default PackageLink;

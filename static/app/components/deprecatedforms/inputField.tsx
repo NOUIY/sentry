@@ -12,9 +12,14 @@ type InputFieldProps = FormField['props'] & {
   step?: number;
 };
 
-class InputField<
+// XXX: This is ONLY used in GenericField. If we can delete that this can go.
+
+/**
+ * @deprecated Do not use this
+ */
+abstract class InputField<
   Props extends InputFieldProps = InputFieldProps,
-  State extends FormField['state'] = FormField['state']
+  State extends FormField['state'] = FormField['state'],
 > extends FormField<Props, State> {
   getField() {
     return (
@@ -44,9 +49,7 @@ class InputField<
     return 'control-group';
   }
 
-  getType(): string {
-    throw new Error('Must be implemented by child.');
-  }
+  abstract getType(): string;
 }
 
 export default InputField;

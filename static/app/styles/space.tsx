@@ -1,5 +1,4 @@
 const SPACES = {
-  0: '0',
   0.25: '2px',
   0.5: '4px',
   0.75: '6px',
@@ -12,8 +11,8 @@ const SPACES = {
 
 export type ValidSize = keyof typeof SPACES;
 
-function space<S extends ValidSize>(size: S): typeof SPACES[S] {
+function space<S extends ValidSize>(size: S): (typeof SPACES)[S] {
   return SPACES[size];
 }
 
-export default space;
+export {space};

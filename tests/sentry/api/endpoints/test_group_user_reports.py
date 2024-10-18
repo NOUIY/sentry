@@ -1,16 +1,16 @@
-from exam import fixture
+from functools import cached_property
 
-from sentry.models import Environment, UserReport
-from sentry.testutils import APITestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.models.userreport import UserReport
+from sentry.testutils.cases import APITestCase, SnubaTestCase
+from sentry.testutils.helpers.datetime import before_now
 
 
 class GroupUserReport(APITestCase, SnubaTestCase):
     def setUp(self):
         super().setUp()
         self.project = self.create_project()
-        self.env1 = self.create_environment(self.project, "production")
-        self.env2 = self.create_environment(self.project, "staging")
+        self.env1 = self.create_environment(self.project, name="production")
+        self.env2 = self.create_environment(self.project, name="staging")
 
         self.env1_events = self.create_events_for_environment(self.env1, 5)
         self.env2_events = self.create_events_for_environment(self.env2, 5)
@@ -24,16 +24,9 @@ class GroupUserReport(APITestCase, SnubaTestCase):
             self.project, self.group, self.env2_events, self.env2
         )
 
-    @fixture
+    @cached_property
     def path(self):
         return f"/api/0/groups/{self.group.id}/user-feedback/"
-
-    def create_environment(self, project, name):
-        env = Environment.objects.create(
-            project_id=project.id, organization_id=project.organization_id, name=name
-        )
-        env.add_project(project)
-        return env
 
     def create_events_for_environment(self, environment, num_events):
         return [
@@ -41,7 +34,7 @@ class GroupUserReport(APITestCase, SnubaTestCase):
                 data={
                     "fingerprint": ["group-1"],
                     "tags": {"environment": environment.name},
-                    "timestamp": iso_format(before_now(seconds=1)),
+                    "timestamp": before_now(seconds=1).isoformat(),
                 },
                 project_id=self.project.id,
             )
@@ -92,7 +85,7 @@ class GroupUserReport(APITestCase, SnubaTestCase):
     def test_no_environment(self):
         self.login_as(user=self.user)
 
-        empty_env = self.create_environment(self.project, "")
+        empty_env = self.create_environment(self.project, name="")
         empty_env_events = self.create_events_for_environment(empty_env, 5)
         userreports = self.create_user_report_for_events(
             self.project, self.group, empty_env_events, empty_env

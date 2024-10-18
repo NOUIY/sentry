@@ -1,20 +1,19 @@
-import {ReactNode} from 'react';
+import type {ReactNode} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import Count from 'sentry/components/count';
-import GridEditable, {
-  COL_WIDTH_UNDEFINED,
-  GridColumnOrder,
-} from 'sentry/components/gridEditable';
+import type {GridColumnOrder} from 'sentry/components/gridEditable';
+import GridEditable, {COL_WIDTH_UNDEFINED} from 'sentry/components/gridEditable';
 import SortLink from 'sentry/components/gridEditable/sortLink';
 import {IconArrow} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
-import {ColumnType, fieldAlignment} from 'sentry/utils/discover/fields';
-import {AnomalyInfo} from 'sentry/utils/performance/anomalies/anomaliesQuery';
+import type {ColumnType} from 'sentry/utils/discover/fields';
+import {fieldAlignment} from 'sentry/utils/discover/fields';
+import type {AnomalyInfo} from 'sentry/utils/performance/anomalies/anomaliesQuery';
 
 type Props = {
   isLoading: boolean;
@@ -49,7 +48,6 @@ export default function AnomaliesTable(props: Props) {
         renderHeadCell,
         renderBodyCell: renderBodyCellWithMeta(location, organization),
       }}
-      location={location}
     />
   );
 }
@@ -68,7 +66,10 @@ function renderHeadCell(column: TableColumn, _index: number): ReactNode {
 }
 
 function renderBodyCellWithMeta(location: Location, organization: Organization) {
-  return (column: TableColumn, dataRow: TableDataRowWithExtras): React.ReactNode => {
+  return function (
+    column: TableColumn,
+    dataRow: TableDataRowWithExtras
+  ): React.ReactNode {
     const fieldRenderer = getFieldRenderer(column.key, COLUMN_TYPE);
 
     if (column.key === 'confidence') {
@@ -113,10 +114,10 @@ const NumberCell = styled('div')`
 `;
 
 const LowConfidence = styled('div')`
-  color: ${p => p.theme.yellow300};
+  color: ${p => p.theme.yellow400};
 `;
 const HighConfidence = styled('div')`
-  color: ${p => p.theme.red300};
+  color: ${p => p.theme.red400};
 `;
 
 const ConfidenceCell = styled('div')`

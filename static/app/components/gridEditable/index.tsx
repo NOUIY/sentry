@@ -1,11 +1,12 @@
-import {Component, createRef, Fragment, Profiler} from 'react';
-import {Location} from 'history';
+import type {ReactNode} from 'react';
+import {Component, createRef, Fragment} from 'react';
 
 import EmptyStateWarning from 'sentry/components/emptyStateWarning';
+import InteractionStateLayer from 'sentry/components/interactionStateLayer';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {onRenderCallback} from 'sentry/utils/performanceForSentry';
+import {onRenderCallback, Profiler} from 'sentry/utils/performanceForSentry';
 
 import {
   Body,
@@ -92,16 +93,28 @@ type GridEditableProps<DataRow, ColumnKey> = {
       rowIndex?: number
     ) => React.ReactNode[];
   };
-  location: Location;
-  error?: React.ReactNode | null;
+  'aria-label'?: string;
+  emptyMessage?: React.ReactNode;
+  error?: unknown | null;
   /**
    * Inject a set of buttons into the top of the grid table.
    * The controlling component is responsible for handling any actions
    * in these buttons and updating props to the GridEditable instance.
    */
   headerButtons?: () => React.ReactNode;
+
+  height?: string | number;
+  highlightedRowKey?: number;
+
   isLoading?: boolean;
 
+  minimumColWidth?: number;
+
+  onRowMouseOut?: (row: DataRow, key: number, event: React.MouseEvent) => void;
+  onRowMouseOver?: (row: DataRow, key: number, event: React.MouseEvent) => void;
+
+  scrollable?: boolean;
+  stickyHeader?: boolean;
   /**
    * GridEditable (mostly) do not maintain any internal state and relies on the
    * parent component to tell it how/what to render and will mutate the view
@@ -111,7 +124,7 @@ type GridEditableProps<DataRow, ColumnKey> = {
    * - `columnSortBy` is not used at the moment, however it might be better to
    *   move sorting into Grid for performance
    */
-  title?: string;
+  title?: ReactNode;
 };
 
 type GridEditableState = {
@@ -120,12 +133,12 @@ type GridEditableState = {
 
 class GridEditable<
   DataRow extends {[key: string]: any},
-  ColumnKey extends ObjectKey
+  ColumnKey extends ObjectKey,
 > extends Component<GridEditableProps<DataRow, ColumnKey>, GridEditableState> {
   // Static methods do not allow the use of generics bounded to the parent class
   // For more info: https://github.com/microsoft/TypeScript/issues/14600
   static getDerivedStateFromProps(
-    props: Readonly<GridEditableProps<Object, keyof Object>>,
+    props: Readonly<GridEditableProps<Record<string, any>, ObjectKey>>,
     prevState: GridEditableState
   ): GridEditableState {
     return {
@@ -276,22 +289,23 @@ class GridEditable<
       return;
     }
 
+    const minimumColWidth = this.props.minimumColWidth ?? COL_WIDTH_MINIMUM;
     const prependColumns = this.props.grid.prependColumnWidths || [];
     const prepend = prependColumns.join(' ');
     const widths = columnOrder.map((item, index) => {
       if (item.width === COL_WIDTH_UNDEFINED) {
-        return `minmax(${COL_WIDTH_MINIMUM}px, auto)`;
+        return `minmax(${minimumColWidth}px, auto)`;
       }
-      if (typeof item.width === 'number' && item.width > COL_WIDTH_MINIMUM) {
+      if (typeof item.width === 'number' && item.width > minimumColWidth) {
         if (index === columnOrder.length - 1) {
           return `minmax(${item.width}px, auto)`;
         }
         return `${item.width}px`;
       }
       if (index === columnOrder.length - 1) {
-        return `minmax(${COL_WIDTH_MINIMUM}px, auto)`;
+        return `minmax(${minimumColWidth}px, auto)`;
       }
-      return `${COL_WIDTH_MINIMUM}px`;
+      return `${minimumColWidth}px`;
     });
 
     // The last column has no resizer and should always be a flexible column
@@ -301,7 +315,7 @@ class GridEditable<
   }
 
   renderGridHead() {
-    const {error, isLoading, columnOrder, grid, data} = this.props;
+    const {error, isLoading, columnOrder, grid, data, stickyHeader} = this.props;
 
     // Ensure that the last column cannot be removed
     const numColumn = columnOrder.length;
@@ -310,16 +324,24 @@ class GridEditable<
       ? grid.renderPrependColumns(true)
       : [];
     return (
-      <GridRow>
+      <GridRow data-test-id="grid-head-row">
         {prependColumns &&
+          columnOrder?.length > 0 &&
           prependColumns.map((item, i) => (
-            <GridHeadCellStatic key={`prepend-${i}`}>{item}</GridHeadCellStatic>
+            <GridHeadCellStatic data-test-id="grid-head-cell-static" key={`prepend-${i}`}>
+              {item}
+            </GridHeadCellStatic>
           ))}
         {
-          /* Note that this.onResizeMouseDown assumes GridResizer is nested
-            1 levels under GridHeadCell */
+          // Note that this.onResizeMouseDown assumes GridResizer is nested
+          // 1 levels under GridHeadCell
           columnOrder.map((column, i) => (
-            <GridHeadCell key={`${i}.${column.key}`} isFirst={i === 0}>
+            <GridHeadCell
+              data-test-id="grid-head-cell"
+              key={`${i}.${column.key}`}
+              isFirst={i === 0}
+              sticky={stickyHeader}
+            >
               {grid.renderHeadCell ? grid.renderHeadCell(column, i) : column.name}
               {i !== numColumn - 1 && (
                 <GridResizer
@@ -355,19 +377,28 @@ class GridEditable<
   }
 
   renderGridBodyRow = (dataRow: DataRow, row: number) => {
-    const {columnOrder, grid} = this.props;
+    const {columnOrder, grid, onRowMouseOver, onRowMouseOut, highlightedRowKey} =
+      this.props;
     const prependColumns = grid.renderPrependColumns
       ? grid.renderPrependColumns(false, dataRow, row)
       : [];
 
     return (
-      <GridRow key={row}>
-        {prependColumns &&
-          prependColumns.map((item, i) => (
-            <GridBodyCell key={`prepend-${i}`}>{item}</GridBodyCell>
-          ))}
+      <GridRow
+        key={row}
+        onMouseOver={event => onRowMouseOver?.(dataRow, row, event)}
+        onMouseOut={event => onRowMouseOut?.(dataRow, row, event)}
+        data-test-id="grid-body-row"
+      >
+        <InteractionStateLayer isHovered={row === highlightedRowKey} as="td" />
+
+        {prependColumns?.map((item, i) => (
+          <GridBodyCell data-test-id="grid-body-cell" key={`prepend-${i}`}>
+            {item}
+          </GridBodyCell>
+        ))}
         {columnOrder.map((col, i) => (
-          <GridBodyCell key={`${col.key}${i}`}>
+          <GridBodyCell data-test-id="grid-body-cell" key={`${col.key}${i}`}>
             {grid.renderBodyCell
               ? grid.renderBodyCell(col, dataRow, row, i)
               : dataRow[col.key]}
@@ -381,7 +412,7 @@ class GridEditable<
     return (
       <GridRow>
         <GridBodyCellStatus>
-          <IconWarning color="gray300" size="lg" />
+          <IconWarning data-test-id="error-indicator" color="gray300" size="lg" />
         </GridBodyCellStatus>
       </GridRow>
     );
@@ -398,19 +429,28 @@ class GridEditable<
   }
 
   renderEmptyData() {
+    const {emptyMessage} = this.props;
     return (
       <GridRow>
         <GridBodyCellStatus>
-          <EmptyStateWarning>
-            <p>{t('No results found for your query')}</p>
-          </EmptyStateWarning>
+          {emptyMessage ?? (
+            <EmptyStateWarning>
+              <p>{t('No results found for your query')}</p>
+            </EmptyStateWarning>
+          )}
         </GridBodyCellStatus>
       </GridRow>
     );
   }
 
   render() {
-    const {title, headerButtons} = this.props;
+    const {
+      title,
+      headerButtons,
+      scrollable,
+      height,
+      'aria-label': ariaLabel,
+    } = this.props;
     const showHeader = title || headerButtons;
     return (
       <Fragment>
@@ -424,7 +464,13 @@ class GridEditable<
             </Header>
           )}
           <Body>
-            <Grid data-test-id="grid-editable" ref={this.refGrid}>
+            <Grid
+              aria-label={ariaLabel}
+              data-test-id="grid-editable"
+              scrollable={scrollable}
+              height={height}
+              ref={this.refGrid}
+            >
               <GridHead>{this.renderGridHead()}</GridHead>
               <GridBody>{this.renderGridBody()}</GridBody>
             </Grid>

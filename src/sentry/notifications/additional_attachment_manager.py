@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from typing import Any, Callable, MutableMapping
+from collections.abc import Callable, MutableMapping
 
 from sentry.api.validators.integrations import validate_provider
-from sentry.integrations.slack.message_builder import SlackAttachment
-from sentry.models import Integration, Organization
-from sentry.types.integrations import ExternalProviders
+from sentry.integrations.models.integration import Integration
+from sentry.integrations.services.integration import RpcIntegration
+from sentry.integrations.slack.message_builder.types import SlackBlock
+from sentry.integrations.types import ExternalProviders
+from sentry.models.organization import Organization
+from sentry.organizations.services.organization import RpcOrganization
 
-# TODO(Steve): Fix types
-GetAttachment = Callable[[Any, Any], SlackAttachment]
+GetAttachment = Callable[
+    [Integration | RpcIntegration, Organization | RpcOrganization], list[SlackBlock]
+]
 
 
 class AttachmentGeneratorAlreadySetException(Exception):
@@ -22,11 +26,11 @@ class AdditionalAttachmentManager:
     # need to update types for additional providers
     def get_additional_attachment(
         self,
-        integration: Integration,
-        organization: Organization,
-    ) -> SlackAttachment | None:
+        integration: Integration | RpcIntegration,
+        organization: Organization | RpcOrganization,
+    ) -> list[SlackBlock] | None:
         # look up the generator by the provider but only accepting slack for now
-        provider = validate_provider(integration.provider, [ExternalProviders.SLACK])
+        provider = validate_provider(integration.provider, {ExternalProviders.SLACK})
         attachment_generator = self.attachment_generators.get(provider)
         if attachment_generator is None:
             return None

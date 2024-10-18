@@ -1,11 +1,33 @@
-import {Component} from 'react';
+import {useEffect, useState} from 'react';
 import styled from '@emotion/styled';
+import * as Sentry from '@sentry/react';
 import * as qs from 'query-string';
 
 import ConfigStore from 'sentry/stores/configStore';
-import {callIfFunction} from 'sentry/utils/callIfFunction';
 
-import {imageStyle, ImageStyleProps} from './styles';
+import type {ImageStyleProps} from './styles';
+import {imageStyle} from './styles';
+
+function isCryptoSubtleDigestAvailable() {
+  return (
+    !!window.crypto &&
+    !!window.crypto.subtle &&
+    typeof window.crypto.subtle.digest === 'function'
+  );
+}
+
+/**
+ * Available only in secure contexts. (https)
+ * Gravatar will not work in http
+ */
+async function hashGravatarId(message = ''): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(message);
+  const hash = await window.crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 type Props = {
   remoteSize: number;
@@ -15,75 +37,60 @@ type Props = {
   placeholder?: string;
 } & ImageStyleProps;
 
-type State = {
-  MD5?: any;
-};
+function Gravatar({
+  remoteSize,
+  gravatarId,
+  placeholder,
+  round,
+  onError,
+  onLoad,
+  suggested,
+}: Props) {
+  const [sha256, setSha256] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isCryptoSubtleDigestAvailable()) {
+      return;
+    }
 
-class Gravatar extends Component<Props, State> {
-  state: State = {
-    MD5: undefined,
-  };
+    hashGravatarId((gravatarId ?? '').trim())
+      .then(hash => {
+        setSha256(hash);
+      })
+      .catch((err: any) => {
+        // If there is an error with the hash, we should not render the gravatar
+        setSha256(null);
 
-  componentDidMount() {
-    this._isMounted = true;
-
-    import('crypto-js/md5')
-      .then(mod => mod.default)
-      .then(MD5 => {
-        if (!this._isMounted) {
-          return;
-        }
-        this.setState({MD5});
+        Sentry.withScope(scope => {
+          scope.setFingerprint(['gravatar-hash-error']);
+          Sentry.captureException(err);
+        });
       });
+  }, [gravatarId]);
+
+  if (!sha256) {
+    return null;
   }
 
-  componentWillUnmount() {
-    // Need to track mounted state because `React.isMounted()` is deprecated and because of
-    // dynamic imports
-    this._isMounted = false;
-  }
+  const query = qs.stringify({
+    s: remoteSize,
+    // If gravatar is not found we need the request to return an error,
+    // otherwise error handler will not trigger and avatar will not have a display a LetterAvatar backup.
+    d: placeholder ?? '404',
+  });
 
-  private _isMounted: boolean = false;
+  const gravatarBaseUrl = ConfigStore.get('gravatarBaseUrl');
 
-  buildGravatarUrl = () => {
-    const {gravatarId, remoteSize, placeholder} = this.props;
-    let url = ConfigStore.getConfig().gravatarBaseUrl + '/avatar/';
+  const url = `${gravatarBaseUrl}/avatar/${sha256}?${query}`;
 
-    const md5 = callIfFunction(this.state.MD5, gravatarId);
-    if (md5) {
-      url += md5;
-    }
-
-    const query = {
-      s: remoteSize || undefined,
-      // If gravatar is not found we need the request to return an error,
-      // otherwise error handler will not trigger and avatar will not have a display a LetterAvatar backup.
-      d: placeholder || '404',
-    };
-
-    url += '?' + qs.stringify(query);
-
-    return url;
-  };
-
-  render() {
-    if (!this.state.MD5) {
-      return null;
-    }
-
-    const {round, onError, onLoad, suggested, grayscale} = this.props;
-
-    return (
-      <Image
-        round={round}
-        src={this.buildGravatarUrl()}
-        onLoad={onLoad}
-        onError={onError}
-        suggested={suggested}
-        grayscale={grayscale}
-      />
-    );
-  }
+  return (
+    <Image
+      round={round}
+      src={url}
+      onLoad={onLoad}
+      onError={onError}
+      suggested={suggested}
+    />
+  );
 }
 
 export default Gravatar;

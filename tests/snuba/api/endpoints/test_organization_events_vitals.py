@@ -1,11 +1,14 @@
 from datetime import timedelta
 
+import pytest
 from django.urls import reverse
 
 from sentry.models.transaction_threshold import ProjectTransactionThreshold, TransactionMetric
-from sentry.testutils import APITestCase, MetricsEnhancedPerformanceTestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.cases import APITestCase, MetricsEnhancedPerformanceTestCase, SnubaTestCase
+from sentry.testutils.helpers.datetime import before_now
 from sentry.utils.samples import load_data
+
+pytestmark = pytest.mark.sentry_metrics
 
 
 class OrganizationEventsVitalsEndpointTest(APITestCase, SnubaTestCase):
@@ -15,9 +18,9 @@ class OrganizationEventsVitalsEndpointTest(APITestCase, SnubaTestCase):
         self.end = self.start + timedelta(hours=6)
 
         self.transaction_data = load_data("transaction", timestamp=self.start)
-        self.query = {
-            "start": iso_format(self.start),
-            "end": iso_format(self.end),
+        self.query: dict[str, str | list[str]] = {
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
         }
         self.features = {}
 
@@ -41,7 +44,7 @@ class OrganizationEventsVitalsEndpointTest(APITestCase, SnubaTestCase):
         self.login_as(user=self.user)
         url = reverse(
             "sentry-api-0-organization-events-vitals",
-            kwargs={"organization_slug": self.organization.slug},
+            kwargs={"organization_id_or_slug": self.organization.slug},
         )
 
         with self.feature(features):
@@ -305,9 +308,9 @@ class OrganizationEventsMetricsEnhancedPerformanceEndpointTest(MetricsEnhancedPe
         self.start = before_now(days=1).replace(hour=10, minute=0, second=0, microsecond=0)
         self.end = self.start + timedelta(hours=6)
 
-        self.query = {
-            "start": iso_format(self.start),
-            "end": iso_format(self.end),
+        self.query: dict[str, str | list[str]] = {
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
         }
         self.features = {"organizations:performance-use-metrics": True}
 
@@ -323,7 +326,7 @@ class OrganizationEventsMetricsEnhancedPerformanceEndpointTest(MetricsEnhancedPe
         with self.feature(features):
             url = reverse(
                 "sentry-api-0-organization-events-vitals",
-                kwargs={"organization_slug": self.organization.slug},
+                kwargs={"organization_id_or_slug": self.organization.slug},
             )
 
         with self.feature(features):
@@ -342,7 +345,7 @@ class OrganizationEventsMetricsEnhancedPerformanceEndpointTest(MetricsEnhancedPe
 
     def test_simple(self):
         for rating, lcp in [("good", 2000), ("meh", 3000), ("poor", 5000)]:
-            self.store_metric(
+            self.store_transaction_metric(
                 lcp,
                 metric="measurements.lcp",
                 tags={"transaction": "foo_transaction", "measurement_rating": rating},
@@ -369,7 +372,7 @@ class OrganizationEventsMetricsEnhancedPerformanceEndpointTest(MetricsEnhancedPe
         ]
         for rating, duration, count in counts:
             for _ in range(count):
-                self.store_metric(
+                self.store_transaction_metric(
                     duration,
                     metric="measurements.lcp",
                     tags={"transaction": "foo_transaction", "measurement_rating": rating},
@@ -397,7 +400,7 @@ class OrganizationEventsMetricsEnhancedPerformanceEndpointTest(MetricsEnhancedPe
             ("measurements.fp", 4000, "poor"),
         ]
         for vital, duration, rating in vitals:
-            self.store_metric(
+            self.store_transaction_metric(
                 duration,
                 metric=vital,
                 tags={"transaction": "foo_transaction", "measurement_rating": rating},

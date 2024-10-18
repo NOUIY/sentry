@@ -1,28 +1,24 @@
 import {Fragment} from 'react';
-import {PlainRoute, RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import AlertLink from 'sentry/components/alertLink';
-import AutoSelectText from 'sentry/components/autoSelectText';
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
 import LinkWithConfirmation from 'sentry/components/links/linkWithConfirmation';
-import {PanelTable} from 'sentry/components/panels';
+import {PanelTable} from 'sentry/components/panels/panelTable';
+import TextCopyInput from 'sentry/components/textCopyInput';
 import {IconAdd, IconDelete} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import {inputStyles} from 'sentry/styles/input';
+import type {PlainRoute, RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
 import recreateRoute from 'sentry/utils/recreateRoute';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import TextBlock from 'sentry/views/settings/components/text/textBlock';
 
-import {DeprecatedApiKey} from './types';
+import type {DeprecatedApiKey} from './types';
 
-type RouteParams = {
-  orgId: string;
-};
-
-type Props = RouteComponentProps<RouteParams, {}> & {
+type Props = RouteComponentProps<{}, {}> & {
   /**
    * Busy differs from loading in that busy is a result of an action like removing
    */
@@ -37,10 +33,12 @@ type Props = RouteComponentProps<RouteParams, {}> & {
   onAddApiKey: () => {};
 
   onRemove: (id: DeprecatedApiKey['id']) => {};
+  organization: Organization;
   routes: PlainRoute[];
 };
 
 function OrganizationApiKeysList({
+  organization,
   params,
   routes,
   keys,
@@ -49,13 +47,13 @@ function OrganizationApiKeysList({
   onAddApiKey,
   onRemove,
 }: Props) {
-  const hasKeys = keys && keys.length;
+  const hasKeys = Boolean(keys?.length);
 
   const action = (
     <Button
       priority="primary"
-      size="small"
-      icon={<IconAdd size="xs" isCircled />}
+      size="sm"
+      icon={<IconAdd isCircled />}
       busy={busy}
       disabled={busy}
       onClick={onAddApiKey}
@@ -81,7 +79,7 @@ function OrganizationApiKeysList({
 
       <AlertLink to="/settings/account/api/auth-tokens/" priority="info">
         {tct(
-          'Until Sentry supports OAuth, you might want to switch to using [tokens:Auth Tokens] instead.',
+          'Until Sentry supports OAuth, you might want to switch to using [tokens:User Auth Tokens] instead.',
           {
             tokens: <u />,
           }
@@ -94,37 +92,36 @@ function OrganizationApiKeysList({
         emptyMessage={t('No API keys for this organization')}
         headers={[t('Name'), t('Key'), t('Actions')]}
       >
-        {keys &&
-          keys.map(({id, key, label}) => {
-            const apiDetailsUrl = recreateRoute(`${id}/`, {
-              params,
-              routes,
-            });
+        {keys?.map(({id, key, label}) => {
+          const apiDetailsUrl = recreateRoute(`${id}/`, {
+            params: {...params, orgId: organization.slug},
+            routes,
+          });
 
-            return (
-              <Fragment key={key}>
-                <Cell>
-                  <Link to={apiDetailsUrl}>{label}</Link>
-                </Cell>
+          return (
+            <Fragment key={key}>
+              <Cell>
+                <Link to={apiDetailsUrl}>{label}</Link>
+              </Cell>
 
-                <div>
-                  <AutoSelectTextInput readOnly>{key}</AutoSelectTextInput>
-                </div>
+              <TextCopyInput size="sm" monospace>
+                {key}
+              </TextCopyInput>
 
-                <Cell>
-                  <LinkWithConfirmation
-                    aria-label={t('Remove API Key')}
-                    className="btn btn-default btn-sm"
-                    onConfirm={() => onRemove(id)}
-                    message={t('Are you sure you want to remove this API key?')}
-                    title={t('Remove API Key?')}
-                  >
-                    <IconDelete size="xs" css={{position: 'relative', top: '2px'}} />
-                  </LinkWithConfirmation>
-                </Cell>
-              </Fragment>
-            );
-          })}
+              <Cell>
+                <LinkWithConfirmation
+                  aria-label={t('Remove API Key')}
+                  className="btn btn-default btn-sm"
+                  onConfirm={() => onRemove(id)}
+                  message={t('Are you sure you want to remove this API key?')}
+                  title={t('Remove API Key?')}
+                >
+                  <IconDelete size="xs" css={{position: 'relative', top: '2px'}} />
+                </LinkWithConfirmation>
+              </Cell>
+            </Fragment>
+          );
+        })}
       </PanelTable>
     </div>
   );
@@ -133,10 +130,6 @@ function OrganizationApiKeysList({
 const Cell = styled('div')`
   display: flex;
   align-items: center;
-`;
-
-const AutoSelectTextInput = styled(AutoSelectText)<{readOnly: boolean}>`
-  ${p => inputStyles(p)}
 `;
 
 export default OrganizationApiKeysList;

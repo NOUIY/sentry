@@ -3,14 +3,16 @@ import styled from '@emotion/styled';
 import intersection from 'lodash/intersection';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import Form from 'sentry/components/forms/form';
 import JsonForm from 'sentry/components/forms/jsonForm';
 import FormModel from 'sentry/components/forms/model';
-import {PermissionChoice, SENTRY_APP_PERMISSIONS} from 'sentry/constants';
+import type {PermissionChoice} from 'sentry/constants';
+import {SENTRY_APP_PERMISSIONS} from 'sentry/constants';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Scope, SentryApp} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Scope} from 'sentry/types/core';
+import type {SentryApp} from 'sentry/types/integrations';
 
 /**
  * Given an array of scopes, return the choices the user has picked for each option
@@ -41,19 +43,16 @@ const getPermissionSelectionsFromScopes = (scopes: Scope[]) => {
   return permissions;
 };
 
-class PublishRequestFormModel extends FormModel {
-  getTransformedData() {
-    const data = this.getData();
-    // map object to list of questions
-    const questionnaire = Array.from(this.fieldDescriptor.values()).map(field =>
-      // we read the meta for the question that has a react node for the label
-      ({
-        question: field.meta || field.label,
-        answer: data[field.name],
-      })
-    );
-    return {questionnaire};
-  }
+function transformData(data: Record<string, any>, model: FormModel) {
+  // map object to list of questions
+  const questionnaire = Array.from(model.fieldDescriptor.values()).map(field =>
+    // we read the meta for the question that has a react node for the label
+    ({
+      question: field.meta || field.label,
+      answer: data[field.name],
+    })
+  );
+  return {questionnaire};
 }
 
 type Props = ModalRenderProps & {
@@ -61,7 +60,7 @@ type Props = ModalRenderProps & {
 };
 
 export default class SentryAppPublishRequestModal extends Component<Props> {
-  form = new PublishRequestFormModel();
+  form = new FormModel({transformData});
 
   get formFields() {
     const {app} = this.props;
@@ -78,7 +77,8 @@ export default class SentryAppPublishRequestModal extends Component<Props> {
         <PermissionLabel>{permissionQuestionBaseText}</PermissionLabel>
         {permissions.map((permission, i) => (
           <Fragment key={permission}>
-            {i > 0 && ', '} <Permission>{permission}</Permission>
+            {i > 0 && ', '}
+            <Permission>{permission}</Permission>
           </Fragment>
         ))}
         .
@@ -122,6 +122,7 @@ export default class SentryAppPublishRequestModal extends Component<Props> {
         type: 'textarea',
         required: true,
         label: permissionLabel,
+        labelText: permissionQuestionPlainText,
         autosize: true,
         rows: 1,
         inline: false,

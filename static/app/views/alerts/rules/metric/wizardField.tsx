@@ -1,41 +1,39 @@
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
-import findKey from 'lodash/findKey';
 
+import SelectControl from 'sentry/components/forms/controls/selectControl';
+import type {FormFieldProps} from 'sentry/components/forms/formField';
 import FormField from 'sentry/components/forms/formField';
-import SelectControl from 'sentry/components/forms/selectControl';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type {QueryFieldValue} from 'sentry/utils/discover/fields';
+import {explodeFieldString, generateFieldAsString} from 'sentry/utils/discover/fields';
+import {hasCustomMetrics} from 'sentry/utils/metrics/features';
+import EAPField from 'sentry/views/alerts/rules/metric/eapField';
+import InsightsMetricField from 'sentry/views/alerts/rules/metric/insightsMetricField';
+import MriField from 'sentry/views/alerts/rules/metric/mriField';
+import type {Dataset} from 'sentry/views/alerts/rules/metric/types';
+import type {AlertType} from 'sentry/views/alerts/wizard/options';
 import {
-  AggregationKey,
-  AggregationRefinement,
-  explodeFieldString,
-  generateFieldAsString,
-} from 'sentry/utils/discover/fields';
-import {Dataset, SessionsAggregate} from 'sentry/views/alerts/rules/metric/types';
-import {
-  AlertType,
   AlertWizardAlertNames,
   AlertWizardRuleTemplates,
-  WizardRuleTemplate,
 } from 'sentry/views/alerts/wizard/options';
-import {QueryField} from 'sentry/views/eventsV2/table/queryField';
-import {FieldValueKind} from 'sentry/views/eventsV2/table/types';
-import {generateFieldOptions} from 'sentry/views/eventsV2/utils';
+import {QueryField} from 'sentry/views/discover/table/queryField';
+import {FieldValueKind} from 'sentry/views/discover/table/types';
+import {generateFieldOptions} from 'sentry/views/discover/utils';
+import {hasEAPAlerts} from 'sentry/views/insights/common/utils/hasEAPAlerts';
+import {hasInsightsAlerts} from 'sentry/views/insights/common/utils/hasInsightsAlerts';
 
 import {getFieldOptionConfig} from './metricField';
 
-type WizardAggregateFieldValue = {
-  function: [AggregationKey, string, AggregationRefinement, AggregationRefinement];
-  kind: 'function';
-  alias?: string;
-};
-
 type MenuOption = {label: string; value: AlertType};
+type GroupedMenuOption = {label: string; options: Array<MenuOption>};
 
-type Props = Omit<FormField['props'], 'children'> & {
+type Props = Omit<FormFieldProps, 'children'> & {
   organization: Organization;
+  project: Project;
   alertType?: AlertType;
   /**
    * Optionally set a width for each column of selector
@@ -44,132 +42,124 @@ type Props = Omit<FormField['props'], 'children'> & {
   inFieldLabels?: boolean;
 };
 
-const menuOptions: {label: string; options: Array<MenuOption>}[] = [
-  {
-    label: t('ERRORS'),
-    options: [
-      {
-        label: AlertWizardAlertNames.num_errors,
-        value: 'num_errors',
-      },
-      {
-        label: AlertWizardAlertNames.users_experiencing_errors,
-        value: 'users_experiencing_errors',
-      },
-    ],
-  },
-
-  {
-    label: t('SESSIONS'),
-    options: [
-      {
-        label: AlertWizardAlertNames.crash_free_sessions,
-        value: 'crash_free_sessions',
-      },
-      {
-        label: AlertWizardAlertNames.crash_free_users,
-        value: 'crash_free_users',
-      },
-    ],
-  },
-
-  {
-    label: t('PERFORMANCE'),
-    options: [
-      {
-        label: AlertWizardAlertNames.throughput,
-        value: 'throughput',
-      },
-      {
-        label: AlertWizardAlertNames.trans_duration,
-        value: 'trans_duration',
-      },
-      {
-        label: AlertWizardAlertNames.apdex,
-        value: 'apdex',
-      },
-      {
-        label: AlertWizardAlertNames.failure_rate,
-        value: 'failure_rate',
-      },
-      {
-        label: AlertWizardAlertNames.lcp,
-        value: 'lcp',
-      },
-      {
-        label: AlertWizardAlertNames.fid,
-        value: 'fid',
-      },
-      {
-        label: AlertWizardAlertNames.cls,
-        value: 'cls',
-      },
-    ],
-  },
-
-  {
-    label: t('CUSTOM'),
-    options: [
-      {
-        label: AlertWizardAlertNames.custom,
-        value: 'custom',
-      },
-    ],
-  },
-];
-
 export default function WizardField({
   organization,
   columnWidth,
   inFieldLabels,
   alertType,
+  project,
   ...fieldProps
 }: Props) {
-  const matchTemplateAggregate = (
-    template: WizardRuleTemplate,
-    aggregate: string
-  ): boolean => {
-    const templateFieldValue = explodeFieldString(
-      template.aggregate
-    ) as WizardAggregateFieldValue;
-    const aggregateFieldValue = explodeFieldString(
-      aggregate
-    ) as WizardAggregateFieldValue;
-
-    return (
-      template.aggregate === aggregate ||
-      (templateFieldValue.function?.[1] && aggregateFieldValue.function?.[1]
-        ? templateFieldValue.function?.[1] === aggregateFieldValue.function?.[1]
-        : templateFieldValue.function?.[0] === aggregateFieldValue.function?.[0])
-    );
-  };
-
-  const matchTemplateDataset = (
-    template: WizardRuleTemplate,
-    dataset: Dataset
-  ): boolean =>
-    template.dataset === dataset ||
-    (organization.features.includes('alert-crash-free-metrics') &&
-      (template.aggregate === SessionsAggregate.CRASH_FREE_SESSIONS ||
-        template.aggregate === SessionsAggregate.CRASH_FREE_USERS) &&
-      dataset === Dataset.METRICS);
+  const menuOptions: GroupedMenuOption[] = [
+    {
+      label: t('ERRORS'),
+      options: [
+        {
+          label: AlertWizardAlertNames.num_errors,
+          value: 'num_errors',
+        },
+        {
+          label: AlertWizardAlertNames.users_experiencing_errors,
+          value: 'users_experiencing_errors',
+        },
+      ],
+    },
+    ...((organization.features.includes('crash-rate-alerts')
+      ? [
+          {
+            label: t('SESSIONS'),
+            options: [
+              {
+                label: AlertWizardAlertNames.crash_free_sessions,
+                value: 'crash_free_sessions',
+              },
+              {
+                label: AlertWizardAlertNames.crash_free_users,
+                value: 'crash_free_users',
+              },
+            ],
+          },
+        ]
+      : []) as GroupedMenuOption[]),
+    {
+      label: t('PERFORMANCE'),
+      options: [
+        {
+          label: AlertWizardAlertNames.throughput,
+          value: 'throughput',
+        },
+        {
+          label: AlertWizardAlertNames.trans_duration,
+          value: 'trans_duration',
+        },
+        {
+          label: AlertWizardAlertNames.apdex,
+          value: 'apdex',
+        },
+        {
+          label: AlertWizardAlertNames.failure_rate,
+          value: 'failure_rate',
+        },
+        {
+          label: AlertWizardAlertNames.lcp,
+          value: 'lcp',
+        },
+        {
+          label: AlertWizardAlertNames.fid,
+          value: 'fid',
+        },
+        {
+          label: AlertWizardAlertNames.cls,
+          value: 'cls',
+        },
+        ...(hasCustomMetrics(organization)
+          ? [
+              {
+                label: AlertWizardAlertNames.custom_transactions,
+                value: 'custom_transactions' as const,
+              },
+            ]
+          : []),
+        ...(hasInsightsAlerts(organization)
+          ? [
+              {
+                label: AlertWizardAlertNames.insights_metrics,
+                value: 'insights_metrics' as const,
+              },
+            ]
+          : []),
+        ...(hasEAPAlerts(organization)
+          ? [
+              {
+                label: AlertWizardAlertNames.eap_metrics,
+                value: 'eap_metrics' as const,
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      label: hasCustomMetrics(organization) ? t('METRICS') : t('CUSTOM'),
+      options: [
+        hasCustomMetrics(organization)
+          ? {
+              label: AlertWizardAlertNames.custom_metrics,
+              value: 'custom_metrics',
+            }
+          : {
+              label: AlertWizardAlertNames.custom_transactions,
+              value: 'custom_transactions',
+            },
+      ],
+    },
+  ];
 
   return (
     <FormField {...fieldProps}>
-      {({onChange, value: aggregate, model, disabled}) => {
+      {({onChange, model, disabled}) => {
+        const aggregate = model.getValue('aggregate');
         const dataset: Dataset = model.getValue('dataset');
-        const eventTypes = [...(model.getValue('eventTypes') ?? [])];
-
-        const selectedTemplate =
-          alertType === 'custom'
-            ? alertType
-            : findKey(
-                AlertWizardRuleTemplates,
-                template =>
-                  matchTemplateAggregate(template, aggregate) &&
-                  matchTemplateDataset(template, dataset) &&
-                  eventTypes.includes(template.eventTypes)
-              ) || 'num_errors';
+        const selectedTemplate: AlertType = alertType || 'custom_metrics';
 
         const {fieldOptionsConfig, hidePrimarySelector, hideParameterSelector} =
           getFieldOptionConfig({
@@ -177,7 +167,7 @@ export default function WizardField({
             alertType,
           });
         const fieldOptions = generateFieldOptions({organization, ...fieldOptionsConfig});
-        const fieldValue = explodeFieldString(aggregate ?? '');
+        const fieldValue = getFieldValue(aggregate ?? '', model);
 
         const fieldKey =
           fieldValue?.kind === FieldValueKind.FUNCTION
@@ -197,33 +187,60 @@ export default function WizardField({
           (hidePrimarySelector ? 1 : 0);
 
         return (
-          <Container hideGap={gridColumns < 1}>
+          <Container alertType={alertType} hideGap={gridColumns < 1}>
             <SelectControl
               value={selectedTemplate}
               options={menuOptions}
+              disabled={disabled}
               onChange={(option: MenuOption) => {
                 const template = AlertWizardRuleTemplates[option.value];
 
                 model.setValue('aggregate', template.aggregate);
                 model.setValue('dataset', template.dataset);
                 model.setValue('eventTypes', [template.eventTypes]);
+                // Keep alertType last
+                model.setValue('alertType', option.value);
               }}
             />
-            <StyledQueryField
-              filterPrimaryOptions={option =>
-                option.value.kind === FieldValueKind.FUNCTION
-              }
-              fieldOptions={fieldOptions}
-              fieldValue={fieldValue}
-              onChange={v => onChange(generateFieldAsString(v), {})}
-              columnWidth={columnWidth}
-              gridColumns={gridColumns}
-              inFieldLabels={inFieldLabels}
-              shouldRenderTag={false}
-              disabled={disabled}
-              hideParameterSelector={hideParameterSelector}
-              hidePrimarySelector={hidePrimarySelector}
-            />
+            {alertType === 'custom_metrics' ? (
+              <MriField
+                project={project}
+                aggregate={aggregate}
+                onChange={newAggregate => onChange(newAggregate, {})}
+              />
+            ) : alertType === 'insights_metrics' ? (
+              <InsightsMetricField
+                project={project}
+                aggregate={aggregate}
+                onChange={newAggregate => {
+                  return onChange(newAggregate, {});
+                }}
+              />
+            ) : alertType === 'eap_metrics' ? (
+              <EAPField
+                project={project}
+                aggregate={aggregate}
+                onChange={newAggregate => {
+                  return onChange(newAggregate, {});
+                }}
+              />
+            ) : (
+              <StyledQueryField
+                filterPrimaryOptions={option =>
+                  option.value.kind === FieldValueKind.FUNCTION
+                }
+                fieldOptions={fieldOptions}
+                fieldValue={fieldValue}
+                onChange={v => onChange(generateFieldAsString(v), {})}
+                columnWidth={columnWidth}
+                gridColumns={gridColumns}
+                inFieldLabels={inFieldLabels}
+                shouldRenderTag={false}
+                disabled={disabled}
+                hideParameterSelector={hideParameterSelector}
+                hidePrimarySelector={hidePrimarySelector}
+              />
+            )}
           </Container>
         );
       }}
@@ -231,10 +248,60 @@ export default function WizardField({
   );
 }
 
-const Container = styled('div')<{hideGap: boolean}>`
+// swaps out custom percentile values for known percentiles, used while we fade out custom percentiles in metric alerts
+// TODO(telemetry-experience): remove once we migrate all custom percentile alerts
+const getFieldValue = (aggregate: string | undefined, model) => {
+  const fieldValue = explodeFieldString(aggregate ?? '');
+
+  if (fieldValue?.kind !== FieldValueKind.FUNCTION) {
+    return fieldValue;
+  }
+
+  if (fieldValue.function[0] !== 'percentile') {
+    return fieldValue;
+  }
+
+  const newFieldValue: QueryFieldValue = {
+    kind: FieldValueKind.FUNCTION,
+    function: [
+      getApproximateKnownPercentile(fieldValue.function[2] as string),
+      fieldValue.function[1],
+      undefined,
+      undefined,
+    ],
+    alias: fieldValue.alias,
+  };
+
+  model.setValue('aggregate', generateFieldAsString(newFieldValue));
+
+  return newFieldValue;
+};
+
+const getApproximateKnownPercentile = (customPercentile: string) => {
+  const percentile = parseFloat(customPercentile);
+
+  if (percentile <= 0.5) {
+    return 'p50';
+  }
+  if (percentile <= 0.75) {
+    return 'p75';
+  }
+  if (percentile <= 0.9) {
+    return 'p90';
+  }
+  if (percentile <= 0.95) {
+    return 'p95';
+  }
+  if (percentile <= 0.99) {
+    return 'p99';
+  }
+  return 'p100';
+};
+
+const Container = styled('div')<{hideGap: boolean; alertType?: AlertType}>`
   display: grid;
+  gap: ${p => (p.hideGap ? 0 : space(1))};
   grid-template-columns: 1fr auto;
-  gap: ${p => (p.hideGap ? space(0) : space(1))};
 `;
 
 const StyledQueryField = styled(QueryField)<{gridColumns: number; columnWidth?: number}>`

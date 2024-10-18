@@ -1,30 +1,32 @@
 import {useCallback, useEffect, useState} from 'react';
-import {browserHistory, RouteComponentProps} from 'react-router';
 
-import {Client} from 'sentry/api';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import {Organization} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 import useApi from 'sentry/utils/useApi';
+import {useLocation} from 'sentry/utils/useLocation';
 
 import {fetchIncident} from './utils/apiCalls';
 import {alertDetailsLink} from './utils';
 
 type Props = {
-  api: Client;
   organization: Organization;
-} & RouteComponentProps<{alertId: string; orgId: string}, {}>;
+} & RouteComponentProps<{alertId: string}, {}>;
 
 /**
  * Reirects from an incident to the incident's metric alert details page
  */
 function IncidentRedirect({organization, params}: Props) {
   const api = useApi();
+  const location = useLocation();
   const [hasError, setHasError] = useState(false);
 
   const track = useCallback(() => {
-    trackAdvancedAnalyticsEvent('alert_details.viewed', {
+    trackAnalytics('alert_details.viewed', {
       organization,
       alert_id: parseInt(params.alertId, 10),
     });
@@ -34,15 +36,17 @@ function IncidentRedirect({organization, params}: Props) {
     setHasError(false);
 
     try {
-      const incident = await fetchIncident(api, params.orgId, params.alertId);
-      browserHistory.replace({
-        pathname: alertDetailsLink(organization, incident),
-        query: {alert: incident.identifier},
-      });
+      const incident = await fetchIncident(api, organization.slug, params.alertId);
+      browserHistory.replace(
+        normalizeUrl({
+          pathname: alertDetailsLink(organization, incident),
+          query: {...location.query, alert: incident.identifier},
+        })
+      );
     } catch (err) {
       setHasError(true);
     }
-  }, [setHasError, api, params.orgId, params.alertId, organization]);
+  }, [setHasError, api, params.alertId, organization, location.query]);
 
   useEffect(() => {
     fetchData();

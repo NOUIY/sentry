@@ -1,8 +1,11 @@
 from django.urls import reverse
 
-from sentry.models import ProjectOwnership
+from sentry.models.projectownership import ProjectOwnership
 from sentry.ownership.grammar import Matcher, Owner, Rule, dump_schema
-from sentry.testutils import APITestCase
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.skips import requires_kafka, requires_snuba
+
+pytestmark = [requires_snuba, requires_kafka]
 
 
 class ProjectOwnershipEndpointTestCase(APITestCase):
@@ -33,8 +36,8 @@ class ProjectOwnershipEndpointTestCase(APITestCase):
         self.path = reverse(
             "sentry-api-0-event-owners",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": event1.event_id,
             },
         )
@@ -59,8 +62,8 @@ class ProjectOwnershipEndpointTestCase(APITestCase):
         self.path = reverse(
             "sentry-api-0-event-owners",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": event1.event_id,
             },
         )
@@ -85,8 +88,8 @@ class ProjectOwnershipEndpointTestCase(APITestCase):
         self.path = reverse(
             "sentry-api-0-event-owners",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": event1.event_id,
             },
         )
@@ -111,8 +114,8 @@ class ProjectOwnershipEndpointTestCase(APITestCase):
         self.path = reverse(
             "sentry-api-0-event-owners",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": event1.event_id,
             },
         )
@@ -143,8 +146,8 @@ class ProjectOwnershipEndpointTestCase(APITestCase):
         self.path = reverse(
             "sentry-api-0-event-owners",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": event1.event_id,
             },
         )
@@ -176,8 +179,8 @@ class ProjectOwnershipEndpointTestCase(APITestCase):
         self.path = reverse(
             "sentry-api-0-event-owners",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": event1.event_id,
             },
         )
@@ -211,8 +214,8 @@ class ProjectOwnershipEndpointTestCase(APITestCase):
         self.path = reverse(
             "sentry-api-0-event-owners",
             kwargs={
-                "organization_slug": self.organization.slug,
-                "project_slug": self.project.slug,
+                "organization_id_or_slug": self.organization.slug,
+                "project_id_or_slug": self.project.slug,
                 "event_id": event1.event_id,
             },
         )

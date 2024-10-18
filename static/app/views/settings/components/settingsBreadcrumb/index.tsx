@@ -1,18 +1,18 @@
-import {useEffect} from 'react';
 import styled from '@emotion/styled';
 
 import Link from 'sentry/components/links/link';
-import SettingsBreadcrumbStore from 'sentry/stores/settingsBreadcrumbStore';
-import {useLegacyStore} from 'sentry/stores/useLegacyStore';
+import {t} from 'sentry/locale';
+import {space} from 'sentry/styles/space';
 import getRouteStringFromRoutes from 'sentry/utils/getRouteStringFromRoutes';
 import recreateRoute from 'sentry/utils/recreateRoute';
-import Crumb from 'sentry/views/settings/components/settingsBreadcrumb/crumb';
-import Divider from 'sentry/views/settings/components/settingsBreadcrumb/divider';
-import OrganizationCrumb from 'sentry/views/settings/components/settingsBreadcrumb/organizationCrumb';
-import ProjectCrumb from 'sentry/views/settings/components/settingsBreadcrumb/projectCrumb';
-import TeamCrumb from 'sentry/views/settings/components/settingsBreadcrumb/teamCrumb';
 
-import {RouteWithName} from './types';
+import {useBreadcrumbsPathmap} from './context';
+import Crumb from './crumb';
+import Divider from './divider';
+import {OrganizationCrumb} from './organizationCrumb';
+import ProjectCrumb from './projectCrumb';
+import TeamCrumb from './teamCrumb';
+import type {RouteWithName} from './types';
 
 const MENUS = {
   Organization: OrganizationCrumb,
@@ -28,16 +28,12 @@ type Props = {
 };
 
 function SettingsBreadcrumb({className, routes, params}: Props) {
-  const {pathMap} = useLegacyStore(SettingsBreadcrumbStore);
-
-  useEffect(() => {
-    SettingsBreadcrumbStore.trimMappings(routes);
-  }, [routes]);
+  const pathMap = useBreadcrumbsPathmap();
 
   const lastRouteIndex = routes.map(r => !!r.name).lastIndexOf(true);
 
   return (
-    <Breadcrumbs className={className}>
+    <Breadcrumbs aria-label={t('Settings Breadcrumbs')} className={className}>
       {routes.map((route, i) => {
         if (!route.name) {
           return null;
@@ -47,40 +43,33 @@ function SettingsBreadcrumb({className, routes, params}: Props) {
         const createMenu = MENUS[route.name];
         const Menu = typeof createMenu === 'function' && createMenu;
         const hasMenu = !!Menu;
-        const CrumbPicker = hasMenu
-          ? Menu
-          : () => (
-              <Crumb>
-                <CrumbLink to={recreateRoute(route, {routes, params})}>
-                  {pathTitle || route.name}{' '}
-                </CrumbLink>
-                <Divider isLast={isLast} />
-              </Crumb>
-            );
 
+        if (hasMenu) {
+          return (
+            <Menu
+              key={`${route.name}:${route.path}`}
+              routes={routes}
+              params={params}
+              route={route}
+              isLast={isLast}
+            />
+          );
+        }
         return (
-          <CrumbPicker
-            key={`${route.name}:${route.path}`}
-            routes={routes}
-            params={params}
-            route={route}
-            isLast={isLast}
-          />
+          <Crumb key={`${route.name}:${route.path}`}>
+            <CrumbLink to={recreateRoute(route, {routes, params})}>
+              {pathTitle || route.name}
+            </CrumbLink>
+            <Divider isLast={isLast} />
+          </Crumb>
         );
       })}
     </Breadcrumbs>
   );
 }
 
-export default SettingsBreadcrumb;
-
 const CrumbLink = styled(Link)`
   display: block;
-
-  &.focus-visible {
-    outline: none;
-    box-shadow: ${p => p.theme.blue300} 0 2px 0;
-  }
 
   color: ${p => p.theme.subText};
   &:hover {
@@ -88,9 +77,12 @@ const CrumbLink = styled(Link)`
   }
 `;
 
-export {CrumbLink};
-
-const Breadcrumbs = styled('div')`
+const Breadcrumbs = styled('nav')`
   display: flex;
+  gap: ${space(0.75)};
   align-items: center;
 `;
+
+export {CrumbLink};
+
+export default SettingsBreadcrumb;

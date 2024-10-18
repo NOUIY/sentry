@@ -1,5 +1,8 @@
 from sentry.rules.conditions.every_event import EveryEventCondition
 from sentry.testutils.cases import RuleTestCase
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [requires_snuba]
 
 
 class EveryEventConditionTest(RuleTestCase):

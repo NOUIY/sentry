@@ -1,28 +1,31 @@
-import {browserHistory, withRouter, WithRouterProps} from 'react-router';
 import {useTheme} from '@emotion/react';
 
 import ChartZoom from 'sentry/components/charts/chartZoom';
 import ErrorPanel from 'sentry/components/charts/errorPanel';
 import EventsRequest from 'sentry/components/charts/eventsRequest';
-import {LineChart, LineChartProps} from 'sentry/components/charts/lineChart';
+import type {LineChartProps} from 'sentry/components/charts/lineChart';
+import {LineChart} from 'sentry/components/charts/lineChart';
 import ReleaseSeries from 'sentry/components/charts/releaseSeries';
 import {ChartContainer, HeaderTitleLegend} from 'sentry/components/charts/styles';
 import TransitionChart from 'sentry/components/charts/transitionChart';
 import TransparentLoadingMask from 'sentry/components/charts/transparentLoadingMask';
-import {Panel} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {DateString, OrganizationSummary} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {DateString} from 'sentry/types/core';
+import type {Series} from 'sentry/types/echarts';
+import type {OrganizationSummary} from 'sentry/types/organization';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
-import {WebVital} from 'sentry/utils/discover/fields';
+import {aggregateOutputType} from 'sentry/utils/discover/fields';
+import {WebVital} from 'sentry/utils/fields';
 import getDynamicText from 'sentry/utils/getDynamicText';
-import {decodeScalar} from 'sentry/utils/queryString';
 import useApi from 'sentry/utils/useApi';
+import {useLocation} from 'sentry/utils/useLocation';
 
 import {replaceSeriesName, transformEventStatsSmoothed} from '../trends/utils';
-import {ViewProps} from '../types';
+import type {ViewProps} from '../types';
 
 import {
   getMaxOfSeries,
@@ -33,26 +36,24 @@ import {
   vitalStateColors,
 } from './utils';
 
-type Props = WithRouterProps &
-  Omit<ViewProps, 'start' | 'end'> & {
-    end: DateString | null;
-    interval: string;
-    organization: OrganizationSummary;
-    start: DateString | null;
-  };
+type Props = Omit<ViewProps, 'start' | 'end'> & {
+  end: DateString | null;
+  interval: string;
+  organization: OrganizationSummary;
+  start: DateString | null;
+};
 
 function VitalChart({
   project,
   environment,
-  location,
   organization,
   query,
   statsPeriod,
-  router,
   start,
   end,
   interval,
 }: Props) {
+  const location = useLocation();
   const api = useApi();
   const theme = useTheme();
 
@@ -92,10 +93,10 @@ function VitalChart({
           <QuestionTooltip
             size="sm"
             position="top"
-            title={t(`The durations shown should fall under the vital threshold.`)}
+            title={t('The durations shown should fall under the vital threshold.')}
           />
         </HeaderTitleLegend>
-        <ChartZoom router={router} period={statsPeriod} start={start} end={end} utc={utc}>
+        <ChartZoom period={statsPeriod} start={start} end={end} utc={utc}>
           {zoomRenderProps => (
             <EventsRequest
               api={api}
@@ -111,7 +112,6 @@ function VitalChart({
               includePrevious={false}
               yAxis={[yAxis]}
               partial
-              userModified={decodeScalar(location.query.userModified)}
             >
               {({timeseriesData: results, errored, loading, reloading}) => {
                 if (errored) {
@@ -182,7 +182,7 @@ function VitalChart({
   );
 }
 
-export default withRouter(VitalChart);
+export default VitalChart;
 
 export type _VitalChartProps = {
   field: string;
@@ -243,7 +243,7 @@ export function _VitalChart(props: _VitalChartProps) {
       valueFormatter: (value: number, seriesName?: string) => {
         return tooltipFormatter(
           value,
-          vitalFields[0] === WebVital.CLS ? seriesName : yAxis
+          aggregateOutputType(vitalFields[0] === WebVital.CLS ? seriesName : yAxis)
         );
       },
     },
@@ -255,7 +255,8 @@ export function _VitalChart(props: _VitalChartProps) {
       axisLabel: {
         color: theme.chartLabel,
         showMaxLabel: false,
-        formatter: (value: number) => axisLabelFormatter(value, yAxis),
+        formatter: (value: number) =>
+          axisLabelFormatter(value, aggregateOutputType(yAxis)),
       },
     },
     utc,

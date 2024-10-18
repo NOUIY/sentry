@@ -1,40 +1,81 @@
-import React from 'react';
-import styled from '@emotion/styled';
+import {useMemo} from 'react';
+import * as Sentry from '@sentry/react';
 
-import TextCopyInput, {
-  StyledCopyButton,
-  StyledInput,
-} from 'sentry/components/forms/textCopyInput';
+import ExternalLink from 'sentry/components/links/externalLink';
+import Link from 'sentry/components/links/link';
 import {useReplayContext} from 'sentry/components/replays/replayContext';
-import space from 'sentry/styles/space';
+import TextCopyInput from 'sentry/components/textCopyInput';
+import {Tooltip} from 'sentry/components/tooltip';
+import {t, tct} from 'sentry/locale';
 import getCurrentUrl from 'sentry/utils/replays/getCurrentUrl';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import useOrganization from 'sentry/utils/useOrganization';
+import useProjects from 'sentry/utils/useProjects';
 
 function ReplayCurrentUrl() {
   const {currentTime, replay} = useReplayContext();
-  if (!replay) {
-    return <UrlCopyInput disabled>{''}</UrlCopyInput>;
+  const replayRecord = replay?.getReplay();
+  const frames = replay?.getNavigationFrames();
+  const projId = replayRecord?.project_id;
+  const {projects} = useProjects();
+  const projSlug = projects.find(p => p.id === projId)?.slug ?? undefined;
+  const organization = useOrganization();
+
+  const url = useMemo(() => {
+    try {
+      return getCurrentUrl(replayRecord, frames, currentTime);
+    } catch (err) {
+      Sentry.captureException(err);
+      return '';
+    }
+  }, [replayRecord, frames, currentTime]);
+
+  if (!replay || !url) {
+    return (
+      <TextCopyInput aria-label={t('Current URL')} size="sm" disabled>
+        {''}
+      </TextCopyInput>
+    );
   }
 
-  return <UrlCopyInput>{getCurrentUrl(replay, currentTime)}</UrlCopyInput>;
+  if (url.includes('[Filtered]')) {
+    return (
+      <Tooltip
+        title={tct(
+          "Funny looking URL? It contains content scrubbed by our [filters] and may no longer be valid. This is to protect your users' privacy. If necessary, you can turn this off in your [settings].",
+          {
+            filters: (
+              <ExternalLink href="https://docs.sentry.io/product/data-management-settings/scrubbing/server-side-scrubbing/">
+                {'Data Scrubber'}
+              </ExternalLink>
+            ),
+            settings: projSlug ? (
+              <Link
+                to={normalizeUrl(
+                  `/settings/${organization.slug}/projects/${projSlug}/security-and-privacy/`
+                )}
+              >
+                {'Settings, under Security & Privacy'}
+              </Link>
+            ) : (
+              'Settings, under Security & Privacy'
+            ),
+          }
+        )}
+        isHoverable
+      >
+        <TextCopyInput aria-label={t('Current URL')} size="sm">
+          {url}
+        </TextCopyInput>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <TextCopyInput aria-label={t('Current URL')} size="sm">
+      {url}
+    </TextCopyInput>
+  );
 }
-
-const UrlCopyInput = styled(TextCopyInput)`
-  ${StyledInput} {
-    background: ${p => p.theme.white};
-    border: none;
-    padding: 0 ${space(0.75)};
-    font-size: ${p => p.theme.fontSizeMedium};
-    border-bottom-left-radius: 0;
-  }
-  ${StyledInput}[disabled] {
-    border: none;
-  }
-
-  ${StyledCopyButton} {
-    border-top: none;
-    border-right: none;
-    border-bottom: none;
-  }
-`;
 
 export default ReplayCurrentUrl;

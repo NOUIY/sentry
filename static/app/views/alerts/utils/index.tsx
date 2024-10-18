@@ -1,21 +1,25 @@
 import round from 'lodash/round';
 
 import {t} from 'sentry/locale';
-import {Organization, SessionFieldWithOperation} from 'sentry/types';
-import {IssueAlertRule} from 'sentry/types/alerts';
+import type {Organization} from 'sentry/types/organization';
+import {SessionFieldWithOperation} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
+import toArray from 'sentry/utils/array/toArray';
 import {getUtcDateString} from 'sentry/utils/dates';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
+import {aggregateOutputType} from 'sentry/utils/discover/fields';
+import {formatMetricUsingFixedUnit} from 'sentry/utils/metrics/formatters';
+import {parseField, parseMRI} from 'sentry/utils/metrics/mri';
 import {
   Dataset,
   Datasource,
   EventTypes,
-  MetricRule,
-  SavedMetricRule,
   SessionsAggregate,
 } from 'sentry/views/alerts/rules/metric/types';
+import {isCustomMetricAlert} from 'sentry/views/alerts/rules/metric/utils/isCustomMetricAlert';
 
-import {AlertRuleStatus, Incident, IncidentStats} from '../types';
+import type {CombinedAlerts, Incident, IncidentStats} from '../types';
+import {AlertRuleStatus, CombinedAlertType} from '../types';
 
 /**
  * Gets start and end date query parameters from stats
@@ -29,10 +33,8 @@ export function getStartEndFromStats(stats: IncidentStats) {
   return {start, end};
 }
 
-export function isIssueAlert(
-  data: IssueAlertRule | SavedMetricRule | MetricRule
-): data is IssueAlertRule {
-  return !data.hasOwnProperty('triggers');
+export function isIssueAlert(data: CombinedAlerts) {
+  return data.type === CombinedAlertType.ISSUE;
 }
 
 export const DATA_SOURCE_LABELS = {
@@ -69,8 +71,8 @@ export function convertDatasetEventTypesToSource(
   dataset: Dataset,
   eventTypes: EventTypes[]
 ) {
-  // transactions only has one datasource option regardless of event type
-  if (dataset === Dataset.TRANSACTIONS) {
+  // transactions and generic_metrics only have one datasource option regardless of event type
+  if (dataset === Dataset.TRANSACTIONS || dataset === Dataset.GENERIC_METRICS) {
     return Datasource.TRANSACTION;
   }
   // if no event type was provided use the default datasource
@@ -134,7 +136,13 @@ export function alertAxisFormatter(value: number, seriesName: string, aggregate:
     return defined(value) ? `${round(value, 2)}%` : '\u2015';
   }
 
-  return axisLabelFormatter(value, seriesName);
+  if (isCustomMetricAlert(aggregate)) {
+    const {mri, aggregation} = parseField(aggregate)!;
+    const {unit} = parseMRI(mri)!;
+    return formatMetricUsingFixedUnit(value, unit, aggregation);
+  }
+
+  return axisLabelFormatter(value, aggregateOutputType(seriesName));
 }
 
 export function alertTooltipValueFormatter(
@@ -146,7 +154,13 @@ export function alertTooltipValueFormatter(
     return defined(value) ? `${value}%` : '\u2015';
   }
 
-  return tooltipFormatter(value, seriesName);
+  if (isCustomMetricAlert(aggregate)) {
+    const {mri, aggregation} = parseField(aggregate)!;
+    const {unit} = parseMRI(mri)!;
+    return formatMetricUsingFixedUnit(value, unit, aggregation);
+  }
+
+  return tooltipFormatter(value, aggregateOutputType(seriesName));
 }
 
 export const ALERT_CHART_MIN_MAX_BUFFER = 1.03;
@@ -191,9 +205,5 @@ export function getTeamParams(team?: string | string[]): string[] {
     return [];
   }
 
-  if (Array.isArray(team)) {
-    return team;
-  }
-
-  return [team];
+  return toArray(team);
 }

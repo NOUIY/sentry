@@ -1,8 +1,8 @@
-from exam import fixture
+from functools import cached_property
 
 from sentry.api.serializers import serialize
-from sentry.models import Environment
-from sentry.testutils import APITestCase
+from sentry.models.environment import Environment
+from sentry.testutils.cases import APITestCase
 
 
 class OrganizationEnvironmentsTest(APITestCase):
@@ -11,7 +11,7 @@ class OrganizationEnvironmentsTest(APITestCase):
     def setUp(self):
         self.login_as(user=self.user)
 
-    @fixture
+    @cached_property
     def project(self):
         return self.create_project()
 

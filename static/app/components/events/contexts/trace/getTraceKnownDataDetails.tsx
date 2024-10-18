@@ -1,24 +1,30 @@
-import Button from 'sentry/components/button';
+import type {Location} from 'history';
+
+import type {KnownDataDetails} from 'sentry/components/events/contexts/utils';
 import {generateTraceTarget} from 'sentry/components/quickTrace/utils';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
+import type {Organization} from 'sentry/types/organization';
 import {transactionSummaryRouteWithQuery} from 'sentry/views/performance/transactionSummary/utils';
 
-import {TraceKnownData, TraceKnownDataType} from './types';
+import type {TraceKnownData} from './types';
+import {TraceKnownDataType} from './types';
 
-type Output = {
-  subject: string;
-  value: React.ReactNode;
-  actionButton?: React.ReactNode;
+type Props = {
+  data: TraceKnownData;
+  event: Event;
+  location: Location;
+  organization: Organization;
+  type: TraceKnownDataType;
 };
 
-function getUserKnownDataDetails(
-  data: TraceKnownData,
-  type: TraceKnownDataType,
-  event: Event,
-  organization: Organization
-): Output | undefined {
+export function getTraceKnownDataDetails({
+  data,
+  event,
+  organization,
+  type,
+  location,
+}: Props): KnownDataDetails {
   switch (type) {
     case TraceKnownDataType.TRACE_ID: {
       const traceId = data.trace_id || '';
@@ -27,21 +33,11 @@ function getUserKnownDataDetails(
         return undefined;
       }
 
-      if (!organization.features.includes('discover-basic')) {
-        return {
-          subject: t('Trace ID'),
-          value: traceId,
-        };
-      }
-
+      const link = generateTraceTarget(event, organization, location);
       return {
         subject: t('Trace ID'),
         value: traceId,
-        actionButton: (
-          <Button size="xsmall" to={generateTraceTarget(event, organization)}>
-            {t('Search by Trace')}
-          </Button>
-        ),
+        action: {link},
       };
     }
 
@@ -83,13 +79,6 @@ function getUserKnownDataDetails(
       }
       const transactionName = eventTag.value;
 
-      const to = transactionSummaryRouteWithQuery({
-        orgSlug: organization.slug,
-        transaction: transactionName,
-        projectID: event.projectID,
-        query: {},
-      });
-
       if (!organization.features.includes('performance-view')) {
         return {
           subject: t('Transaction'),
@@ -97,14 +86,17 @@ function getUserKnownDataDetails(
         };
       }
 
+      const link = transactionSummaryRouteWithQuery({
+        orgSlug: organization.slug,
+        transaction: transactionName,
+        projectID: event.projectID,
+        query: {},
+      });
+
       return {
         subject: t('Transaction'),
         value: transactionName,
-        actionButton: (
-          <Button size="xsmall" to={to}>
-            {t('View Summary')}
-          </Button>
-        ),
+        action: {link},
       };
     }
 
@@ -112,5 +104,3 @@ function getUserKnownDataDetails(
       return undefined;
   }
 }
-
-export default getUserKnownDataDetails;

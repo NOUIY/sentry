@@ -1,14 +1,14 @@
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import {SectionHeading} from 'sentry/components/charts/styles';
 import GlobalSelectionLink from 'sentry/components/globalSelectionLink';
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconLink} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import {DEFAULT_MAX_DURATION} from 'sentry/views/performance/trends/utils';
@@ -116,7 +116,7 @@ const QuickLink = styled(p =>
 
 const QuickLinkText = styled('span')`
   font-size: ${p => p.theme.fontSizeMedium};
-  ${overflowEllipsis}
+  ${p => p.theme.overflowEllipsis}
 `;
 
 export default ProjectQuickLinks;

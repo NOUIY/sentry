@@ -1,7 +1,7 @@
 from django.urls import reverse
 
 from sentry.plugins.base import plugins
-from sentry.testutils import APITestCase
+from sentry.testutils.cases import APITestCase
 
 
 class OrganizationPluginsTest(APITestCase):
@@ -14,7 +14,7 @@ class OrganizationPluginsTest(APITestCase):
 
         self.url = reverse(
             "sentry-api-0-organization-plugins-configs",
-            kwargs={"organization_slug": self.organization.slug},
+            kwargs={"organization_id_or_slug": self.organization.slug},
         )
 
         self.login_as(user=self.user)

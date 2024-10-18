@@ -1,54 +1,8 @@
-import moment from 'moment';
-
-import {Crumb} from 'sentry/types/breadcrumbs';
-import type {ReplaySpan} from 'sentry/views/replays/types';
-
-function padZero(num: number, len = 2): string {
-  let str = String(num);
-  const threshold = Math.pow(10, len - 1);
-  if (num < threshold) {
-    while (String(threshold).length > str.length) {
-      str = '0' + num;
-    }
-  }
-  return str;
-}
+import type {ReplayFrame, SpanFrame, VideoEvent} from 'sentry/utils/replays/types';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
-const TIME_FORMAT = 'HH:mm:ss';
-
-/**
- * @param timestamp The timestamp that is our reference point. Can be anything that `moment` accepts such as `'2022-05-04T19:47:52.915000Z'` or `1651664872.915`
- * @param diffMs Number of milliseconds to adjust the timestamp by, either positive (future) or negative (past)
- * @returns Unix timestamp of the adjusted timestamp, in milliseconds
- */
-export function relativeTimeInMs(timestamp: moment.MomentInput, diffMs: number): number {
-  return moment(timestamp)
-    .diff(diffMs * 1000)
-    .valueOf();
-}
-
-export function showPlayerTime(timestamp: string, relativeTime: number): string {
-  return moment(relativeTimeInMs(timestamp, relativeTime)).format(TIME_FORMAT);
-}
-
-// TODO: move into 'sentry/utils/formatters'
-export function formatTime(ms: number): string {
-  if (ms <= 0) {
-    return '0:00';
-  }
-  const hour = Math.floor(ms / HOUR);
-  ms = ms % HOUR;
-  const minute = Math.floor(ms / MINUTE);
-  ms = ms % MINUTE;
-  const second = Math.floor(ms / SECOND);
-  if (hour) {
-    return `${hour}:${padZero(minute)}:${padZero(second)}`;
-  }
-  return `${minute}:${padZero(second)}`;
-}
 
 /**
  * Figure out how many ticks to show in an area.
@@ -58,14 +12,14 @@ export function formatTime(ms: number): string {
  * of time (like every second) but if the duration is long one tick may
  * represent an hour.
  *
- * @param duration The amount of time that we need to chop up into even sections
+ * @param durationMs The amount of time that we need to chop up into even sections
  * @param width Total width available, pixels
  * @param minWidth Minimum space for each column, pixels. Ex: So we can show formatted time like `1:00:00` between major ticks
  * @returns
  */
-export function countColumns(duration: number, width: number, minWidth: number = 50) {
+export function countColumns(durationMs: number, width: number, minWidth: number = 50) {
   let maxCols = Math.floor(width / minWidth);
-  const remainder = duration - maxCols * width > 0 ? 1 : 0;
+  const remainder = durationMs - maxCols * width > 0 ? 1 : 0;
   maxCols -= remainder;
 
   // List of all the possible time granularities to display
@@ -86,7 +40,7 @@ export function countColumns(duration: number, width: number, minWidth: number =
   ];
 
   const timeBasedCols = timeOptions.reduce<Map<number, number>>((map, time) => {
-    map.set(time, Math.floor(duration / time));
+    map.set(time, Math.floor(durationMs / time));
     return map;
   }, new Map());
 
@@ -94,7 +48,7 @@ export function countColumns(duration: number, width: number, minWidth: number =
     .filter(([_span, c]) => c <= maxCols) // Filter for any valid timespan option where all ticks would fit
     .reduce((best, next) => (next[1] > best[1] ? next : best), [0, 0]); // select the timespan option with the most ticks
 
-  const remaining = (duration - timespan * cols) / timespan;
+  const remaining = (durationMs - timespan * cols) / timespan;
   return {timespan, cols, remaining};
 }
 
@@ -107,36 +61,36 @@ export function countColumns(duration: number, width: number, minWidth: number =
  * This function groups crumbs into columns based on the number of columns available
  * and the timestamp of the crumb.
  */
-export function getCrumbsByColumn(
-  startTimestamp: number,
-  duration: number,
-  crumbs: Crumb[],
+export function getFramesByColumn(
+  durationMs: number,
+  frames: ReplayFrame[],
   totalColumns: number
 ) {
-  const startMilliSeconds = startTimestamp * 1000;
-  const safeDuration = isNaN(duration) ? 1 : duration;
+  const safeDurationMs = isNaN(durationMs) ? 1 : durationMs;
 
-  const columnCrumbPairs = crumbs.map(breadcrumb => {
-    const {timestamp} = breadcrumb;
-    const timestampMilliSeconds = +new Date(String(timestamp));
-    const sinceStart = isNaN(timestampMilliSeconds)
-      ? 0
-      : timestampMilliSeconds - startMilliSeconds;
-    const column = Math.floor((sinceStart / safeDuration) * (totalColumns - 1)) + 1;
+  const columnFramePairs = frames.map(frame => {
+    const columnPositionCalc =
+      Math.floor((frame.offsetMs / safeDurationMs) * (totalColumns - 1)) + 1;
 
-    return [column, breadcrumb] as [number, Crumb];
+    // Should start at minimum in the first column
+    const column = Math.max(1, columnPositionCalc);
+
+    return [column, frame] as [number, ReplayFrame];
   });
 
-  const crumbsByColumn = columnCrumbPairs.reduce((map, [column, breadcrumb]) => {
-    if (map.has(column)) {
-      map.get(column)?.push(breadcrumb);
-    } else {
-      map.set(column, [breadcrumb]);
-    }
-    return map;
-  }, new Map() as Map<number, Crumb[]>);
+  const framesByColumn = columnFramePairs.reduce<Map<number, ReplayFrame[]>>(
+    (map, [column, frame]) => {
+      if (map.has(column)) {
+        map.get(column)?.push(frame);
+      } else {
+        map.set(column, [frame]);
+      }
+      return map;
+    },
+    new Map()
+  );
 
-  return crumbsByColumn;
+  return framesByColumn;
 }
 
 type FlattenedSpanRange = {
@@ -151,12 +105,7 @@ type FlattenedSpanRange = {
   /**
    * Number of spans that got flattened into this range
    */
-  spanCount: number;
-  /**
-   * ID of the original span that created this range
-   */
-  spanId: string;
-  //
+  frameCount: number;
   /**
    * Absolute time in ms when the span starts
    */
@@ -171,53 +120,77 @@ function doesOverlap(a: FlattenedSpanRange, b: FlattenedSpanRange) {
   return bStartsWithinA || bEndsWithinA;
 }
 
-export function flattenSpans(rawSpans: ReplaySpan[]): FlattenedSpanRange[] {
-  if (!rawSpans.length) {
+export function flattenFrames(frames: SpanFrame[]): FlattenedSpanRange[] {
+  if (!frames.length) {
     return [];
   }
 
-  const spans = rawSpans.map(span => {
-    const startTimestamp = span.startTimestamp * 1000;
-
-    // `endTimestamp` is at least msPerPixel wide, otherwise it disappears
-    const endTimestamp = span.endTimestamp * 1000;
+  const [first, ...rest] = frames.map((span): FlattenedSpanRange => {
     return {
-      spanCount: 1,
-      // spanId: span.span_id,
-      startTimestamp,
-      endTimestamp,
-      duration: endTimestamp - startTimestamp,
-    } as FlattenedSpanRange;
+      frameCount: 1,
+      startTimestamp: span.timestampMs,
+      endTimestamp: span.endTimestampMs,
+      duration: span.endTimestampMs - span.timestampMs,
+    };
   });
 
-  const [firstSpan, ...restSpans] = spans;
-  const flatSpans = [firstSpan];
+  const flattened = [first];
 
-  for (const span of restSpans) {
+  for (const span of rest) {
     let overlap = false;
-    for (const fspan of flatSpans) {
-      if (doesOverlap(fspan, span)) {
+    for (const range of flattened) {
+      if (doesOverlap(range, span)) {
         overlap = true;
-        fspan.spanCount += 1;
-        fspan.startTimestamp = Math.min(fspan.startTimestamp, span.startTimestamp);
-        fspan.endTimestamp = Math.max(fspan.endTimestamp, span.endTimestamp);
-        fspan.duration = fspan.endTimestamp - fspan.startTimestamp;
+        range.frameCount += 1;
+        range.startTimestamp = Math.min(range.startTimestamp, span.startTimestamp);
+        range.endTimestamp = Math.max(range.endTimestamp, span.endTimestamp);
+        range.duration = range.endTimestamp - range.startTimestamp;
         break;
       }
     }
     if (!overlap) {
-      flatSpans.push(span);
+      flattened.push(span);
     }
   }
-  return flatSpans;
+  return flattened;
 }
 
 /**
- * Divide two numbers safely
+ * Finds the index of the mobile replay segment that is nearest
  */
-export function divide(numerator: number, denominator: number | undefined) {
-  if (denominator === undefined || isNaN(denominator) || denominator === 0) {
-    return 0;
+export function findVideoSegmentIndex(
+  trackList: [ts: number, index: number][],
+  segments: VideoEvent[],
+  targetTimestamp: number,
+  optionalStart?: number,
+  optionalEnd?: number
+) {
+  const start = optionalStart ?? 0;
+  const end = optionalEnd ?? segments.length - 1;
+
+  if (start > end) {
+    // XXX: This means we are not returning "exact" segments, but the prior
+    // segment if it doesn't not satisfy the exact time constraints
+    //
+    // In the case where targetTimestamp is < first segment, end can be -1
+    return end;
   }
-  return numerator / denominator;
+
+  const mid = Math.floor((start + end) / 2);
+
+  const [ts, index] = trackList[mid];
+  const segment = segments[index];
+
+  // Segment match found
+  if (targetTimestamp >= ts && targetTimestamp <= ts + segment.duration) {
+    return index;
+  }
+
+  // Search higher half
+  if (targetTimestamp > ts) {
+    return findVideoSegmentIndex(trackList, segments, targetTimestamp, mid + 1, end);
+  }
+
+  // Search lower half
+  return findVideoSegmentIndex(trackList, segments, targetTimestamp, start, mid - 1);
 }

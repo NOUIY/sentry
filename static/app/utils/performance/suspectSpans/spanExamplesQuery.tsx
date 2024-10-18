@@ -1,13 +1,13 @@
 import omit from 'lodash/omit';
 
 import {defined} from 'sentry/utils';
-import GenericDiscoverQuery, {
+import type {
   DiscoverQueryProps,
   GenericChildrenProps,
 } from 'sentry/utils/discover/genericDiscoverQuery';
-import withApi from 'sentry/utils/withApi';
+import GenericDiscoverQuery from 'sentry/utils/discover/genericDiscoverQuery';
 
-import {SpanExample} from './types';
+import type {SpanExample} from './types';
 
 type SpanExamplesProps = {
   spanGroup: string;
@@ -56,4 +56,4 @@ function SuspectSpansQuery(props: Props) {
   );
 }
 
-export default withApi(SuspectSpansQuery);
+export default SuspectSpansQuery;

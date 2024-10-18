@@ -1,4 +1,4 @@
-import {Event, ExceptionType, ExceptionValue, Thread} from 'sentry/types';
+import type {Event, ExceptionType, ExceptionValue, Thread} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
 
 function getException(
@@ -23,7 +23,7 @@ function getException(
     exceptionDataValue => exceptionDataValue.stacktrace
   );
 
-  if (!!exceptionHasAtLeastOneStacktrace) {
+  if (exceptionHasAtLeastOneStacktrace) {
     return exceptionData as Required<ExceptionType>;
   }
 

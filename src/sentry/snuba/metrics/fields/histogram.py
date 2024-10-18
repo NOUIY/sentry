@@ -1,20 +1,28 @@
 import math
-from typing import List, Optional, Tuple
 
 import sentry_sdk
 from snuba_sdk import Column, Function
 
-ClickhouseHistogram = List[Tuple[float, float, float]]
+from sentry.exceptions import InvalidParams
+
+MAX_HISTOGRAM_BUCKET = 250
+
+ClickhouseHistogram = list[tuple[float, float, float]]
 
 
 def rebucket_histogram(
     data: ClickhouseHistogram,
-    histogram_buckets: int,
-    histogram_from: Optional[float] = None,
-    histogram_to: Optional[float] = None,
+    histogram_buckets: int = 100,
+    histogram_from: float | None = None,
+    histogram_to: float | None = None,
 ) -> ClickhouseHistogram:
     if not data or not histogram_buckets:
         return []
+    if histogram_buckets > MAX_HISTOGRAM_BUCKET:
+        raise InvalidParams(
+            f"We don't have more than {MAX_HISTOGRAM_BUCKET} buckets stored for any "
+            f"given metric bucket."
+        )
 
     # Get lower and upper bound of data. If the user defined custom ranges,
     # honor them.
@@ -64,11 +72,10 @@ def rebucket_histogram(
 
 
 def zoom_histogram(
-    org_id: int,
-    histogram_buckets: int,
-    histogram_from: Optional[float] = None,
-    histogram_to: Optional[float] = None,
-) -> Optional[Function]:
+    histogram_buckets: int = 100,
+    histogram_from: float | None = None,
+    histogram_to: float | None = None,
+) -> Function | None:
     # The histogram "zoom" function is only there to limit the number of
     # histogram merge states we have to merge in order to get greater accuracy
     # on lower zoom levels. Since the maximum number of histogram buckets in
@@ -104,6 +111,12 @@ def zoom_histogram(
     # We can't put this sort of filter in the where-clause as the metrics API
     # allows for querying histograms alongside other kinds of data, so almost
     # all user-defined filters end up in a -If aggregate function.
+    if histogram_buckets > MAX_HISTOGRAM_BUCKET:
+        raise InvalidParams(
+            f"We don't have more than {MAX_HISTOGRAM_BUCKET} buckets stored for any "
+            f"given metric bucket."
+        )
+
     conditions = []
     if histogram_from is not None:
         conditions.append(

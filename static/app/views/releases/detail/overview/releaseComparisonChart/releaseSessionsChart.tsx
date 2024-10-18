@@ -1,37 +1,33 @@
 import {Component} from 'react';
-import {withRouter, WithRouterProps} from 'react-router';
+import type {Theme} from '@emotion/react';
 import {withTheme} from '@emotion/react';
+import type {Location} from 'history';
 import round from 'lodash/round';
 
-import {AreaChart, AreaChartProps} from 'sentry/components/charts/areaChart';
+import type {AreaChartProps} from 'sentry/components/charts/areaChart';
+import {AreaChart} from 'sentry/components/charts/areaChart';
 import ChartZoom from 'sentry/components/charts/chartZoom';
 import StackedAreaChart from 'sentry/components/charts/stackedAreaChart';
 import {HeaderTitleLegend, HeaderValue} from 'sentry/components/charts/styles';
 import TransitionChart from 'sentry/components/charts/transitionChart';
 import TransparentLoadingMask from 'sentry/components/charts/transparentLoadingMask';
 import QuestionTooltip from 'sentry/components/questionTooltip';
-import {PlatformKey} from 'sentry/data/platformCategories';
 import {t} from 'sentry/locale';
-import {
-  ReleaseComparisonChartType,
-  ReleaseProject,
-  ReleaseWithHealth,
-  SessionApiResponse,
-  SessionFieldWithOperation,
-  SessionStatus,
-} from 'sentry/types';
+import type {SessionApiResponse} from 'sentry/types/organization';
+import {SessionFieldWithOperation, SessionStatus} from 'sentry/types/organization';
+import type {PlatformKey} from 'sentry/types/project';
+import type {ReleaseProject, ReleaseWithHealth} from 'sentry/types/release';
+import {ReleaseComparisonChartType} from 'sentry/types/release';
 import {defined} from 'sentry/utils';
-import {getDuration, getExactDuration} from 'sentry/utils/formatters';
 import {
   getCountSeries,
   getCrashFreeRateSeries,
-  getSessionP50Series,
   getSessionStatusRateSeries,
   initSessionsChart,
   MINUTES_THRESHOLD_TO_DISPLAY_SECONDS,
 } from 'sentry/utils/sessions';
-import {Theme} from 'sentry/utils/theme';
-import {displayCrashFreePercent, roundDuration} from 'sentry/views/releases/utils';
+import withSentryRouter from 'sentry/utils/withSentryRouter';
+import {displayCrashFreePercent} from 'sentry/views/releases/utils';
 
 import {
   generateReleaseMarkLines,
@@ -45,6 +41,7 @@ type Props = {
   chartType: ReleaseComparisonChartType;
   diff: React.ReactNode;
   loading: boolean;
+  location: Location;
   platform: PlatformKey;
   project: ReleaseProject;
   release: ReleaseWithHealth;
@@ -56,7 +53,7 @@ type Props = {
   period?: string | null;
   start?: string;
   utc?: boolean;
-} & WithRouterProps;
+};
 
 class ReleaseSessionsChart extends Component<Props> {
   formatTooltipValue = (value: string | number | null, label?: string) => {
@@ -81,10 +78,6 @@ class ReleaseSessionsChart extends Component<Props> {
       case ReleaseComparisonChartType.ERRORED_USERS:
       case ReleaseComparisonChartType.CRASHED_USERS:
         return defined(value) ? `${value}%` : '\u2015';
-      case ReleaseComparisonChartType.SESSION_DURATION:
-        return defined(value) && typeof value === 'number'
-          ? getExactDuration(value, true)
-          : '\u2015';
       case ReleaseComparisonChartType.SESSION_COUNT:
       case ReleaseComparisonChartType.USER_COUNT:
       default:
@@ -120,14 +113,6 @@ class ReleaseSessionsChart extends Component<Props> {
             color: theme.chartLabel,
           },
         };
-      case ReleaseComparisonChartType.SESSION_DURATION:
-        return {
-          scale: true,
-          axisLabel: {
-            formatter: (value: number) => getDuration(value, undefined, true),
-            color: theme.chartLabel,
-          },
-        };
       case ReleaseComparisonChartType.SESSION_COUNT:
       case ReleaseComparisonChartType.USER_COUNT:
       default:
@@ -153,7 +138,6 @@ class ReleaseSessionsChart extends Component<Props> {
       default:
         return AreaChart;
       case ReleaseComparisonChartType.SESSION_COUNT:
-      case ReleaseComparisonChartType.SESSION_DURATION:
       case ReleaseComparisonChartType.USER_COUNT:
         return StackedAreaChart;
     }
@@ -184,7 +168,6 @@ class ReleaseSessionsChart extends Component<Props> {
       case ReleaseComparisonChartType.CRASHED_USERS:
         return [theme.red300];
       case ReleaseComparisonChartType.SESSION_COUNT:
-      case ReleaseComparisonChartType.SESSION_DURATION:
       case ReleaseComparisonChartType.USER_COUNT:
       default:
         return undefined;
@@ -514,33 +497,6 @@ class ReleaseSessionsChart extends Component<Props> {
           ],
           markLines,
         };
-      case ReleaseComparisonChartType.SESSION_DURATION:
-        return {
-          series: [
-            {
-              seriesName: t('This Release'),
-              connectNulls: true,
-              data: getSessionP50Series(
-                releaseSessions?.groups,
-                releaseSessions?.intervals,
-                SessionFieldWithOperation.DURATION,
-                duration => roundDuration(duration / 1000)
-              ),
-            },
-          ],
-          previousSeries: [
-            {
-              seriesName: t('All Releases'),
-              data: getSessionP50Series(
-                allSessions?.groups,
-                allSessions?.intervals,
-                SessionFieldWithOperation.DURATION,
-                duration => roundDuration(duration / 1000)
-              ),
-            },
-          ],
-          markLines,
-        };
       case ReleaseComparisonChartType.USER_COUNT:
         return {
           series: [
@@ -593,7 +549,7 @@ class ReleaseSessionsChart extends Component<Props> {
   }
 
   render() {
-    const {chartType, router, period, start, end, utc, value, diff, loading, reloading} =
+    const {chartType, period, start, end, utc, value, diff, loading, reloading} =
       this.props;
 
     const Chart = this.getChart();
@@ -626,14 +582,7 @@ class ReleaseSessionsChart extends Component<Props> {
           {value} {diff}
         </HeaderValue>
 
-        <ChartZoom
-          router={router}
-          period={period}
-          utc={utc}
-          start={start}
-          end={end}
-          usePageDate
-        >
+        <ChartZoom period={period} utc={utc} start={start} end={end} usePageDate>
           {zoomRenderProps => (
             <Chart
               legend={legend}
@@ -660,4 +609,4 @@ class ReleaseSessionsChart extends Component<Props> {
   }
 }
 
-export default withTheme(withRouter(ReleaseSessionsChart));
+export default withTheme(withSentryRouter(ReleaseSessionsChart));

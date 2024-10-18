@@ -1,6 +1,9 @@
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
-import {NavigationSection} from 'sentry/views/settings/types';
+import ConfigStore from 'sentry/stores/configStore';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {hasCustomMetrics} from 'sentry/utils/metrics/features';
+import type {NavigationSection} from 'sentry/views/settings/types';
 
 type ConfigParams = {
   debugFilesNeedsReview?: boolean;
@@ -15,7 +18,8 @@ export default function getConfiguration({
   organization,
   debugFilesNeedsReview,
 }: ConfigParams): NavigationSection[] {
-  const plugins = ((project && project.plugins) || []).filter(plugin => plugin.enabled);
+  const plugins = (project?.plugins || []).filter(plugin => plugin.enabled);
+  const isSelfHostedErrorsOnly = ConfigStore.get('isSelfHostedErrorsOnly');
   return [
     {
       name: t('Project'),
@@ -38,8 +42,8 @@ export default function getConfiguration({
         },
         {
           path: `${pathPrefix}/tags/`,
-          title: t('Tags'),
-          description: t("View and manage a  project's tags"),
+          title: t('Tags & Context'),
+          description: t("View and manage a project's tags and context"),
         },
         {
           path: `${pathPrefix}/environments/`,
@@ -48,12 +52,22 @@ export default function getConfiguration({
         },
         {
           path: `${pathPrefix}/ownership/`,
-          title: t('Issue Owners'),
-          description: t('Manage issue ownership rules for a project'),
+          title: t('Ownership Rules'),
+          description: t('Manage ownership rules for a project'),
         },
         {
           path: `${pathPrefix}/data-forwarding/`,
           title: t('Data Forwarding'),
+        },
+        {
+          path: `${pathPrefix}/user-feedback/`,
+          title: t('User Feedback'),
+          show: () => !isSelfHostedErrorsOnly,
+        },
+        {
+          path: `${pathPrefix}/toolbar/`,
+          title: t('Developer Toolbar'),
+          show: () => !!organization?.features?.includes('dev-toolbar-ui'),
         },
       ],
     },
@@ -68,13 +82,6 @@ export default function getConfiguration({
           ),
         },
         {
-          path: `${pathPrefix}/sampling/`,
-          title: t('Sampling'),
-          show: () => !!organization?.features?.includes('filters-and-sampling'),
-          description: t("Manage an organization's inbound data"),
-          badge: () => 'new',
-        },
-        {
           path: `${pathPrefix}/security-and-privacy/`,
           title: t('Security & Privacy'),
           description: t(
@@ -84,20 +91,6 @@ export default function getConfiguration({
         {
           path: `${pathPrefix}/issue-grouping/`,
           title: t('Issue Grouping'),
-        },
-        {
-          path: `${pathPrefix}/processing-issues/`,
-          title: t('Processing Issues'),
-          // eslint-disable-next-line @typescript-eslint/no-shadow
-          badge: ({project}) => {
-            if (!project) {
-              return null;
-            }
-            if (project.processingIssues <= 0) {
-              return null;
-            }
-            return project.processingIssues > 99 ? '99+' : project.processingIssues;
-          },
         },
         {
           path: `${pathPrefix}/debug-symbols/`,
@@ -115,7 +108,22 @@ export default function getConfiguration({
         {
           path: `${pathPrefix}/performance/`,
           title: t('Performance'),
-          show: () => !!organization?.features?.includes('performance-view'),
+          show: () =>
+            !!organization?.features?.includes('performance-view') &&
+            !isSelfHostedErrorsOnly,
+        },
+        {
+          path: `${pathPrefix}/metrics/`,
+          title: t('Metrics'),
+          show: () =>
+            !!(organization && hasCustomMetrics(organization)) && !isSelfHostedErrorsOnly,
+        },
+        {
+          path: `${pathPrefix}/replays/`,
+          title: t('Replays'),
+          show: () =>
+            !!organization?.features?.includes('session-replay-ui') &&
+            !isSelfHostedErrorsOnly,
         },
       ],
     },
@@ -123,13 +131,14 @@ export default function getConfiguration({
       name: t('SDK Setup'),
       items: [
         {
-          path: `${pathPrefix}/install/`,
-          title: t('Instrumentation'),
-        },
-        {
           path: `${pathPrefix}/keys/`,
           title: t('Client Keys (DSN)'),
           description: t("View and manage the project's client keys (DSN)"),
+        },
+        {
+          path: `${pathPrefix}/loader-script/`,
+          title: t('Loader Script'),
+          description: t("View and manage the project's Loader Script"),
         },
         {
           path: `${pathPrefix}/release-tracking/`,
@@ -138,11 +147,6 @@ export default function getConfiguration({
         {
           path: `${pathPrefix}/security-headers/`,
           title: t('Security Headers'),
-        },
-        {
-          path: `${pathPrefix}/user-feedback/`,
-          title: t('User Feedback'),
-          description: t('Configure user feedback reporting feature'),
         },
       ],
     },

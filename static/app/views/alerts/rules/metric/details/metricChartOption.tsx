@@ -1,25 +1,24 @@
 import color from 'color';
 import type {YAXisComponentOption} from 'echarts';
-import moment from 'moment';
-import momentTimezone from 'moment-timezone';
+import moment from 'moment-timezone';
 
 import type {AreaChartProps, AreaChartSeries} from 'sentry/components/charts/areaChart';
 import MarkArea from 'sentry/components/charts/components/markArea';
 import MarkLine from 'sentry/components/charts/components/markLine';
-import CHART_PALETTE from 'sentry/constants/chartPalette';
+import {CHART_PALETTE} from 'sentry/constants/chartPalette';
 import {t} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
-import space from 'sentry/styles/space';
-import type {SessionApiResponse} from 'sentry/types';
+import {space} from 'sentry/styles/space';
 import type {Series} from 'sentry/types/echarts';
+import type {SessionApiResponse} from 'sentry/types/organization';
+import {formatMRIField} from 'sentry/utils/metrics/mri';
 import {getCrashFreeRateSeries} from 'sentry/utils/sessions';
 import {lightTheme as theme} from 'sentry/utils/theme';
-import {
-  AlertRuleTriggerType,
-  Dataset,
-  MetricRule,
-} from 'sentry/views/alerts/rules/metric/types';
-import {Incident, IncidentActivityType, IncidentStatus} from 'sentry/views/alerts/types';
+import type {MetricRule, Trigger} from 'sentry/views/alerts/rules/metric/types';
+import {AlertRuleTriggerType, Dataset} from 'sentry/views/alerts/rules/metric/types';
+import {getAnomalyMarkerSeries} from 'sentry/views/alerts/rules/metric/utils/anomalyChart';
+import type {Anomaly, Incident} from 'sentry/views/alerts/types';
+import {IncidentActivityType, IncidentStatus} from 'sentry/views/alerts/types';
 import {
   ALERT_CHART_MIN_MAX_BUFFER,
   alertAxisFormatter,
@@ -36,7 +35,7 @@ function formatTooltipDate(date: moment.MomentInput, format: string): string {
   const {
     options: {timezone},
   } = ConfigStore.get('user');
-  return momentTimezone.tz(date, timezone).format(format);
+  return moment.tz(date, timezone).format(format);
 }
 
 function createStatusAreaSeries(
@@ -98,7 +97,7 @@ function createIncidentSeries(
           : ''
       }`,
       `</div></div>`,
-      `<div class="tooltip-date">${time}</div>`,
+      `<div class="tooltip-footer">${time}</div>`,
       '<div class="tooltip-arrow"></div>',
     ].join('');
   };
@@ -141,49 +140,75 @@ function createIncidentSeries(
 export type MetricChartData = {
   rule: MetricRule;
   timeseriesData: Series[];
+  anomalies?: Anomaly[];
   handleIncidentClick?: (incident: Incident) => void;
   incidents?: Incident[];
   selectedIncident?: Incident | null;
+  seriesName?: string;
+  showWaitingForData?: boolean;
 };
 
 type MetricChartOption = {
   chartOption: AreaChartProps;
   criticalDuration: number;
   totalDuration: number;
+  waitingForDataDuration: number;
   warningDuration: number;
 };
 
 export function getMetricAlertChartOption({
   timeseriesData,
   rule,
+  seriesName,
   incidents,
   selectedIncident,
   handleIncidentClick,
+  showWaitingForData,
+  anomalies,
 }: MetricChartData): MetricChartOption {
-  const criticalTrigger = rule.triggers.find(
-    ({label}) => label === AlertRuleTriggerType.CRITICAL
-  );
-  const warningTrigger = rule.triggers.find(
-    ({label}) => label === AlertRuleTriggerType.WARNING
-  );
+  let criticalTrigger: Trigger | undefined;
+  let warningTrigger: Trigger | undefined;
 
-  const series: AreaChartSeries[] = [...timeseriesData];
+  for (const trigger of rule.triggers) {
+    if (trigger.label === AlertRuleTriggerType.CRITICAL) {
+      criticalTrigger ??= trigger;
+    }
+    if (trigger.label === AlertRuleTriggerType.WARNING) {
+      warningTrigger ??= trigger;
+    }
+    if (criticalTrigger && warningTrigger) {
+      break;
+    }
+  }
+
+  const series: AreaChartSeries[] = timeseriesData.map(s => ({
+    ...s,
+    seriesName: s.seriesName && formatMRIField(s.seriesName),
+  }));
   const areaSeries: AreaChartSeries[] = [];
   // Ensure series data appears below incident/mark lines
   series[0].z = 1;
   series[0].color = CHART_PALETTE[0][0];
 
   const dataArr = timeseriesData[0].data;
-  const maxSeriesValue = dataArr.reduce(
-    (currMax, coord) => Math.max(currMax, coord.value),
-    0
-  );
+
+  let maxSeriesValue = Number.NEGATIVE_INFINITY;
+  let minSeriesValue = Number.POSITIVE_INFINITY;
+
+  for (const coord of dataArr) {
+    if (coord.value > maxSeriesValue) {
+      maxSeriesValue = coord.value;
+    }
+    if (coord.value < minSeriesValue) {
+      minSeriesValue = coord.value;
+    }
+  }
   // find the lowest value between chart data points, warning threshold,
   // critical threshold and then apply some breathing space
   const minChartValue = shouldScaleAlertChart(rule.aggregate)
     ? Math.floor(
         Math.min(
-          dataArr.reduce((currMax, coord) => Math.min(currMax, coord.value), Infinity),
+          minSeriesValue,
           typeof warningTrigger?.alertThreshold === 'number'
             ? warningTrigger.alertThreshold
             : Infinity,
@@ -193,9 +218,13 @@ export function getMetricAlertChartOption({
         ) / ALERT_CHART_MIN_MAX_BUFFER
       )
     : 0;
-  const firstPoint = moment(dataArr[0]?.name).valueOf();
-  const lastPoint = moment(dataArr[dataArr.length - 1]?.name).valueOf();
+  const startDate = new Date(dataArr[0]?.name);
+  const endDate =
+    dataArr.length > 1 ? new Date(dataArr[dataArr.length - 1]?.name) : new Date();
+  const firstPoint = startDate.getTime();
+  const lastPoint = endDate.getTime();
   const totalDuration = lastPoint - firstPoint;
+  let waitingForDataDuration = 0;
   let criticalDuration = 0;
   let warningDuration = 0;
 
@@ -203,43 +232,50 @@ export function getMetricAlertChartOption({
     createStatusAreaSeries(theme.green300, firstPoint, lastPoint, minChartValue)
   );
 
-  if (incidents) {
-    // select incidents that fall within the graph range
-    const periodStart = moment.utc(firstPoint);
+  if (showWaitingForData) {
+    const {startIndex, endIndex} = getWaitingForDataRange(dataArr);
+    const startTime = new Date(dataArr[startIndex]?.name).getTime();
+    const endTime = new Date(dataArr[endIndex]?.name).getTime();
 
+    waitingForDataDuration = Math.abs(endTime - startTime);
+
+    series.push(createStatusAreaSeries(theme.gray200, startTime, endTime, minChartValue));
+  }
+
+  if (incidents) {
     incidents
       .filter(
         incident =>
-          !incident.dateClosed || moment(incident.dateClosed).isAfter(periodStart)
+          !incident.dateClosed || new Date(incident.dateClosed).getTime() > firstPoint
       )
       .forEach(incident => {
-        const statusChanges = incident.activities
-          ?.filter(
+        const activities = incident.activities ?? [];
+        const statusChanges = activities
+          .filter(
             ({type, value}) =>
               type === IncidentActivityType.STATUS_CHANGE &&
-              value &&
-              [`${IncidentStatus.WARNING}`, `${IncidentStatus.CRITICAL}`].includes(value)
+              [IncidentStatus.WARNING, IncidentStatus.CRITICAL].includes(Number(value))
           )
           .sort(
-            (a, b) => moment(a.dateCreated).valueOf() - moment(b.dateCreated).valueOf()
+            (a, b) =>
+              new Date(a.dateCreated).getTime() - new Date(b.dateCreated).getTime()
           );
 
-        const incidentEnd = incident.dateClosed ?? moment().valueOf();
+        const incidentEnd = incident.dateClosed ?? new Date().getTime();
 
         const timeWindowMs = rule.timeWindow * 60 * 1000;
         const incidentColor =
           warningTrigger &&
-          statusChanges &&
-          !statusChanges.find(({value}) => value === `${IncidentStatus.CRITICAL}`)
+          !statusChanges.find(({value}) => Number(value) === IncidentStatus.CRITICAL)
             ? theme.yellow300
             : theme.red300;
 
-        const incidentStartDate = moment(incident.dateStarted).valueOf();
+        const incidentStartDate = new Date(incident.dateStarted).getTime();
         const incidentCloseDate = incident.dateClosed
-          ? moment(incident.dateClosed).valueOf()
+          ? new Date(incident.dateClosed).getTime()
           : lastPoint;
         const incidentStartValue = dataArr.find(
-          point => moment(point.name).valueOf() >= incidentStartDate
+          point => new Date(point.name).getTime() >= incidentStartDate
         );
         series.push(
           createIncidentSeries(
@@ -247,16 +283,16 @@ export function getMetricAlertChartOption({
             incidentColor,
             incidentStartDate,
             incidentStartValue,
-            series[0].seriesName,
+            seriesName ?? series[0].seriesName,
             rule.aggregate,
             handleIncidentClick
           )
         );
-        const areaStart = Math.max(moment(incident.dateStarted).valueOf(), firstPoint);
+        const areaStart = Math.max(new Date(incident.dateStarted).getTime(), firstPoint);
         const areaEnd = Math.min(
-          statusChanges?.length && statusChanges[0].dateCreated
-            ? moment(statusChanges[0].dateCreated).valueOf() - timeWindowMs
-            : moment(incidentEnd).valueOf(),
+          statusChanges.length && statusChanges[0].dateCreated
+            ? new Date(statusChanges[0].dateCreated).getTime() - timeWindowMs
+            : new Date(incidentEnd).getTime(),
           lastPoint
         );
         const areaColor = warningTrigger ? theme.yellow300 : theme.red300;
@@ -272,15 +308,15 @@ export function getMetricAlertChartOption({
           }
         }
 
-        statusChanges?.forEach((activity, idx) => {
+        statusChanges.forEach((activity, idx) => {
           const statusAreaStart = Math.max(
-            moment(activity.dateCreated).valueOf() - timeWindowMs,
+            new Date(activity.dateCreated).getTime() - timeWindowMs,
             firstPoint
           );
           const statusAreaEnd = Math.min(
             idx === statusChanges.length - 1
-              ? moment(incidentEnd).valueOf()
-              : moment(statusChanges[idx + 1].dateCreated).valueOf() - timeWindowMs,
+              ? new Date(incidentEnd).getTime()
+              : new Date(statusChanges[idx + 1].dateCreated).getTime() - timeWindowMs,
             lastPoint
           );
           const statusAreaColor =
@@ -308,6 +344,7 @@ export function getMetricAlertChartOption({
           const selectedIncidentColor =
             incidentColor === theme.yellow300 ? theme.yellow100 : theme.red100;
 
+          // Is areaSeries used anywhere?
           areaSeries.push({
             seriesName: '',
             type: 'line',
@@ -323,7 +360,9 @@ export function getMetricAlertChartOption({
         }
       });
   }
-
+  if (anomalies) {
+    series.push(...getAnomalyMarkerSeries(anomalies, {startDate, endDate}));
+  }
   let maxThresholdValue = 0;
   if (!rule.comparisonDelta && warningTrigger?.alertThreshold) {
     const {alertThreshold} = warningTrigger;
@@ -356,14 +395,15 @@ export function getMetricAlertChartOption({
     max: isCrashFreeAlert(rule.dataset)
       ? 100
       : maxThresholdValue > maxSeriesValue
-      ? maxThresholdValue
-      : undefined,
+        ? maxThresholdValue
+        : undefined,
     min: minChartValue || undefined,
   };
 
   return {
     criticalDuration,
     warningDuration,
+    waitingForDataDuration,
     totalDuration,
     chartOption: {
       isGroupedByDate: true,
@@ -377,6 +417,21 @@ export function getMetricAlertChartOption({
       },
     },
   };
+}
+
+function getWaitingForDataRange(dataArr) {
+  if (dataArr[0].value > 0) {
+    return {startIndex: 0, endIndex: 0};
+  }
+
+  for (let i = 0; i < dataArr.length; i++) {
+    const dataPoint = dataArr[i];
+    if (dataPoint.value > 0) {
+      return {startIndex: 0, endIndex: i - 1};
+    }
+  }
+
+  return {startIndex: 0, endIndex: dataArr.length - 1};
 }
 
 export function transformSessionResponseToSeries(

@@ -4,7 +4,7 @@ import {Hovercard} from 'sentry/components/hovercard';
 import {t} from 'sentry/locale';
 
 type Props = {
-  children: ({hasFeature: boolean}) => React.ReactNode;
+  children: (props: {hasFeature: boolean}) => React.ReactNode;
 };
 
 /**
@@ -32,7 +32,7 @@ function DiscoverFeature({children}: Props) {
   return (
     <Feature
       hookName="feature-disabled:open-discover"
-      features={['organizations:discover-basic']}
+      features="organizations:discover-basic"
       renderDisabled={renderDisabled}
     >
       {({hasFeature}) => children({hasFeature})}

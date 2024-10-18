@@ -1,12 +1,13 @@
 export function isSchema(input: any): input is Profiling.Schema {
   return (
     typeof input === 'object' &&
-    'transactionName' in input &&
+    // 'metadata' in input &&
     'profiles' in input &&
     Array.isArray(input.profiles) &&
     'shared' in input
   );
 }
+
 export function isEventedProfile(profile: any): profile is Profiling.EventedProfile {
   return 'type' in profile && profile.type === 'evented';
 }
@@ -19,15 +20,43 @@ export function isJSProfile(profile: any): profile is JSSelfProfiling.Trace {
   return !('type' in profile) && Array.isArray(profile.resources);
 }
 
-export function isChromeTraceFormat(input: any): input is ChromeTrace.ProfileType {
-  return isChromeTraceArrayFormat(input) || isChromeTraceObjectFormat(input);
+export function isSentrySampledProfile(
+  profile: any
+): profile is Profiling.SentrySampledProfile {
+  return (
+    'profile' in profile &&
+    'samples' in profile.profile &&
+    'stacks' in profile.profile &&
+    'frames' in profile.profile
+  );
 }
 
-export function isChromeTraceObjectFormat(input: any): input is ChromeTrace.ObjectFormat {
-  return typeof input === 'object' && 'traceEvents' in input;
+export function isSentryContinuousProfile(
+  profile: any
+): profile is Profiling.ContinuousProfile {
+  return (
+    'samples' in profile &&
+    'stacks' in profile &&
+    'frames' in profile &&
+    !('type' in profile) &&
+    !Array.isArray(profile.resources)
+  );
 }
 
-export function isChromeTraceArrayFormat(input: any): input is ChromeTrace.ArrayFormat {
-  // @TODO we need to check if the profile actually includes the v8 profile nodes.
-  return Array.isArray(input);
+export function isSentryContinuousProfileChunk(
+  profile: any
+): profile is Profiling.SentryContinousProfileChunk {
+  return 'chunk_id' in profile;
+}
+
+export function isContinuousProfileReference(
+  ref: Profiling.ProfileReference
+): ref is Profiling.ContinuousProfileReference {
+  return typeof ref !== 'string' && 'profiler_id' in ref;
+}
+
+export function isTransactionProfileReference(
+  ref: Profiling.ProfileReference
+): ref is Profiling.TransactionProfileReference {
+  return typeof ref !== 'string' && 'profile_id' in ref;
 }

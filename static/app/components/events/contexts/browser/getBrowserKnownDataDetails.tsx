@@ -1,16 +1,15 @@
+import type {KnownDataDetails} from 'sentry/components/events/contexts/utils';
 import {t} from 'sentry/locale';
 
-import {BrowserKnownData, BrowserKnownDataType} from './types';
+import type {BrowserKnownData} from './types';
+import {BrowserKnownDataType} from './types';
 
-type Output = {
-  subject: string;
-  value: React.ReactNode | null;
+type Props = {
+  data: BrowserKnownData;
+  type: BrowserKnownDataType;
 };
 
-function getOperatingSystemKnownDataDetails(
-  data: BrowserKnownData,
-  type: BrowserKnownDataType
-): Output {
+export function getBrowserKnownDataDetails({data, type}: Props): KnownDataDetails {
   switch (type) {
     case BrowserKnownDataType.NAME:
       return {
@@ -23,11 +22,6 @@ function getOperatingSystemKnownDataDetails(
         value: `${data.version}`,
       };
     default:
-      return {
-        subject: type,
-        value: data[type] || null,
-      };
+      return undefined;
   }
 }
-
-export default getOperatingSystemKnownDataDetails;

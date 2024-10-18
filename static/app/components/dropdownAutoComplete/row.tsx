@@ -1,17 +1,20 @@
 import {memo, useEffect, useMemo} from 'react';
 import styled from '@emotion/styled';
 
-import AutoComplete from 'sentry/components/autoComplete';
-import space from 'sentry/styles/space';
+import type AutoComplete from 'sentry/components/autoComplete';
+import InteractionStateLayer from 'sentry/components/interactionStateLayer';
+import {space} from 'sentry/styles/space';
 
-import {Item} from './types';
+import type {Item} from './types';
 
 type ItemSize = 'zero' | 'small';
-type AutoCompleteChildrenArgs<T> = Parameters<AutoComplete<T>['props']['children']>[0];
+type AutoCompleteChildrenArgs<T extends Item> = Parameters<
+  AutoComplete<T>['props']['children']
+>[0];
 
-type Props<T> = Pick<
+type Props<T extends Item> = Pick<
   AutoCompleteChildrenArgs<T>,
-  'getItemProps' | 'registerVisibleItem' | 'inputValue'
+  'getItemProps' | 'registerVisibleItem'
 > &
   Omit<Parameters<AutoCompleteChildrenArgs<T>['getItemProps']>[0], 'index'> & {
     /**
@@ -28,16 +31,11 @@ type Props<T> = Pick<
     style?: React.CSSProperties;
   };
 
-function scrollIntoView(element: HTMLDivElement) {
-  element?.scrollIntoView?.({block: 'nearest'});
-}
-
 function Row<T extends Item>({
   item,
   style,
   itemSize,
   isHighlighted,
-  inputValue,
   getItemProps,
   registerVisibleItem,
 }: Props<T>) {
@@ -53,7 +51,7 @@ function Row<T extends Item>({
   if (item.groupLabel) {
     return (
       <LabelWithBorder style={style}>
-        {item.label && <GroupLabel>{item.label}</GroupLabel>}
+        {item.label && <GroupLabel>{item.label as string}</GroupLabel>}
       </LabelWithBorder>
     );
   }
@@ -64,10 +62,10 @@ function Row<T extends Item>({
       disabled={item.disabled}
       isHighlighted={isHighlighted}
       style={style}
-      ref={isHighlighted ? scrollIntoView : undefined}
       {...itemProps}
     >
-      {typeof item.label === 'function' ? item.label({inputValue}) : item.label}
+      <InteractionStateLayer isHovered={isHighlighted} />
+      {item.label}
     </AutoCompleteItem>
   );
 }
@@ -91,6 +89,8 @@ const getItemPaddingForSize = (itemSize?: ItemSize) => {
 };
 
 const LabelWithBorder = styled('div')`
+  display: flex;
+  align-items: center;
   background-color: ${p => p.theme.backgroundSecondary};
   border-bottom: 1px solid ${p => p.theme.innerBorder};
   border-width: 1px 0;
@@ -123,7 +123,6 @@ const AutoCompleteItem = styled('div')<{
   scroll-margin: 20px 0;
 
   font-size: ${p => p.theme.fontSizeMedium};
-  background-color: ${p => (p.isHighlighted ? p.theme.hover : 'transparent')};
   color: ${p => (p.isHighlighted ? p.theme.textColor : 'inherit')};
   padding: ${p => getItemPaddingForSize(p.itemSize)};
   cursor: ${p => (p.disabled ? 'not-allowed' : 'pointer')};
@@ -131,10 +130,5 @@ const AutoCompleteItem = styled('div')<{
 
   :last-child {
     border-bottom: none;
-  }
-
-  :hover {
-    color: ${p => p.theme.textColor};
-    background-color: ${p => p.theme.hover};
   }
 `;

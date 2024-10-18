@@ -1,17 +1,16 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
-/* TODO: replace with I/O when finished */
-import img from 'sentry-images/spot/hair-on-fire.svg';
-
-import Button from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
-import PageHeading from 'sentry/components/pageHeading';
+import NoProjectEmptyState from 'sentry/components/illustrations/NoProjectEmptyState';
+import * as Layout from 'sentry/components/layouts/thirds';
+import {canCreateProject} from 'sentry/components/projects/canCreateProject';
 import {t} from 'sentry/locale';
-import ConfigStore from 'sentry/stores/configStore';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
 import useProjects from 'sentry/utils/useProjects';
+import {useUser} from 'sentry/utils/useUser';
 
 type Props = {
   organization: Organization;
@@ -24,17 +23,16 @@ function NoProjectMessage({
   organization,
   superuserNeedsToBeProjectMember,
 }: Props) {
+  const user = useUser();
   const {projects, initiallyLoaded: projectsLoaded} = useProjects();
 
   const orgSlug = organization.slug;
-  const canCreateProject = organization.access.includes('project:write');
+  const canUserCreateProject = canCreateProject(organization);
   const canJoinTeam = organization.access.includes('team:read');
-
-  const {isSuperuser} = ConfigStore.get('user');
 
   const orgHasProjects = !!projects?.length;
   const hasProjectAccess =
-    isSuperuser && !superuserNeedsToBeProjectMember
+    user.isSuperuser && !superuserNeedsToBeProjectMember
       ? !!projects?.some(p => p.hasAccess)
       : !!projects?.some(p => p.isMember && p.hasAccess);
 
@@ -47,58 +45,54 @@ function NoProjectMessage({
   // action is to create a project.
 
   const joinTeamAction = (
-    <Button
+    <LinkButton
       title={canJoinTeam ? undefined : t('You do not have permission to join a team.')}
       disabled={!canJoinTeam}
       priority={orgHasProjects ? 'primary' : 'default'}
       to={`/settings/${orgSlug}/teams/`}
     >
       {t('Join a Team')}
-    </Button>
+    </LinkButton>
   );
 
   const createProjectAction = (
-    <Button
+    <LinkButton
       title={
-        canCreateProject
+        canUserCreateProject
           ? undefined
           : t('You do not have permission to create a project.')
       }
-      disabled={!canCreateProject}
+      disabled={!canUserCreateProject}
       priority={orgHasProjects ? 'default' : 'primary'}
       to={`/organizations/${orgSlug}/projects/new/`}
     >
       {t('Create project')}
-    </Button>
+    </LinkButton>
   );
 
   return (
     <Wrapper>
-      <HeightWrapper>
-        <img src={img} height={350} alt={t('Nothing to see')} />
-        <Content>
-          <StyledPageHeading>{t('Remain Calm')}</StyledPageHeading>
-          <HelpMessage>{t('You need at least one project to use this view')}</HelpMessage>
-          <Actions gap={1}>
-            {!orgHasProjects ? (
-              createProjectAction
-            ) : (
-              <Fragment>
-                {joinTeamAction}
-                {createProjectAction}
-              </Fragment>
-            )}
-          </Actions>
-        </Content>
-      </HeightWrapper>
+      <NoProjectEmptyState />
+
+      <Content>
+        <Layout.Title>{t('Remain Calm')}</Layout.Title>
+        <HelpMessage>{t('You need at least one project to use this view')}</HelpMessage>
+        <Actions gap={1}>
+          {!orgHasProjects ? (
+            createProjectAction
+          ) : (
+            <Fragment>
+              {joinTeamAction}
+              {createProjectAction}
+            </Fragment>
+          )}
+        </Actions>
+      </Content>
     </Wrapper>
   );
 }
 
-const StyledPageHeading = styled(PageHeading)`
-  font-size: 28px;
-  margin-bottom: ${space(1.5)};
-`;
+export default NoProjectMessage;
 
 const HelpMessage = styled('div')`
   margin-bottom: ${space(2)};
@@ -111,11 +105,6 @@ const Wrapper = styled('div')`
   justify-content: center;
 `;
 
-const HeightWrapper = styled('div')`
-  display: flex;
-  height: 350px;
-`;
-
 const Content = styled('div')`
   display: flex;
   flex-direction: column;
@@ -126,5 +115,3 @@ const Content = styled('div')`
 const Actions = styled(ButtonBar)`
   width: fit-content;
 `;
-
-export default NoProjectMessage;

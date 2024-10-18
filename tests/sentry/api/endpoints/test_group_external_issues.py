@@ -1,5 +1,5 @@
-from sentry.models import PlatformExternalIssue
-from sentry.testutils import APITestCase
+from sentry.sentry_apps.models.platformexternalissue import PlatformExternalIssue
+from sentry.testutils.cases import APITestCase
 
 
 class GroupExternalIssuesEndpointTest(APITestCase):
@@ -18,7 +18,7 @@ class GroupExternalIssuesEndpointTest(APITestCase):
 
         url = f"/api/0/issues/{group.id}/external-issues/"
         response = self.client.get(url, format="json")
-        external_issue = PlatformExternalIssue.objects.first()
+        external_issue = PlatformExternalIssue.objects.get()
         assert response.status_code == 200, response.content
         assert len(response.data) == 1
         assert response.data == [

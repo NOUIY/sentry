@@ -1,183 +1,95 @@
-import {RouteComponentProps} from 'react-router';
-import {css} from '@emotion/react';
-import styled from '@emotion/styled';
-
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {openCreateTeamModal} from 'sentry/actionCreators/modal';
-import {addTeamToProject, removeTeamFromProject} from 'sentry/actionCreators/projects';
-import Link from 'sentry/components/links/link';
-import Tooltip from 'sentry/components/tooltip';
-import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project, Team} from 'sentry/types';
+import {
+  useAddTeamToProject,
+  useFetchProjectTeams,
+  useRemoveTeamFromProject,
+} from 'sentry/actionCreators/projects';
+import {hasEveryAccess} from 'sentry/components/acl/access';
+import LoadingError from 'sentry/components/loadingError';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
+import {t, tct} from 'sentry/locale';
+import TeamStore from 'sentry/stores/teamStore';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import routeTitleGen from 'sentry/utils/routeTitle';
-import AsyncView from 'sentry/views/asyncView';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
-import TeamSelect from 'sentry/views/settings/components/teamSelect';
+import TeamSelectForProject from 'sentry/views/settings/components/teamSelect/teamSelectForProject';
+import TextBlock from 'sentry/views/settings/components/text/textBlock';
+import PermissionAlert from 'sentry/views/settings/project/permissionAlert';
 
-type Props = {
+type ProjectTeamsProps = {
   organization: Organization;
   project: Project;
-} & RouteComponentProps<{orgId: string; projectId: string}, {}>;
+};
 
-type State = {
-  projectTeams: null | Team[];
-} & AsyncView['state'];
+export function ProjectTeams({organization, project}: ProjectTeamsProps) {
+  const {
+    data: projectTeams,
+    isPending,
+    isError,
+  } = useFetchProjectTeams({orgSlug: organization.slug, projectSlug: project.slug});
+  const handleAddTeamToProject = useAddTeamToProject({
+    orgSlug: organization.slug,
+    projectSlug: project.slug,
+  });
+  const handleRemoveTeamFromProject = useRemoveTeamFromProject({
+    orgSlug: organization.slug,
+    projectSlug: project.slug,
+  });
 
-class ProjectTeams extends AsyncView<Props, State> {
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    const {orgId, projectId} = this.props.params;
-    return [['projectTeams', `/projects/${orgId}/${projectId}/teams/`]];
+  const canCreateTeam =
+    organization.access.includes('org:write') &&
+    organization.access.includes('team:write') &&
+    organization.access.includes('project:write');
+  const hasWriteAccess = hasEveryAccess(['project:write'], {organization, project});
+
+  if (isError) {
+    return <LoadingError message={t('Failed to load project teams')} />;
   }
 
-  getTitle() {
-    const {projectId} = this.props.params;
-    return routeTitleGen(t('Project Teams'), projectId, false);
+  if (isPending) {
+    return <LoadingIndicator />;
   }
 
-  canCreateTeam = () => {
-    const {organization} = this.props;
-    const access = new Set(organization.access);
-    return (
-      access.has('org:write') && access.has('team:write') && access.has('project:write')
-    );
-  };
-
-  handleRemove = (teamSlug: Team['slug']) => {
-    if (this.state.loading) {
-      return;
-    }
-
-    const {orgId, projectId} = this.props.params;
-
-    removeTeamFromProject(this.api, orgId, projectId, teamSlug)
-      .then(() => this.handleRemovedTeam(teamSlug))
-      .catch(() => {
-        addErrorMessage(t('Could not remove the %s team', teamSlug));
-        this.setState({loading: false});
-      });
-  };
-
-  handleRemovedTeam = (teamSlug: Team['slug']) => {
-    this.setState(prevState => ({
-      projectTeams: [
-        ...(prevState.projectTeams || []).filter(team => team.slug !== teamSlug),
-      ],
-    }));
-  };
-
-  handleAddedTeam = (team: Team) => {
-    this.setState(prevState => ({
-      projectTeams: [...(prevState.projectTeams || []), team],
-    }));
-  };
-
-  handleAdd = (team: Team) => {
-    if (this.state.loading) {
-      return;
-    }
-    const {orgId, projectId} = this.props.params;
-
-    addTeamToProject(this.api, orgId, projectId, team).then(
-      () => {
-        this.handleAddedTeam(team);
-      },
-      () => {
-        this.setState({
-          error: true,
-          loading: false,
-        });
-      }
-    );
-  };
-
-  handleCreateTeam = (e: React.MouseEvent) => {
-    const {project, organization} = this.props;
-
-    if (!this.canCreateTeam()) {
-      return;
-    }
-
-    e.stopPropagation();
-    e.preventDefault();
-
-    openCreateTeamModal({
-      project,
-      organization,
-      onClose: data => {
-        addTeamToProject(this.api, organization.slug, project.slug, data).then(
-          this.remountComponent,
-          this.remountComponent
-        );
-      },
-    });
-  };
-
-  renderBody() {
-    const {params, organization} = this.props;
-
-    const canCreateTeam = this.canCreateTeam();
-    const hasAccess = organization.access.includes('project:write');
-    const confirmRemove = t(
-      'This is the last team with access to this project. Removing it will mean ' +
-        'only organization owners and managers will be able to access the project pages. Are ' +
-        'you sure you want to remove this team from the project %s?',
-      params.projectId
-    );
-    const {projectTeams} = this.state;
-
-    const menuHeader = (
-      <StyledTeamsLabel>
-        {t('Teams')}
-        <Tooltip
-          disabled={canCreateTeam}
-          title={t('You must be a project admin to create teams')}
-          position="top"
-        >
-          <StyledCreateTeamLink
-            to=""
-            disabled={!canCreateTeam}
-            onClick={this.handleCreateTeam}
-          >
-            {t('Create Team')}
-          </StyledCreateTeamLink>
-        </Tooltip>
-      </StyledTeamsLabel>
-    );
-
-    return (
+  return (
+    <SentryDocumentTitle title={routeTitleGen(t('Project Teams'), project.slug, false)}>
       <div>
-        <SettingsPageHeader title={t('%s Teams', params.projectId)} />
-        <TeamSelect
+        <SettingsPageHeader title={t('Project Teams for %s', project.slug)} />
+        <TextBlock>
+          {t(
+            'These teams and their members have access to this project. They can be assigned to issues and alerts created in it.'
+          )}
+        </TextBlock>
+        <TextBlock>
+          {t(
+            'Team Admins can grant other teams access to this project. However, they cannot revoke access unless they are admins for the other teams too.'
+          )}
+        </TextBlock>
+        <PermissionAlert project={project} />
+
+        <TeamSelectForProject
+          disabled={!hasWriteAccess}
+          canCreateTeam={canCreateTeam}
           organization={organization}
+          project={project}
           selectedTeams={projectTeams ?? []}
-          onAddTeam={this.handleAdd}
-          onRemoveTeam={this.handleRemove}
-          menuHeader={menuHeader}
-          confirmLastTeamRemoveMessage={confirmRemove}
-          disabled={!hasAccess}
+          onAddTeam={teamSlug => {
+            const team = TeamStore.getBySlug(teamSlug);
+
+            if (!team) {
+              addErrorMessage(tct('Unable to find "[teamSlug]"', {teamSlug}));
+              return;
+            }
+
+            handleAddTeamToProject(team);
+          }}
+          onRemoveTeam={handleRemoveTeamFromProject}
+          onCreateTeam={handleAddTeamToProject}
         />
       </div>
-    );
-  }
+    </SentryDocumentTitle>
+  );
 }
-
-const StyledTeamsLabel = styled('div')`
-  font-size: 0.875em;
-  padding: ${space(0.5)} 0px;
-  text-transform: uppercase;
-`;
-
-const StyledCreateTeamLink = styled(Link)`
-  float: right;
-  text-transform: none;
-  ${p =>
-    p.disabled &&
-    css`
-      cursor: not-allowed;
-      color: ${p.theme.gray300};
-      opacity: 0.6;
-    `};
-`;
 
 export default ProjectTeams;

@@ -1,7 +1,7 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import Card from 'sentry/components/card';
 import EventsRequest from 'sentry/components/charts/eventsRequest';
@@ -11,28 +11,27 @@ import EmptyStateWarning from 'sentry/components/emptyStateWarning';
 import Link from 'sentry/components/links/link';
 import Placeholder from 'sentry/components/placeholder';
 import QuestionTooltip from 'sentry/components/questionTooltip';
-import Sparklines from 'sentry/components/sparklines';
+import {Sparklines} from 'sentry/components/sparklines';
 import SparklinesLine from 'sentry/components/sparklines/line';
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
-import overflowEllipsis from 'sentry/styles/overflowEllipsis';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
+import toArray from 'sentry/utils/array/toArray';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
 import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
-import {
-  Column,
-  generateFieldAsString,
-  getAggregateAlias,
-  WebVital,
-} from 'sentry/utils/discover/fields';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {Column} from 'sentry/utils/discover/fields';
+import {generateFieldAsString, getAggregateAlias} from 'sentry/utils/discover/fields';
+import {WebVital} from 'sentry/utils/fields';
 import {WEB_VITAL_DETAILS} from 'sentry/utils/performance/vitals/constants';
-import VitalsCardsDiscoverQuery, {
+import type {
   VitalData,
   VitalsData,
 } from 'sentry/utils/performance/vitals/vitalsCardsDiscoverQuery';
+import VitalsCardsDiscoverQuery from 'sentry/utils/performance/vitals/vitalsCardsDiscoverQuery';
 import {decodeList} from 'sentry/utils/queryString';
 import theme from 'sentry/utils/theme';
 import useApi from 'sentry/utils/useApi';
@@ -325,7 +324,7 @@ const SparklineContainer = styled('div')<SparklineContainerProps>`
   flex-grow: 4;
   max-height: ${p => p.height}px;
   max-width: ${p => p.width}px;
-  margin: ${space(1)} ${space(0)} ${space(0.5)} ${space(3)};
+  margin: ${space(1)} 0 ${space(0.5)} ${space(3)};
 `;
 
 const VitalsContainer = styled('div')`
@@ -333,11 +332,11 @@ const VitalsContainer = styled('div')`
   grid-template-columns: 1fr;
   grid-column-gap: ${space(2)};
 
-  @media (min-width: ${p => p.theme.breakpoints[0]}) {
+  @media (min-width: ${p => p.theme.breakpoints.small}) {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  @media (min-width: ${p => p.theme.breakpoints[2]}) {
+  @media (min-width: ${p => p.theme.breakpoints.large}) {
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
 `;
@@ -391,7 +390,7 @@ export function VitalBar(props: VitalBarProps) {
     good: 0,
     total: 0,
   };
-  const vitals = Array.isArray(vital) ? vital : [vital];
+  const vitals = toArray(vital);
   vitals.forEach(vitalName => {
     const c = data?.[vitalName] ?? {};
     Object.keys(counts).forEach(countKey => (counts[countKey] += c[countKey]));
@@ -467,7 +466,7 @@ function VitalCard(props: VitalCardProps) {
   return (
     <StyledCard interactive={!isNotInteractive} minHeight={minHeight}>
       <HeaderTitle>
-        <OverflowEllipsis>{t(title)}</OverflowEllipsis>
+        <OverflowEllipsis>{title}</OverflowEllipsis>
         <QuestionTooltip size="sm" position="top" title={tooltip} />
       </HeaderTitle>
       <CardContent horizontal={horizontal}>
@@ -543,7 +542,7 @@ function getColorStopsFromPercents(percents: Percent[]) {
 const BarDetail = styled('div')`
   font-size: ${p => p.theme.fontSizeMedium};
 
-  @media (min-width: ${p => p.theme.breakpoints[0]}) {
+  @media (min-width: ${p => p.theme.breakpoints.small}) {
     display: flex;
     justify-content: space-between;
   }
@@ -555,5 +554,5 @@ const CardValue = styled('div')`
 `;
 
 const OverflowEllipsis = styled('div')`
-  ${overflowEllipsis};
+  ${p => p.theme.overflowEllipsis};
 `;

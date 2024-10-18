@@ -1,5 +1,5 @@
-from sentry.models import ProjectPlatform
-from sentry.testutils import APITestCase
+from sentry.models.projectplatform import ProjectPlatform
+from sentry.testutils.cases import APITestCase
 
 
 class ProjectPlatformsTest(APITestCase):
