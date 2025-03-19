@@ -79,7 +79,7 @@
     "dompurify": "^2.3.8",
     "downsample": "1.4.0",
     "echarts": "5.3.1",
-    "echarts-for-react": "3.0.2",
+    "echarts-for-react": "3.0.3",
     "enzyme": "3.11.0",
     "focus-trap": "^6.7.1",
     "focus-visible": "^5.2.0",
