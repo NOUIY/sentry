@@ -19,6 +19,7 @@ import {toTitleCase} from 'sentry/utils/string/toTitleCase';
 import useApi from 'sentry/utils/useApi';
 
 import {PAYG_BUSINESS_DEFAULT, PAYG_TEAM_DEFAULT} from 'getsentry/constants';
+import {useBillingDetails} from 'getsentry/hooks/useBillingDetails';
 import {useStripeInstance} from 'getsentry/hooks/useStripeInstance';
 import {
   InvoiceItemType,
@@ -55,7 +56,6 @@ interface CartProps {
   activePlan: Plan;
   formData: CheckoutFormData;
   formDataForPreview: CheckoutFormData;
-  hasCompleteBillingDetails: boolean;
   onSuccess: ({
     invoice,
     nextQueryParams,
@@ -287,10 +287,10 @@ function SubtotalSummary({
     <SummarySection>
       {formData.onDemandBudget?.budgetMode === OnDemandBudgetMode.SHARED &&
         !!formData.onDemandMaxSpend && (
-          <Item data-test-id="summary-item-spend-cap">
+          <Item data-test-id="summary-item-spend-limit">
             <ItemFlex>
               <div>
-                {tct('[budgetTerm] spend cap', {
+                {tct('[budgetTerm] spend limit', {
                   budgetTerm: capitalize(activePlan.budgetTerm),
                 })}
               </div>
@@ -329,10 +329,10 @@ function SubtotalSummary({
           .filter(([_, budget]) => budget > 0)
           .map(([category, budget]) => {
             return (
-              <Item key={category} data-test-id={`summary-item-spend-cap-${category}`}>
+              <Item key={category} data-test-id={`summary-item-spend-limit-${category}`}>
                 <ItemFlex>
                   <div>
-                    {tct('[categoryName] [budgetTerm] spend cap', {
+                    {tct('[categoryName] [budgetTerm] spend limit', {
                       categoryName: getPlanCategoryName({
                         plan: activePlan,
                         category: category as DataCategory,
@@ -580,7 +580,6 @@ function Cart({
   organization,
   referrer,
   formDataForPreview,
-  hasCompleteBillingDetails,
   onSuccess,
 }: CartProps) {
   const [previewState, setPreviewState] = useState<CartPreviewState>(NULL_PREVIEW_STATE);
@@ -590,6 +589,8 @@ function Cart({
   const [summaryIsOpen, setSummaryIsOpen] = useState(true);
   const [changesIsOpen, setChangesIsOpen] = useState(true);
   const api = useApi();
+  const {data: billingDetails} = useBillingDetails();
+  const hasCompleteBillingInfo = utils.hasBillingInfo(billingDetails, subscription, true);
 
   const resetPreviewState = () => setPreviewState(NULL_PREVIEW_STATE);
 
@@ -751,7 +752,7 @@ function Cart({
       <TotalSummary
         activePlan={activePlan}
         billedTotal={previewState.billedTotal}
-        buttonDisabled={!hasCompleteBillingDetails}
+        buttonDisabled={!hasCompleteBillingInfo}
         formData={formData}
         isSubmitting={isSubmitting}
         originalBilledTotal={previewState.originalBilledTotal}
