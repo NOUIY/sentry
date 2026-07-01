@@ -185,8 +185,8 @@ importers:
         specifier: 2.41.0
         version: 2.41.0
       '@sentry-internal/rrweb-player':
-        specifier: 2.41.0
-        version: 2.41.0
+        specifier: 2.43.0
+        version: 2.43.0
       '@sentry-internal/rrweb-snapshot':
         specifier: 2.41.0
         version: 2.41.0
@@ -3110,20 +3110,32 @@ packages:
   '@sentry-internal/rrdom@2.41.0':
     resolution: {integrity: sha512-oFBTYW/YH98Hp43AsgXXx0FUY2GmwFVYeEdwKqCxui6yV3cLH9ut2aguFLbel7VmCsgsvEuzvDx6z04mbWJgNA==}
 
-  '@sentry-internal/rrweb-packer@2.41.0':
-    resolution: {integrity: sha512-1X4ckBAjtFBZlQ8AlT4sUsuTi8yfrQfq4GJ03lbpdawgiH8NGr6ZBR2pl0ZTHo7bUGDGPA5VSYUuztEEzfNuuA==}
+  '@sentry-internal/rrdom@2.43.0':
+    resolution: {integrity: sha512-dJqvPTWWWQRqFE+4m2YpS8l5aLkbiz+PrbHh53p0jyanbqodti4LvFy7UmbsNqxZDOCz24fGFhlbCc8OvdiubQ==}
 
-  '@sentry-internal/rrweb-player@2.41.0':
-    resolution: {integrity: sha512-XUGhvTG90DonA7aV/7NS4/p2bEyTlX+U0kCsxp0dOq1i+Z0bYPEUPK2TJPVQJY7fgl44DPBJZiCvRe32760SuA==}
+  '@sentry-internal/rrweb-packer@2.43.0':
+    resolution: {integrity: sha512-wqkpN9l4V9oT97EbUyH0n2DvvzgyMhNDe7ofwOPyvMyzGTdpb7QIbcII33/Exb5kv6IEbBWUkUqMkZyYvvzKAA==}
+
+  '@sentry-internal/rrweb-player@2.43.0':
+    resolution: {integrity: sha512-dhYTBgI56XXh8wUDVqeGTNXdZUlNiCQq52DFZcw371W1XYoaeNj8xG6ReU2GHmLt722GfaoHk+aJ9IaAvM0lRw==}
 
   '@sentry-internal/rrweb-snapshot@2.41.0':
     resolution: {integrity: sha512-2NPQmwfbVONnyLOOwQ4WP+PIJx+qB5mEIFUq2bpgWglDSPSkr6yxnMB2kT+lE8P3OC/N3I/IrV0vEyFEReVgBA==}
 
+  '@sentry-internal/rrweb-snapshot@2.43.0':
+    resolution: {integrity: sha512-DF6HOwkOTpxCYZWCLZ32Sl27f6iXi4jSyonhjkie44Wr9nMe6Zvey/V0glm8xI1XkGqZaFGUVzVRReezwwkeHg==}
+
   '@sentry-internal/rrweb-types@2.41.0':
     resolution: {integrity: sha512-9+sfBcblve5i6uZpeu9s/tCUhhwg3wb8Ywe4RjVI4jNywVYsCJscpswbM8mdNUNvJpaaZud0QLS50HwQycCEZA==}
 
+  '@sentry-internal/rrweb-types@2.43.0':
+    resolution: {integrity: sha512-T98inxcRWi+GhZIPBOdAE0xaKxnm6am3h+9mbkN+rDqdFz/TsGF+bTvjTHuZ/nE7dzCGCxGnwQCNnJk9Z14x4A==}
+
   '@sentry-internal/rrweb@2.41.0':
     resolution: {integrity: sha512-Pq5Ng/NhXza40lIXAjBCclvuC+QFwAktWwl2Sa/oMH//GxtDc/mcWV7CIHdsiSbTkd3jFQZcuutByFq2hlCSug==}
+
+  '@sentry-internal/rrweb@2.43.0':
+    resolution: {integrity: sha512-kMOzXrnKXTfOw17GwcI8vs+AnIsJpKvjyU7EDA+dzQ4jJ6NXVaf4bT+ybIIoklBYE+ck08wDnf5ND+lAvX6YNg==}
 
   '@sentry/babel-plugin-component-annotate@5.3.0':
     resolution: {integrity: sha512-p4q8gn8wcFqZGP/s2MnJCAAd8fTikaU6A0mM97RDHQgStcrYiaS0Sc5zUNfb1V+UOLPuvdEdL6MwyxfzjYJQTA==}
@@ -5226,8 +5238,8 @@ packages:
     resolution: {integrity: sha512-ZCkIjSYNDyGn0R6ewHDtXgns/Zre/NT6Agvq1/WobF7JXgFff4SeDroKiCO3fNJreU9YG429Sc81o4w5ok/W5g==}
     engines: {node: '>=10.2.0'}
 
-  enhanced-resolve@5.24.0:
-    resolution: {integrity: sha512-SkE2t82KlkkxQRVMVLAGKxLfORGQfrkx5dkj+vlgXRVNEdPc4eZcR+J/Fvj8C+yKSFH5L0q3NFlyufOVQnCcYQ==}
+  enhanced-resolve@5.24.1:
+    resolution: {integrity: sha512-7DdUaTjmNwMcH2gLr1qycesKII3BK4RLy/mdAb7x10Lq7bR4aNKHt1BR1ZALSv0rPM/hF5wYF0PhGop/rJm8vw==}
     engines: {node: '>=10.13.0'}
 
   entities@2.0.0:
@@ -11813,22 +11825,33 @@ snapshots:
     dependencies:
       '@sentry-internal/rrweb-snapshot': 2.41.0
 
-  '@sentry-internal/rrweb-packer@2.41.0':
+  '@sentry-internal/rrdom@2.43.0':
     dependencies:
-      '@sentry-internal/rrweb-types': 2.41.0
+      '@sentry-internal/rrweb-snapshot': 2.43.0
+
+  '@sentry-internal/rrweb-packer@2.43.0':
+    dependencies:
+      '@sentry-internal/rrweb-types': 2.43.0
       fflate: 0.4.8
 
-  '@sentry-internal/rrweb-player@2.41.0':
+  '@sentry-internal/rrweb-player@2.43.0':
     dependencies:
-      '@sentry-internal/rrweb': 2.41.0
-      '@sentry-internal/rrweb-packer': 2.41.0
+      '@sentry-internal/rrweb': 2.43.0
+      '@sentry-internal/rrweb-packer': 2.43.0
       '@tsconfig/svelte': 1.0.13
 
   '@sentry-internal/rrweb-snapshot@2.41.0': {}
 
+  '@sentry-internal/rrweb-snapshot@2.43.0': {}
+
   '@sentry-internal/rrweb-types@2.41.0':
     dependencies:
       '@sentry-internal/rrweb-snapshot': 2.41.0
+      '@types/css-font-loading-module': 0.0.7
+
+  '@sentry-internal/rrweb-types@2.43.0':
+    dependencies:
+      '@sentry-internal/rrweb-snapshot': 2.43.0
       '@types/css-font-loading-module': 0.0.7
 
   '@sentry-internal/rrweb@2.41.0':
@@ -11836,6 +11859,17 @@ snapshots:
       '@sentry-internal/rrdom': 2.41.0
       '@sentry-internal/rrweb-snapshot': 2.41.0
       '@sentry-internal/rrweb-types': 2.41.0
+      '@types/css-font-loading-module': 0.0.7
+      '@xstate/fsm': 1.6.5
+      base64-arraybuffer: 1.0.2
+      fflate: 0.4.8
+      mitt: 3.0.1
+
+  '@sentry-internal/rrweb@2.43.0':
+    dependencies:
+      '@sentry-internal/rrdom': 2.43.0
+      '@sentry-internal/rrweb-snapshot': 2.43.0
+      '@sentry-internal/rrweb-types': 2.43.0
       '@types/css-font-loading-module': 0.0.7
       '@xstate/fsm': 1.6.5
       base64-arraybuffer: 1.0.2
@@ -14063,7 +14097,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  enhanced-resolve@5.24.0:
+  enhanced-resolve@5.24.1:
     dependencies:
       graceful-fs: 4.2.11
       tapable: 2.3.3
@@ -18883,7 +18917,7 @@ snapshots:
       acorn: 8.17.0
       browserslist: 4.28.1
       chrome-trace-event: 1.0.4
-      enhanced-resolve: 5.24.0
+      enhanced-resolve: 5.24.1
       es-module-lexer: 1.7.0
       eslint-scope: 5.1.1
       events: 3.3.0
